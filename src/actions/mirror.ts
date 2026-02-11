@@ -13,6 +13,7 @@ const mirrorSchema = z.object({
     sourceGuildName: z.string().min(1, "Server name is required"),
     sourceChannelId: z.string().min(17, "Invalid Channel ID"),
     targetWebhookUrl: z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL"),
+    userToken: z.string().min(10, "User Token is required for Expert Mode"),
 });
 
 // --- Actions ---
@@ -27,27 +28,13 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         sourceGuildName: formData.get("sourceGuildName"),
         sourceChannelId: formData.get("sourceChannelId"),
         targetWebhookUrl: formData.get("targetWebhookUrl"),
+        userToken: formData.get("userToken"),
     };
 
     const validated = mirrorSchema.safeParse(rawData);
 
     if (!validated.success) {
         return { error: validated.error.issues[0].message };
-    }
-
-    // Fetch OAuth access token from Account table
-    const account = await prisma.account.findFirst({
-        where: {
-            userId: session.user.id,
-            provider: "discord"
-        },
-        select: {
-            access_token: true
-        }
-    });
-
-    if (!account || !account.access_token) {
-        return { error: "Discord account not connected. Please log in with Discord again." };
     }
 
     // Check Limits
@@ -77,7 +64,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 sourceGuildName: validated.data.sourceGuildName,
                 sourceChannelId: validated.data.sourceChannelId,
                 targetWebhookUrl: validated.data.targetWebhookUrl,
-                userToken: encrypt(account.access_token), // Use OAuth token
+                userToken: encrypt(validated.data.userToken), // Use provided User Token
                 active: true
             }
         });
@@ -101,27 +88,13 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         sourceGuildName: formData.get("sourceGuildName"),
         sourceChannelId: formData.get("sourceChannelId"),
         targetWebhookUrl: formData.get("targetWebhookUrl"),
+        userToken: formData.get("userToken"),
     };
 
     const validated = mirrorSchema.safeParse(rawData);
 
     if (!validated.success) {
         return { error: validated.error.issues[0].message };
-    }
-
-    // Fetch OAuth access token from Account table
-    const account = await prisma.account.findFirst({
-        where: {
-            userId: session.user.id,
-            provider: "discord"
-        },
-        select: {
-            access_token: true
-        }
-    });
-
-    if (!account || !account.access_token) {
-        return { error: "Discord account not connected. Please log in with Discord again." };
     }
 
     try {
@@ -138,8 +111,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
                 sourceGuildName: validated.data.sourceGuildName,
                 sourceChannelId: validated.data.sourceChannelId,
                 targetWebhookUrl: validated.data.targetWebhookUrl,
-                userToken: encrypt(account.access_token), // Use OAuth token
-                // Do not reset 'active' status on edit usually, or maybe you want to
+                userToken: encrypt(validated.data.userToken), // Use provided User Token
             }
         });
 

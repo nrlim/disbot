@@ -8,16 +8,16 @@ const ALGORITHM = 'aes-256-gcm';
  * Must be called after dotenv is configured.
  */
 export function validateEncryptionConfig(): void {
-    const key = process.env.MASTER_ENCRYPTION_KEY;
+    const key = process.env.ENCRYPTION_KEY;
     if (!key) {
-        logger.fatal('CRITICAL: MASTER_ENCRYPTION_KEY is missing from environment variables.');
+        logger.fatal('CRITICAL: ENCRYPTION_KEY is missing from environment variables.');
         process.exit(1);
     }
     // Check if key is 32 bytes (UTF-8) or 64 hex characters (which map to 32 bytes)
     // 32 chars = 32 bytes
     // 64 hex chars = 32 bytes
     if (key.length !== 32 && key.length !== 64) {
-        logger.fatal(`CRITICAL: MASTER_ENCRYPTION_KEY has invalid length (${key.length}). Must be 32 chars (utf8) or 64 chars (hex).`);
+        logger.fatal(`CRITICAL: ENCRYPTION_KEY has invalid length (${key.length}). Must be 32 chars (utf8) or 64 chars (hex).`);
         process.exit(1);
     }
 }
@@ -34,7 +34,7 @@ export function maskToken(token: string | undefined | null): string {
  * Encrypts a plaintext string using AES-256-GCM.
  */
 export function encrypt(text: string, masterKey: string): string {
-    if (!masterKey) throw new Error('Missing MASTER_ENCRYPTION_KEY');
+    if (!masterKey) throw new Error('Missing ENCRYPTION_KEY');
 
     try {
         const iv = crypto.randomBytes(12);
@@ -57,7 +57,7 @@ export function encrypt(text: string, masterKey: string): string {
  * Returns null if decryption fails (invalid key/corrupted data).
  */
 export function decrypt(encryptedText: string, masterKey: string): string | null {
-    if (!masterKey) throw new Error('Missing MASTER_ENCRYPTION_KEY');
+    if (!masterKey) throw new Error('Missing ENCRYPTION_KEY');
 
     try {
         const parts = encryptedText.split(':');

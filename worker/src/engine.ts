@@ -60,9 +60,8 @@ class ClientManager {
 
                 let decryptedToken: string | null = null;
 
-                // Try decrypting if it looks encrypted (contains IV separator)
                 if (cfg.userToken.includes(':')) {
-                    decryptedToken = decrypt(cfg.userToken, process.env.MASTER_ENCRYPTION_KEY || '');
+                    decryptedToken = decrypt(cfg.userToken, process.env.ENCRYPTION_KEY || '');
                 } else {
                     // Fallback for dev/legacy unencrypted tokens
                     decryptedToken = cfg.userToken;
