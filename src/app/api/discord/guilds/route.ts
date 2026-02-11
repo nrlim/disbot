@@ -9,12 +9,7 @@ export async function GET(req: NextRequest) {
         // Securely retrieve the token from the encrypted session cookie
         const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
 
-        console.log("Debug: API Route Token Check");
-        console.log("Token exists:", !!token);
-        console.log("Token has accessToken:", !!token?.accessToken);
-
         if (!token || !token.accessToken) {
-            console.log("Debug: Returning 401 Unauthorized");
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
