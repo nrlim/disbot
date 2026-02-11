@@ -6,17 +6,20 @@ import { NextResponse } from "next/server";
 
 export async function GET(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return new NextResponse("Unauthorized", { status: 401 });
     }
 
+    // Await params in Next.js 15+
+    const { id } = await params;
+
     try {
         const config = await prisma.mirrorConfig.findFirst({
             where: {
-                id: params.id,
+                id: id,
                 userId: session.user.id
             }
         });

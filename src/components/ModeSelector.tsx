@@ -108,7 +108,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
     const validateToken = (token: string) => {
         const result = tokenSchema.safeParse(token);
         if (!result.success) {
-            setTokenError(result.error.errors[0].message);
+            setTokenError(result.error.issues[0].message);
             return false;
         }
         setTokenError(null);
@@ -118,7 +118,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
     const validateWebhook = (url: string) => {
         const result = webhookSchema.safeParse(url);
         if (!result.success) {
-            setWebhookError(result.error.errors[0].message);
+            setWebhookError(result.error.issues[0].message);
             return false;
         }
         setWebhookError(null);
@@ -128,7 +128,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
     const validateChannel = (id: string) => {
         const result = channelIdSchema.safeParse(id);
         if (!result.success) {
-            setChannelError(result.error.errors[0].message);
+            setChannelError(result.error.issues[0].message);
             return false;
         }
         setChannelError(null);
