@@ -3,6 +3,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import WebhookList from "@/components/WebhookList";
+import crypto from "crypto";
 import { Terminal, Shield, Cpu } from "lucide-react";
 
 export default async function ExpertDashboard() {
@@ -12,9 +13,43 @@ export default async function ExpertDashboard() {
         redirect("/");
     }
 
-    const configs = await prisma.mirrorConfig.findMany({
+    const allConfigs = await prisma.mirrorConfig.findMany({
         where: { userId: session.user.id },
         orderBy: { createdAt: "desc" }
+    });
+
+    // Decrypt tokens for the UI (Autofill feature)
+    const configs = allConfigs.map(cfg => {
+        let userToken = cfg.userToken;
+        if (userToken && userToken.includes(':')) {
+            try {
+                const parts = userToken.split(':');
+                if (parts.length === 3) {
+                    const [ivHex, tagHex, encryptedHex] = parts;
+                    const iv = Buffer.from(ivHex, 'hex');
+                    const tag = Buffer.from(tagHex, 'hex');
+                    const encrypted = Buffer.from(encryptedHex, 'hex');
+
+                    const masterKey = process.env.ENCRYPTION_KEY || "";
+                    let keyBuffer: Buffer;
+                    if (masterKey.length === 64) {
+                        keyBuffer = Buffer.from(masterKey, 'hex');
+                    } else {
+                        keyBuffer = Buffer.from(masterKey, 'utf8');
+                    }
+
+                    const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuffer, iv);
+                    decipher.setAuthTag(tag);
+
+                    let decrypted = decipher.update(encrypted);
+                    decrypted = Buffer.concat([decrypted, decipher.final()]);
+                    userToken = decrypted.toString('utf8');
+                }
+            } catch (e) {
+                console.error("Failed to decrypt token for config:", cfg.id);
+            }
+        }
+        return { ...cfg, userToken };
     });
 
     const user = await prisma.user.findUnique({

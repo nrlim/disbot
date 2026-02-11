@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert } from "lucide-react";
+import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
 import Image from "next/image";
@@ -42,6 +42,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
     const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
     const [channelId, setChannelId] = useState("");
     const [webhookUrl, setWebhookUrl] = useState("");
+    const [userToken, setUserToken] = useState("");
+    const [showUserToken, setShowUserToken] = useState(false);
+    const [showGuide, setShowGuide] = useState(false);
 
     // UI State
     const [guilds, setGuilds] = useState<Guild[]>([]);
@@ -59,10 +62,12 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
             if (config) {
                 setChannelId(config.sourceChannelId);
                 setWebhookUrl(config.targetWebhookUrl);
+                if (config.userToken) setUserToken(config.userToken);
             } else {
                 // Reset if adding new
                 setChannelId("");
                 setWebhookUrl("");
+                setUserToken("");
                 setSelectedGuild(null);
             }
 
@@ -114,6 +119,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
         const webhookVal = webhookSchema.safeParse(webhookUrl);
         if (!webhookVal.success) { setError(webhookVal.error.issues[0].message); setIsSubmitting(false); return; }
 
+        if (!config && !userToken) { setError("User Token is required"); setIsSubmitting(false); return; } // Validate token if new
+
         const formData = new FormData();
         if (config) {
             formData.append("id", config.id);
@@ -121,6 +128,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
         formData.append("sourceGuildName", selectedGuild.name);
         formData.append("sourceChannelId", channelId);
         formData.append("targetWebhookUrl", webhookUrl);
+        formData.append("userToken", userToken);
 
         try {
             const result = config
@@ -136,6 +144,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
                 setSelectedGuild(null);
                 setChannelId("");
                 setWebhookUrl("");
+                setUserToken("");
             }
         } catch (e) {
             setError("Something went wrong. Please try again.");
@@ -189,18 +198,67 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
                             {/* Body */}
                             <div className="p-8 overflow-y-auto space-y-8 bg-zinc-950">
 
-                                {/* Info Box */}
-                                <div className="p-3 bg-zinc-900 border border-zinc-800 flex gap-3 items-start">
-                                    <Info className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
+                                {/* Info Box - Warning */}
+                                <div className="p-3 bg-amber-950/20 border border-amber-900/50 flex gap-3 items-start">
+                                    <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                                     <div>
-                                        <strong className="text-zinc-300 text-xs font-mono block mb-1 uppercase tracking-wide">Auto-Authentication</strong>
-                                        <p className="text-[10px] text-zinc-500 font-mono leading-relaxed">
-                                            Token validation is handled automatically via your active session. No manual credential entry required.
+                                        <strong className="text-amber-500 text-xs font-mono block mb-1 uppercase tracking-wide">Sensitive Credential</strong>
+                                        <p className="text-[10px] text-amber-500/80 font-mono leading-relaxed">
+                                            Your User Token is required for the engine to read messages. It is encrypted at rest using AES-256-GCM.
                                         </p>
                                     </div>
                                 </div>
 
                                 <form id="mirror-form" onSubmit={handleSubmit} className="space-y-6">
+
+                                    {/* User Token */}
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">User Token</label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowGuide(!showGuide)}
+                                                className="text-[10px] text-primary hover:underline font-mono flex items-center gap-1"
+                                            >
+                                                <Info className="w-3 h-3" />
+                                                {showGuide ? "Hide Guide" : "How to find?"}
+                                            </button>
+                                        </div>
+
+                                        {showGuide && (
+                                            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-md space-y-2 text-[10px] text-zinc-400 font-mono">
+                                                <p className="font-bold text-zinc-300">Detailed Steps:</p>
+                                                <ol className="list-decimal list-inside space-y-1 ml-1">
+                                                    <li>Open Discord in Browser or App.</li>
+                                                    <li>Press <span className="text-zinc-200 bg-zinc-800 px-1 rounded">Ctrl + Shift + I</span> to open DevTools.</li>
+                                                    <li>Go to the <span className="text-zinc-200 font-bold">Network</span> tab.</li>
+                                                    <li>Type <span className="text-zinc-200 bg-zinc-800 px-1 rounded">messages</span> in the Filter box.</li>
+                                                    <li>Click on any channel/server in Discord to trigger a request.</li>
+                                                    <li>Click the request named 'messages' in the list.</li>
+                                                    <li>Look under <span className="text-zinc-200 font-bold">Request Headers</span> for <span className="text-primary">authorization</span>.</li>
+                                                    <li>Copy the value next to it (that's your token).</li>
+                                                </ol>
+                                            </div>
+                                        )}
+
+                                        <div className="relative">
+                                            <input
+                                                type={showUserToken ? "text" : "password"}
+                                                value={userToken}
+                                                onChange={(e) => setUserToken(e.target.value)}
+                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm pr-10"
+                                                placeholder="OTMz..."
+                                                autoComplete="off"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowUserToken(!showUserToken)}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
+                                            >
+                                                {showUserToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                            </button>
+                                        </div>
+                                    </div>
 
                                     {/* Source Guild */}
                                     <div className="space-y-2 relative">
