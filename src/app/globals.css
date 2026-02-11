@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #00D1FF; /* Electric Cyan */
+  --color-secondary: #5865F2; /* Cobalt Blue */
+  --color-obsidian: #0B0F1A; /* Deep Obsidian */
+  --color-slate-dark: #161B2B; /* Dark Slate */
+  --font-sans: 'Inter', system-ui, sans-serif;
+}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0B0F1A;
+  --foreground: #ffffff;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+.glass-nav {
+  background: rgba(11, 15, 26, 0.6);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* New Obsidian Card Style */
+.obsidian-card {
+  background: rgba(22, 27, 43, 0.8); /* #161B2B at 80% opacity */
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+  letter-spacing: -0.01em; /* Modern tight spacing */
+}
+
+@layer utilities {
+  .text-gradient {
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-image: linear-gradient(to right, #00D1FF, #5865F2);
+  }
+  
+  .glow-focus {
+    @apply transition-shadow duration-300 focus:ring-1 focus:ring-primary/50 focus:shadow-[0_0_15px_rgba(0,209,255,0.3)];
+  }
+}
