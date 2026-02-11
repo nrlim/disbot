@@ -42,7 +42,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
     const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
     const [channelId, setChannelId] = useState("");
     const [webhookUrl, setWebhookUrl] = useState("");
-    const [userToken, setUserToken] = useState("");
 
     // UI State
     const [guilds, setGuilds] = useState<Guild[]>([]);
@@ -60,14 +59,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
             if (config) {
                 setChannelId(config.sourceChannelId);
                 setWebhookUrl(config.targetWebhookUrl);
-                // We don't populate userToken for security, user sees empty and can keep existing if valid?
-                // Actually server action updates it. If they leave it blank, we might want to keep old.
-                // But for now strict re-entry of token might be safer or just expected.
             } else {
                 // Reset if adding new
                 setChannelId("");
                 setWebhookUrl("");
-                setUserToken("");
                 setSelectedGuild(null);
             }
 
@@ -119,8 +114,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
         const webhookVal = webhookSchema.safeParse(webhookUrl);
         if (!webhookVal.success) { setError(webhookVal.error.issues[0].message); setIsSubmitting(false); return; }
 
-        if (!config && !userToken) { setError("User Token is required"); setIsSubmitting(false); return; } // Validate token if new
-
         const formData = new FormData();
         if (config) {
             formData.append("id", config.id);
@@ -128,7 +121,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
         formData.append("sourceGuildName", selectedGuild.name);
         formData.append("sourceChannelId", channelId);
         formData.append("targetWebhookUrl", webhookUrl);
-        formData.append("userToken", userToken);
 
         try {
             const result = config
@@ -144,7 +136,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
                 setSelectedGuild(null);
                 setChannelId("");
                 setWebhookUrl("");
-                setUserToken("");
             }
         } catch (e) {
             setError("Something went wrong. Please try again.");
@@ -198,34 +189,18 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
                             {/* Body */}
                             <div className="p-8 overflow-y-auto space-y-8 bg-zinc-950">
 
-                                {/* Info Box - Warning */}
-                                <div className="p-3 bg-amber-950/20 border border-amber-900/50 flex gap-3 items-start">
-                                    <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                                {/* Info Box */}
+                                <div className="p-3 bg-zinc-900 border border-zinc-800 flex gap-3 items-start">
+                                    <Info className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
                                     <div>
-                                        <strong className="text-amber-500 text-xs font-mono block mb-1 uppercase tracking-wide">Sensitive Credential</strong>
-                                        <p className="text-[10px] text-amber-500/80 font-mono leading-relaxed">
-                                            Your User Token is required for the engine to read messages. It is encrypted at rest using AES-256-GCM.
+                                        <strong className="text-zinc-300 text-xs font-mono block mb-1 uppercase tracking-wide">Auto-Authentication</strong>
+                                        <p className="text-[10px] text-zinc-500 font-mono leading-relaxed">
+                                            Token validation is handled automatically via your active session. No manual credential entry required.
                                         </p>
                                     </div>
                                 </div>
 
                                 <form id="mirror-form" onSubmit={handleSubmit} className="space-y-6">
-
-                                    {/* User Token */}
-                                    <div className="space-y-2">
-                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">User Token</label>
-                                        <input
-                                            type="password"
-                                            value={userToken}
-                                            onChange={(e) => setUserToken(e.target.value)}
-                                            className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm"
-                                            placeholder="OTMz..."
-                                            autoComplete="off"
-                                        />
-                                        <p className="text-[10px] text-zinc-600 font-mono">
-                                            Found in Discord Console (Ctrl+Shift+I) &gt; Application &gt; Local Storage
-                                        </p>
-                                    </div>
 
                                     {/* Source Guild */}
                                     <div className="space-y-2 relative">

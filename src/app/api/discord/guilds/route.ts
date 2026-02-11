@@ -39,20 +39,10 @@ export async function GET(req: NextRequest) {
 
         const guilds = await response.json();
 
-        // Permission constants (BigInt for bitwise operations)
-        const ADMINISTRATOR = BigInt(0x8);
-        const MANAGE_GUILD = BigInt(0x20);
-
-        const fetchAll = req.nextUrl.searchParams.get("all") === "true";
-
-        const guildsToReturn = fetchAll
-            ? guilds
-            : guilds.filter((guild: any) => {
-                const permissions = BigInt(guild.permissions);
-                const hasAdmin = (permissions & ADMINISTRATOR) === ADMINISTRATOR;
-                const hasManageGuild = (permissions & MANAGE_GUILD) === MANAGE_GUILD;
-                return hasAdmin || hasManageGuild;
-            });
+        // Used to filter by Administrator/Manage Guild, but user feedback requested
+        // access to all guilds ("mirror any server I'm in").
+        // Permissions logic removed to show all servers.
+        const guildsToReturn = guilds;
 
         const formattedGuilds = guildsToReturn.map((guild: any) => ({
             id: guild.id,

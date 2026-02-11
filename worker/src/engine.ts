@@ -147,6 +147,12 @@ class ClientManager {
         });
 
         try {
+            // Heuristic check for OAuth Access Token vs User Token
+            // OAuth Access Tokens are typically 30 chars. User Tokens are 59+ chars and contain dots (id.timestamp.hmac).
+            if (token.length === 30 && !token.includes('.')) {
+                logger.warn({ token: maskToken(token) }, 'WARNING: Token appears to be an OAuth Access Token. Gateway login requires a USER TOKEN (authorization: value from local storage). Login will likely fail.');
+            }
+
             await client.login(token);
         } catch (error: any) {
             logger.error({ err: error, token: maskToken(token) }, 'Login failed');
