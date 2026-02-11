@@ -8,15 +8,17 @@ export default async function ServerDashboard({
 
     return (
         <div className="max-w-7xl mx-auto">
-            <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent mb-6">
-                Server Configuration
+            <h1 className="text-3xl font-bold text-white mb-6 font-mono uppercase tracking-tight">
+                Server Node Configuration
             </h1>
-            <p className="text-gray-400 mb-8">
-                Configuration panel for Server ID: <code className="bg-white/10 px-2 py-1 rounded text-white">{guildId}</code>
+            <p className="text-zinc-500 mb-8 font-mono text-sm max-w-2xl">
+                System parameters for target guild <code className="bg-zinc-900 border border-zinc-800 px-2 py-0.5 text-primary">{guildId}</code>
             </p>
 
-            <div className="p-8 rounded-2xl bg-white/5 border border-white/10 text-center">
-                <p className="text-xl text-gray-300">Configuration features coming soon...</p>
+            <div className="p-12 bg-zinc-950 border border-zinc-800 text-center">
+                <div className="text-zinc-700 font-mono text-xs uppercase tracking-widest mb-2">System Status</div>
+                <p className="text-xl text-zinc-400 font-mono">Module Unavailable</p>
+                <p className="text-xs text-zinc-600 font-mono mt-1">Pending implementation of advanced server-specific controls.</p>
             </div>
         </div>
     );

@@ -1,14 +1,25 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
-// Ensure key is 32 bytes (256 bits). In production, this should be an env var.
-// For dev, we'll use a hardcoded fallback or derive from a secret.
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || "01234567890123456789012345678901"; // 32 chars
 const IV_LENGTH = 16;
+
+// Convert hex key to 32-byte buffer for AES-256
+// If ENCRYPTION_KEY is hex-encoded (64 chars), convert it. Otherwise use raw string.
+const getEncryptionKey = (): Buffer => {
+    const keyString = process.env.ENCRYPTION_KEY || "01234567890123456789012345678901";
+    // If it looks like a hex string (64 chars, all hex), convert from hex
+    if (keyString.length === 64 && /^[0-9a-fA-F]+$/.test(keyString)) {
+        return Buffer.from(keyString, 'hex');
+    }
+    // Otherwise treat as raw 32-byte string
+    return Buffer.from(keyString.slice(0, 32));
+};
+
+const ENCRYPTION_KEY_BUFFER = getEncryptionKey();
 
 export function encrypt(text: string): string {
     const iv = randomBytes(IV_LENGTH);
-    const cipher = createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+    const cipher = createCipheriv(ALGORITHM, ENCRYPTION_KEY_BUFFER, iv);
     let encrypted = cipher.update(text, "utf8", "hex");
     encrypted += cipher.final("hex");
     const authTag = cipher.getAuthTag().toString("hex");
@@ -29,7 +40,7 @@ export function decrypt(text: string): string {
     const authTag = Buffer.from(parts[1], "hex");
     const encryptedText = parts[2];
 
-    const decipher = createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+    const decipher = createDecipheriv(ALGORITHM, ENCRYPTION_KEY_BUFFER, iv);
     decipher.setAuthTag(authTag);
     let decrypted = decipher.update(encryptedText, "hex", "utf8");
     decrypted += decipher.final("utf8");

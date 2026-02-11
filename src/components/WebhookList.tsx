@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, PauseCircle, PlayCircle, Calendar, Settings, ShieldAlert, MoreHorizontal, Activity } from "lucide-react";
+import { Plus, Trash2, PauseCircle, PlayCircle, Calendar, Settings, ShieldAlert, MoreHorizontal, Activity, Power, Edit3 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import EditMirrorModal, { type MirrorConfig as ModalCurrentConfig } from "./EditMirrorModal"; // Renamed import
+import EditMirrorModal, { type MirrorConfig as ModalCurrentConfig } from "./EditMirrorModal";
 import { deleteMirrorConfig, toggleMirrorConfig } from "@/actions/mirror";
 import { useRouter } from "next/navigation";
 
@@ -53,30 +53,28 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
         try {
             const parts = url.split("/");
             const id = parts[5] || "...";
-            return `.../${id}/••••`;
+            return `.../${id.substring(0, 8)}/••••`;
         } catch (e) {
             return "Invalid URL";
         }
     };
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-6">
 
             {/* Toolbar */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
                 <div>
-                    <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
-                        Active Mirrors
-                    </h2>
-                    <p className="text-sm text-gray-500 mt-1">Manage your automated message replication paths.</p>
+                    <h2 className="text-xl font-mono font-bold text-white uppercase tracking-tight">Active Processes</h2>
+                    <p className="text-xs text-zinc-500 mt-1 font-mono">Manage automated replication threads.</p>
                 </div>
 
                 <div className="flex items-center gap-4">
                     <div className="relative group">
                         <input
                             type="text"
-                            placeholder="Search..."
-                            className="bg-[#161B2B]/50 border border-white/5 rounded-xl px-4 py-2.5 text-sm text-gray-300 w-64 focus:border-[#00D1FF]/50 focus:w-80 outline-none transition-all duration-300 backdrop-blur-sm"
+                            placeholder="FILTER_ID..."
+                            className="bg-zinc-950 border border-zinc-800 px-4 py-2 text-xs text-zinc-300 w-64 focus:border-primary outline-none transition-all font-mono placeholder:text-zinc-700"
                         />
                     </div>
 
@@ -84,147 +82,151 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                         onClick={() => { setEditingConfig(undefined); setIsModalOpen(true); }}
                         disabled={isLimitReached}
                         className={cn(
-                            "group flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all duration-300 shadow-lg",
+                            "group flex items-center gap-2 px-4 py-2 text-xs font-bold font-mono uppercase transition-all border",
                             isLimitReached
-                                ? "bg-gray-700/50 cursor-not-allowed opacity-50"
-                                : "bg-[#5865F2] hover:bg-[#4752C4] hover:shadow-[#5865F2]/25 hover:scale-105"
+                                ? "bg-zinc-900 border-zinc-800 text-zinc-600 cursor-not-allowed"
+                                : "bg-primary/10 border-primary/50 text-primary hover:bg-primary hover:text-black"
                         )}
                     >
-                        <Plus className="w-4 h-4 transition-transform group-hover:rotate-90" />
-                        New Mirror
+                        <Plus className="w-3.5 h-3.5 transition-transform group-hover:rotate-90" />
+                        Init New Mirror
                     </button>
                 </div>
             </div>
 
             {isLimitReached && (
-                <div className="obsidian-card p-4 rounded-xl flex items-center justify-between border-l-4 border-amber-500 bg-amber-500/5">
+                <div className="p-3 border-l-2 border-amber-500 bg-amber-500/5 flex items-center justify-between">
                     <div className="px-2">
-                        <h4 className="text-amber-400 font-bold text-sm tracking-wide">PLAN LIMIT REACHED</h4>
-                        <p className="text-amber-200/60 text-xs mt-0.5">Upgrade for unlimited bandwidth.</p>
+                        <h4 className="text-amber-500 font-mono font-bold text-xs uppercase tracking-wider">Plan Capacity Reached</h4>
+                        <p className="text-amber-500/60 text-[10px] uppercase mt-0.5">Upgrade required for additional slots.</p>
                     </div>
                 </div>
             )}
 
-            {/* List */}
+            {/* Data Grid */}
             {initialConfigs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-32 obsidian-card rounded-3xl border-dashed border-white/10">
-                    <div className="w-20 h-20 rounded-full bg-gradient-to-b from-[#161B2B] to-[#0B0F1A] border border-white/5 flex items-center justify-center mb-6 shadow-2xl">
-                        <Activity className="w-8 h-8 text-gray-600" />
+                <div className="flex flex-col items-center justify-center py-24 border border-dashed border-zinc-800 bg-zinc-900/20">
+                    <div className="w-16 h-16 bg-zinc-950 border border-zinc-800 flex items-center justify-center mb-4">
+                        <Activity className="w-6 h-6 text-zinc-600" />
                     </div>
-                    <h3 className="text-xl font-bold text-gray-300 mb-2">No Active Mirrors</h3>
-                    <p className="text-gray-500 max-w-sm text-center mb-8 font-light">
-                        Initialize your first mirroring configuration to start replicating messages.
+                    <h3 className="text-zinc-300 font-mono font-bold text-sm mb-1 uppercase">No Active Mirrors</h3>
+                    <p className="text-zinc-600 font-mono text-xs max-w-sm text-center mb-6">
+                        System idle. Initialize a new configuration to begin.
                     </p>
                     <button
                         onClick={() => { setEditingConfig(undefined); setIsModalOpen(true); }}
-                        className="px-8 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-white text-sm font-medium transition-all hover:scale-105"
+                        className="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-mono uppercase font-bold transition-colors"
                     >
-                        Create First Mirror
+                        Create Configuration
                     </button>
                 </div>
             ) : (
-                <div className="flex flex-col gap-3">
-                    <AnimatePresence>
-                        {initialConfigs.map((config) => (
-                            <motion.div
-                                key={config.id}
-                                layout
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, scale: 0.98 }}
-                                className="obsidian-card rounded-2xl p-4 flex items-center gap-6 group transition-all duration-300 hover:border-[#00D1FF]/30 hover:shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
-                            >
-                                {/* Status Indicator */}
-                                <div className="pl-2">
-                                    <div className="relative flex items-center justify-center w-3 h-3">
-                                        {config.active && (
-                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                        )}
-                                        <span className={cn(
-                                            "relative inline-flex rounded-full h-2 w-2",
-                                            config.active ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" : "bg-gray-600"
-                                        )}></span>
-                                    </div>
-                                </div>
-
-                                {/* Main Info */}
-                                <div className="flex-1 grid grid-cols-12 gap-8 items-center">
-                                    {/* Source */}
-                                    <div className="col-span-4">
-                                        <h4 className="font-bold text-white text-base truncate tracking-tight">{config.sourceGuildName || "Unknown Server"}</h4>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Source Channel</span>
-                                            <span className="text-xs text-gray-400 font-mono bg-black/30 px-1.5 py-0.5 rounded border border-white/5">{config.sourceChannelId}</span>
-                                        </div>
-                                    </div>
-
-                                    {/* Destination */}
-                                    <div className="col-span-4 hidden md:block">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-[10px] uppercase font-bold text-gray-500 tracking-wider">Destination</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 text-xs text-gray-300">
-                                            <div className="w-1.5 h-1.5 rounded-full bg-[#5865F2]" />
-                                            <span className="font-mono opacity-80">{maskWebhook(config.targetWebhookUrl)}</span>
-                                        </div>
-                                    </div>
-
-                                    {/* Meta */}
-                                    <div className="col-span-3 hidden md:flex items-center gap-2 text-xs text-gray-500">
-                                        <Calendar className="w-3.5 h-3.5 opacity-50" />
-                                        <span>{format(new Date(config.createdAt), "MMM d, yyyy")}</span>
-                                    </div>
-                                </div>
-
-                                {/* Actions (Hover Reveal) */}
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 translate-x-2 group-hover:translate-x-0">
-                                    <button
-                                        onClick={() => handleToggle(config.id, config.active)}
-                                        disabled={togglingId === config.id}
-                                        className={cn(
-                                            "p-2.5 rounded-xl transition-all hover:scale-110",
-                                            config.active
-                                                ? "text-gray-400 hover:text-amber-400 hover:bg-amber-400/10"
-                                                : "text-gray-400 hover:text-emerald-400 hover:bg-emerald-400/10"
-                                        )}
-                                        title={config.active ? "Pause" : "Resume"}
+                <div className="overflow-hidden border border-zinc-800 bg-zinc-950">
+                    <table className="w-full text-left">
+                        <thead className="bg-zinc-900 border-b border-zinc-800">
+                            <tr>
+                                <th className="px-6 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Status</th>
+                                <th className="px-6 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Source</th>
+                                <th className="px-6 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Target</th>
+                                <th className="px-6 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Created</th>
+                                <th className="px-6 py-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono text-right">Controls</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800">
+                            <AnimatePresence>
+                                {initialConfigs.map((config) => (
+                                    <motion.tr
+                                        key={config.id}
+                                        layout
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        exit={{ opacity: 0 }}
+                                        className="group hover:bg-zinc-900 transition-colors"
                                     >
-                                        {togglingId === config.id ? (
-                                            <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                        ) : config.active ? (
-                                            <PauseCircle className="w-5 h-5" />
-                                        ) : (
-                                            <PlayCircle className="w-5 h-5" />
-                                        )}
-                                    </button>
+                                        {/* Status */}
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <button
+                                                    onClick={() => handleToggle(config.id, config.active)}
+                                                    disabled={togglingId === config.id}
+                                                    className="relative flex items-center justify-center group/status"
+                                                    title={config.active ? "Pause" : "Resume"}
+                                                >
+                                                    {togglingId === config.id ? (
+                                                        <div className="w-3 h-3 border-2 border-zinc-500 border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <>
+                                                            <div className={cn(
+                                                                "w-2.5 h-2.5 transition-all duration-300",
+                                                                config.active ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-zinc-600"
+                                                            )} />
+                                                        </>
+                                                    )}
+                                                </button>
+                                                <span className={cn(
+                                                    "text-xs font-mono font-bold uppercase",
+                                                    config.active ? "text-emerald-500" : "text-zinc-500"
+                                                )}>
+                                                    {config.active ? "RUNNING" : "HALTED"}
+                                                </span>
+                                            </div>
+                                        </td>
 
-                                    <button
-                                        onClick={() => { setEditingConfig(config); setIsModalOpen(true); }}
-                                        className="p-2.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all hover:scale-110"
-                                        title="Settings"
-                                    >
-                                        <Settings className="w-5 h-5" />
-                                    </button>
+                                        {/* Source */}
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-col">
+                                                <span className="text-zinc-200 font-medium text-sm truncate max-w-[180px] font-sans tracking-tight">
+                                                    {config.sourceGuildName || "Unknown Server"}
+                                                </span>
+                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5" title={config.sourceChannelId}>
+                                                    ID: {config.sourceChannelId}
+                                                </span>
+                                            </div>
+                                        </td>
 
-                                    <button
-                                        onClick={() => handleDelete(config.id)}
-                                        disabled={deletingId === config.id}
-                                        className="p-2.5 text-gray-400 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all hover:scale-110"
-                                        title="Delete"
-                                    >
-                                        {deletingId === config.id ? (
-                                            <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-                                        ) : (
-                                            <Trash2 className="w-5 h-5" />
-                                        )}
-                                    </button>
-                                </div>
-                                <div className="opacity-100 group-hover:opacity-0 transition-opacity absolute right-6 text-gray-600">
-                                    <MoreHorizontal className="w-5 h-5" />
-                                </div>
-                            </motion.div>
-                        ))}
-                    </AnimatePresence>
+                                        {/* Target */}
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 group-hover:text-zinc-300 transition-colors">
+                                                <div className="w-1.5 h-1.5 bg-indigo-500" />
+                                                {maskWebhook(config.targetWebhookUrl)}
+                                            </div>
+                                        </td>
+
+                                        {/* Created */}
+                                        <td className="px-6 py-4 text-xs font-mono text-zinc-500">
+                                            {format(new Date(config.createdAt), "yyyy-MM-dd")}
+                                        </td>
+
+                                        {/* Actions */}
+                                        <td className="px-6 py-4 text-right">
+                                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => { setEditingConfig(config); setIsModalOpen(true); }}
+                                                    className="p-1.5 text-zinc-500 hover:text-white hover:bg-zinc-800 transition-colors"
+                                                    title="Configure"
+                                                >
+                                                    <Edit3 className="w-4 h-4" />
+                                                </button>
+
+                                                <button
+                                                    onClick={() => handleDelete(config.id)}
+                                                    disabled={deletingId === config.id}
+                                                    className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-900/20 transition-colors"
+                                                    title="Terminate"
+                                                >
+                                                    {deletingId === config.id ? (
+                                                        <div className="w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <Trash2 className="w-4 h-4" />
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </motion.tr>
+                                ))}
+                            </AnimatePresence>
+                        </tbody>
+                    </table>
                 </div>
             )}
 

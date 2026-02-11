@@ -1,23 +1,17 @@
 
-import { Client, Message, TextChannel } from 'discord.js-selfbot-v13';
-import { WebhookClient, APIMessage } from 'discord.js';
+import { Client, Message } from 'discord.js-selfbot-v13';
+import { WebhookClient } from 'discord.js';
 import { PrismaClient } from '@prisma/client';
-import pino from 'pino';
 import dotenv from 'dotenv';
 import path from 'path';
-import { decrypt } from './lib/crypto';
+import { decrypt, validateEncryptionConfig, maskToken } from './lib/crypto';
+import { logger } from './lib/logger';
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
-// Setup Logger
-const logger = pino({
-    level: process.env.LOG_LEVEL || 'info',
-    transport: {
-        target: 'pino-pretty',
-        options: { colorize: true }
-    }
-});
+// Validate Environment
+validateEncryptionConfig();
 
 // Setup Prisma
 const prisma = new PrismaClient();
@@ -49,16 +43,13 @@ class ClientManager {
         return ClientManager.instance;
     }
 
-    // Main sync function called every interval
     public async sync() {
         logger.info('Starting sync cycle...');
 
         try {
             // 1. Fetch all ACTIVE configs
             const activeConfigs = await prisma.mirrorConfig.findMany({
-                where: {
-                    active: true
-                }
+                where: { active: true }
             });
 
             // Group by Token
@@ -67,22 +58,18 @@ class ClientManager {
             for (const cfg of activeConfigs) {
                 if (!cfg.userToken) continue;
 
-                let decryptedToken: string;
-                try {
-                    // Assume token is encrypted in DB if not raw. 
-                    // For now, mirroring engine assumes prompt requirement: "Integrate AES-256-GCM decryption"
-                    // We try to decrypt. If fail (maybe raw for dev), we handle or log.
-                    // Note: In a real scenario, we'id have a flag or strict format.
-                    // Here we assume it's encrypted if it looks like it, or just try.
-                    // Actually, let's look at the schema. It says "Encrypted in production".
-                    // We will try decrypt.
-                    if (cfg.userToken.includes(':')) {
-                        decryptedToken = decrypt(cfg.userToken, process.env.MASTER_ENCRYPTION_KEY || '');
-                    } else {
-                        decryptedToken = cfg.userToken; // Fallback for dev/unencrypted
-                    }
-                } catch (e) {
-                    logger.error({ err: e, configId: cfg.id }, 'Failed to decrypt token. Marking as invalid.');
+                let decryptedToken: string | null = null;
+
+                // Try decrypting if it looks encrypted (contains IV separator)
+                if (cfg.userToken.includes(':')) {
+                    decryptedToken = decrypt(cfg.userToken, process.env.MASTER_ENCRYPTION_KEY || '');
+                } else {
+                    // Fallback for dev/legacy unencrypted tokens
+                    decryptedToken = cfg.userToken;
+                }
+
+                if (!decryptedToken) {
+                    logger.warn({ configId: cfg.id }, 'Invalid or undecryptable token. Marking config as invalid.');
                     await this.markConfigInvalid(cfg.id, 'INVALID_TOKEN_FORMAT');
                     continue;
                 }
@@ -102,7 +89,7 @@ class ClientManager {
             // Remove clients for tokens that no longer have active configs
             for (const [token, session] of this.clients) {
                 if (!configsByToken.has(token)) {
-                    logger.info(`Stopping client for token ending in ...${token.slice(-4)}`);
+                    logger.info({ token: maskToken(token) }, 'Stopping inactive client');
                     session.client.destroy();
                     this.clients.delete(token);
                 }
@@ -126,7 +113,7 @@ class ClientManager {
                     session.lastActive = Date.now();
                 } else {
                     // Create new client
-                    logger.info(`Starting new client for token ending in ...${token.slice(-4)}`);
+                    logger.info({ token: maskToken(token) }, 'Starting new client session');
                     await this.spawnClient(token, configMap);
                 }
             }
@@ -148,29 +135,27 @@ class ClientManager {
         this.clients.set(token, session);
 
         client.on('ready', () => {
-            logger.info(`Client ready: ${client.user?.tag}`);
+            logger.info({ user: client.user?.tag }, 'Client ready');
         });
 
         client.on('messageCreate', async (message: Message) => {
-            // Logic to handle mirroring
             this.handleMessage(token, message);
         });
 
         // Error handling
         client.on('error', (err: Error) => {
-            logger.error({ err }, 'Client error');
-            // Logic to detect auth errors is often in login or specific error codes
+            logger.error({ err }, 'Client connection error');
         });
 
         try {
             await client.login(token);
         } catch (error: any) {
-            logger.error({ err: error, token: `...${token.slice(-4)}` }, 'Login failed');
+            logger.error({ err: error, token: maskToken(token) }, 'Login failed');
 
             // Check for 401 or invalid token
-            if (error.message && (error.message.includes('Token') || error.code === 401)) { // Simplified check
+            if (error.message && (error.message.includes('Token') || error.code === 401)) {
                 await this.invalidateAllConfigsForToken(token, 'TOKEN_INVALID');
-                this.clients.delete(token); // Remove tracking
+                this.clients.delete(token);
             }
         }
     }
@@ -182,10 +167,6 @@ class ClientManager {
         const configs = session.configs.get(message.channelId);
         if (!configs || configs.length === 0) return;
 
-        // Filter out own messages if needed, or loops? 
-        // Usually mirrors want to mirror everything in source.
-
-        // Check for embeds, attachments, content
         const payload = {
             username: message.author.username,
             avatarURL: message.author.displayAvatarURL(),
@@ -194,37 +175,44 @@ class ClientManager {
             files: message.attachments.map((a: any) => a.url)
         };
 
-        // Execute Webhooks
-        for (const cfg of configs) {
+        // Execute Webhooks in Parallel (High Performance Mode)
+        const promises = configs.map(async (cfg) => {
             try {
+                // Create client (Lightweight operation)
                 const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
+                // Send message
                 await webhookClient.send({
                     content: payload.content,
                     username: payload.username,
                     avatarURL: payload.avatarURL,
                     embeds: payload.embeds,
                     files: payload.files,
-                    allowedMentions: { parse: [] } // Prevent mass pings
+                    allowedMentions: { parse: [] }
                 });
 
-                // Update Last Active
-                await prisma.mirrorConfig.update({
+                // Update Last Active - Fire and Forget (Non-blocking)
+                prisma.mirrorConfig.update({
                     where: { id: cfg.id },
                     data: { updatedAt: new Date() }
+                }).catch(() => {
+                    // Ignore DB update errors to maintain speed
                 });
 
             } catch (error: any) {
                 logger.error({ err: error, configId: cfg.id }, 'Failed to send webhook');
 
                 if (error.code === 10015 || error.code === 404) { // Webhook not found
-                    await this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID');
+                    // Mark invalid asynchronously
+                    this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID').catch(() => { });
                 } else if (error.code === 429) { // Rate limited
-                    // Backoff?
-                    logger.warn('Rate limited on webhook');
+                    logger.warn({ configId: cfg.id }, 'Rate limited on webhook');
                 }
             }
-        }
+        });
+
+        // Wait for all requests to initiate/complete (Parallel)
+        await Promise.all(promises);
     }
 
     private async markConfigInvalid(id: string, reason: string) {
@@ -236,20 +224,31 @@ class ClientManager {
     }
 
     private async invalidateAllConfigsForToken(token: string, reason: string) {
-        // This is tricky because we only have the token, and configs might be encrypted in DB.
-        // But we have the configs in memory for this token!
         const session = this.clients.get(token);
         if (!session) return;
 
         const allConfigIds = Array.from(session.configs.values()).flat().map(c => c.id);
 
         if (allConfigIds.length > 0) {
-            logger.warn({ count: allConfigIds.length, reason }, 'Invalidating configs for token');
+            logger.warn({ count: allConfigIds.length, reason, token: maskToken(token) }, 'Invalidating configs for token');
             await prisma.mirrorConfig.updateMany({
                 where: { id: { in: allConfigIds } },
                 data: { active: false }
             });
         }
+    }
+
+    public async shutdown() {
+        logger.info('Shutting down all clients...');
+        for (const [token, session] of this.clients) {
+            try {
+                session.client.destroy();
+                logger.info({ token: maskToken(token) }, 'Client destroyed');
+            } catch (e) {
+                logger.error({ err: e, token: maskToken(token) }, 'Error destroying client');
+            }
+        }
+        this.clients.clear();
     }
 }
 
@@ -260,15 +259,26 @@ const manager = ClientManager.getInstance();
 manager.sync();
 
 // Poll every 5 minutes
-setInterval(() => {
+const interval = setInterval(() => {
     manager.sync();
 }, 5 * 60 * 1000);
 
 // Graceful Shutdown
 process.on('SIGINT', async () => {
-    logger.info('Shutting down...');
+    logger.info('Received SIGINT. Shutting down...');
+    clearInterval(interval);
+    await manager.shutdown();
     await prisma.$disconnect();
     process.exit(0);
 });
 
-logger.info('Disbot Mirroring Engine Started');
+// Also handle SIGTERM
+process.on('SIGTERM', async () => {
+    logger.info('Received SIGTERM. Shutting down...');
+    clearInterval(interval);
+    await manager.shutdown();
+    await prisma.$disconnect();
+    process.exit(0);
+});
+
+logger.info('DISBOT Mirroring Engine Started');

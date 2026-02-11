@@ -6,7 +6,7 @@ import { LayoutDashboard, LogOut, Settings, ShieldAlert, Bot, Zap, Disc } from "
 import { cn } from "@/lib/utils";
 import Logo from "@/components/Logo";
 import { signOut, useSession } from "next-auth/react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 
 interface SidebarProps {
     usageCount?: number;
@@ -26,6 +26,12 @@ export default function Sidebar({
 
     const menuItems = [
         {
+            title: "Dashboard",
+            href: "/dashboard",
+            icon: LayoutDashboard,
+            description: "Overview"
+        },
+        {
             title: "Expert Mode",
             href: "/dashboard/expert",
             icon: ShieldAlert,
@@ -40,19 +46,19 @@ export default function Sidebar({
     ];
 
     return (
-        <aside className="hidden md:flex flex-col fixed inset-y-4 left-4 w-72 rounded-3xl bg-[#161B2B]/40 backdrop-blur-xl border border-white/5 z-50 overflow-hidden shadow-2xl">
+        <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-64 bg-zinc-950 border-r border-zinc-800 z-50 rounded-none">
             {/* Header */}
-            <div className="h-24 flex items-center justify-center border-b border-white/5">
+            <div className="h-16 flex items-center px-6 border-b border-zinc-800 bg-zinc-950">
                 <Logo showText />
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 px-4 py-8 space-y-8 overflow-y-auto custom-scrollbar">
+            <nav className="flex-1 px-0 py-6 space-y-8 overflow-y-auto">
 
                 {/* Main Menu */}
-                <div className="space-y-2">
-                    <h3 className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mb-4">
-                        Mirroring Console
+                <div className="space-y-1">
+                    <h3 className="px-6 text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-3 select-none">
+                        Console
                     </h3>
                     {menuItems.map((item) => {
                         const isActive = pathname === item.href;
@@ -61,119 +67,101 @@ export default function Sidebar({
                                 key={item.href}
                                 href={item.href}
                                 className={cn(
-                                    "relative group flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300",
+                                    "group flex items-center gap-3 px-6 py-2.5 transition-all duration-200 border-l-2",
                                     isActive
-                                        ? "bg-white/[0.03] text-white"
-                                        : "text-gray-400 hover:text-white"
+                                        ? "bg-zinc-900/50 border-primary text-primary"
+                                        : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/30 hover:border-zinc-700"
                                 )}
                             >
-                                {isActive && (
-                                    <motion.div
-                                        layoutId="active-glow"
-                                        className="absolute inset-0 rounded-2xl bg-gradient-to-r from-[#00D1FF]/10 to-transparent opacity-50"
-                                        initial={{ opacity: 0 }}
-                                        animate={{ opacity: 1 }}
-                                        exit={{ opacity: 0 }}
-                                    />
-                                )}
-                                {isActive && (
-                                    <motion.div
-                                        layoutId="active-bar"
-                                        className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-[#00D1FF] rounded-r-full shadow-[0_0_12px_#00D1FF]"
-                                    />
-                                )}
-
                                 <item.icon className={cn(
-                                    "w-5 h-5 transition-transform duration-300",
-                                    isActive ? "text-[#00D1FF] scale-110" : "text-gray-500 group-hover:text-gray-300"
+                                    "w-4 h-4 transition-colors",
+                                    isActive ? "text-primary" : "text-zinc-500 group-hover:text-zinc-300"
                                 )} />
 
-                                <div className="z-10">
-                                    <span className={cn(
-                                        "font-medium block tracking-wide",
-                                        isActive ? "text-white" : "text-gray-400 group-hover:text-gray-200"
-                                    )}>
-                                        {item.title}
-                                    </span>
-                                </div>
+                                <span className={cn(
+                                    "text-xs font-bold tracking-wide font-mono uppercase",
+                                    isActive ? "text-primary shadow-primary/20" : "text-zinc-400 group-hover:text-zinc-200"
+                                )}>
+                                    {item.title}
+                                </span>
                             </Link>
                         );
                     })}
                 </div>
 
                 {/* System Menu */}
-                <div className="space-y-2">
-                    <h3 className="px-4 text-[10px] font-bold text-gray-400 uppercase tracking-[0.2em] mb-4">
+                <div className="space-y-1">
+                    <h3 className="px-6 text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-3 select-none">
                         System
                     </h3>
                     <Link
                         href="/dashboard/settings"
                         className={cn(
-                            "group flex items-center gap-4 px-4 py-3.5 rounded-2xl transition-all duration-300",
+                            "group flex items-center gap-3 px-6 py-2.5 transition-all duration-200 border-l-2",
                             pathname === "/dashboard/settings"
-                                ? "bg-white/[0.03] text-white"
-                                : "text-gray-400 hover:text-white"
+                                ? "bg-zinc-900/50 border-primary text-primary"
+                                : "border-transparent text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/30 hover:border-zinc-700"
                         )}
                     >
                         <Settings className={cn(
-                            "w-5 h-5 transition-colors",
-                            pathname === "/dashboard/settings" ? "text-[#00D1FF]" : "text-gray-500 group-hover:text-gray-300"
+                            "w-4 h-4 transition-colors",
+                            pathname === "/dashboard/settings" ? "text-primary" : "text-zinc-500 group-hover:text-zinc-300"
                         )} />
-                        <span className="font-medium tracking-wide">Settings</span>
+                        <span className="text-xs font-bold tracking-wide font-mono uppercase">Settings</span>
                     </Link>
                 </div>
             </nav>
 
             {/* Footer / Quota */}
-            <div className="p-4 mt-auto border-t border-white/5 bg-[#0B0F1A]/30">
+            <div className="p-4 border-t border-zinc-800 bg-zinc-950">
                 {/* Quota Widget */}
-                <div className="mb-6 p-5 rounded-2xl bg-black/20 border border-white/5 relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-gradient-to-br from-[#00D1FF]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                <div className="mb-4 p-4 border border-zinc-800 bg-zinc-900/30 rounded-none relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-primary/5 to-transparent -z-10 group-hover:from-primary/10 transition-colors" />
 
-                    <div className="flex items-center justify-between mb-3 relative z-10">
-                        <span className="text-[10px] font-bold text-[#00D1FF] uppercase tracking-wider flex items-center gap-1.5">
+                    <div className="flex items-center justify-between mb-2">
+                        <span className="text-[10px] font-mono text-primary uppercase tracking-widest flex items-center gap-1.5 font-bold">
                             <Zap className="w-3 h-3 fill-current" />
                             {planName}
                         </span>
-                        <span className="text-[10px] font-mono text-gray-400">
+                        <span className="text-[10px] font-mono text-zinc-500">
                             {usageCount}/{usageLimit === Infinity ? "∞" : usageLimit}
                         </span>
                     </div>
 
-                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden relative z-10">
+                    <div className="h-0.5 w-full bg-zinc-800 overflow-hidden rounded-none">
                         <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: `${percentage}%` }}
                             className={cn(
-                                "h-full rounded-full shadow-[0_0_10px_currentColor]",
-                                percentage > 90 ? "bg-red-500 text-red-500" : "bg-[#00D1FF] text-[#00D1FF]"
+                                "h-full bg-primary",
+                                percentage > 90 ? "bg-red-500" : "bg-primary"
                             )}
                         />
                     </div>
                 </div>
 
                 {/* User Profile */}
-                <div className="flex items-center gap-4 px-2 pt-2">
-                    <div className={cn(
-                        "w-10 h-10 rounded-full flex items-center justify-center overflow-hidden border border-white/10 shadow-lg",
-                        "bg-gradient-to-br from-[#161B2B] to-[#0B0F1A]"
-                    )}>
+                <div className="flex items-center gap-3 pt-2">
+                    <div className="w-8 h-8 flex items-center justify-center overflow-hidden border border-zinc-700 bg-zinc-800 rounded-none shrink-0">
                         {session?.user?.image ? (
-                            <img src={session.user.image} alt="User" className="w-full h-full object-cover" />
+                            <img src={session.user.image} alt="User" className="w-full h-full object-cover rounded-none" />
                         ) : (
-                            <span className="font-bold text-sm text-[#00D1FF]">{session?.user?.name?.[0]}</span>
+                            <span className="font-mono text-xs text-primary font-bold">{session?.user?.name?.[0]}</span>
                         )}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-white truncate leading-tight">{session?.user?.name}</p>
-                        <p className="text-[10px] text-gray-500 truncate font-medium">Verified User</p>
+                        <p className="text-xs font-mono text-zinc-200 truncate font-bold uppercase">{session?.user?.name}</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                            <div className="w-1 h-1 bg-emerald-500 rounded-none animate-pulse" />
+                            <p className="text-[9px] text-zinc-500 uppercase tracking-wider font-mono">System Active</p>
+                        </div>
                     </div>
                     <button
                         onClick={() => signOut()}
-                        className="p-2 text-gray-500 hover:text-red-400 transition-colors opacity-70 hover:opacity-100"
+                        className="p-2 text-zinc-500 hover:text-red-400 transition-colors border border-transparent hover:border-red-900/30 hover:bg-red-900/10 rounded-none"
                         title="Sign Out"
                     >
-                        <LogOut className="w-4 h-4" />
+                        <LogOut className="w-3.5 h-3.5" />
                     </button>
                 </div>
             </div>
