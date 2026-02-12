@@ -185,48 +185,31 @@ class ClientManager {
             files: message.attachments.map((a: any) => a.url)
         };
 
-        // Handle Forwarded Messages / Replies
-        if (message.reference && message.reference.messageId) {
+        // Handle Forwarded Messages (Discord's native forward feature)
+        // Forwarded messages have empty content; actual data lives in messageSnapshots
+        const isForward = (message.reference as any)?.type === 'FORWARD';
+
+        if (isForward) {
             try {
-                let referencedMessage: Message | null = null;
+                const snapshot = (message as any).messageSnapshots?.first?.();
 
-                // Determine source channel
-                if (message.reference.channelId === message.channelId) {
-                    referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
-                } else {
-                    // Fetch remote channel for cross-channel forwards
-                    const remoteChannel = await session.client.channels.fetch(message.reference.channelId) as any;
-                    // Ensure the channel supports messages (TextChannel, NewsChannel, etc.)
-                    if (remoteChannel && typeof remoteChannel.messages?.fetch === 'function') {
-                        referencedMessage = await remoteChannel.messages.fetch(message.reference.messageId);
+                if (snapshot) {
+                    // Format: 📨 Forwarded label + original content
+                    let fwdContent = `📨 **Forwarded Message**\n`;
+
+                    if (snapshot.content) {
+                        fwdContent += `>>> ${snapshot.content}`;
                     }
-                }
+                    payload.content = fwdContent;
 
-                if (referencedMessage) {
-                    // Logic for "Forward without unique content" (Pure Forward)
-                    // In many updated clients, message.content is empty string for pure forwards
-                    if (!message.content) {
-                        let fwdContent = `> **Forwarded from ${referencedMessage.author.username}**\n\n`;
-                        if (referencedMessage.content) {
-                            fwdContent += referencedMessage.content;
-                        }
-                        payload.content = fwdContent;
+                    // Carry over embeds from the snapshot
+                    if (payload.embeds.length === 0 && snapshot.embeds?.length > 0) {
+                        payload.embeds = snapshot.embeds.map((e: any) => e.toJSON ? e.toJSON() : e) as any;
+                    }
 
-                        // If original message had embeds/files, carry them over
-                        // This corresponds to "news" style messages that are often just one big embed
-                        if (payload.embeds.length === 0 && referencedMessage.embeds.length > 0) {
-                            // Map embeds to plain objects to ensure compatibility between selfbot-v13 and discord.js v14
-                            payload.embeds = referencedMessage.embeds.map(e => e.toJSON ? e.toJSON() : e) as any;
-                        }
-                        if (payload.files.length === 0 && referencedMessage.attachments.size > 0) {
-                            payload.files = referencedMessage.attachments.map((a: any) => a.url);
-                        }
-                    } else {
-                        // Standard reply with content
-                        // Only clip if content exists
-                        const preview = referencedMessage.content ? referencedMessage.content.substring(0, 50).replace(/\n/g, ' ') : 'Attachment';
-                        const replyContext = `> **Replying to ${referencedMessage.author.username}**: ${preview}${referencedMessage.content && referencedMessage.content.length > 50 ? '...' : ''}\n\n`;
-                        payload.content = replyContext + message.content;
+                    // Carry over attachments from the snapshot
+                    if (payload.files.length === 0 && snapshot.attachments?.size > 0) {
+                        payload.files = snapshot.attachments.map((a: any) => a.url);
                     }
                 }
 
@@ -234,8 +217,41 @@ class ClientManager {
                 if (payload.content && payload.content.length > 2000) {
                     payload.content = payload.content.substring(0, 1997) + '...';
                 }
+            } catch (err: any) {
+                logger.warn({ msg: err?.message || 'Unknown error' }, 'Error processing forwarded message');
+            }
+        }
+        // Handle Reply Messages - add context so readers understand what is being replied to
+        else if (message.reference && message.reference.messageId) {
+            try {
+                let referencedMessage: Message | null = null;
+
+                if (message.reference.channelId === message.channelId) {
+                    referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                } else {
+                    const remoteChannel = await session.client.channels.fetch(message.reference.channelId) as any;
+                    if (remoteChannel && typeof remoteChannel.messages?.fetch === 'function') {
+                        referencedMessage = await remoteChannel.messages.fetch(message.reference.messageId);
+                    }
+                }
+
+                if (referencedMessage) {
+                    // Format: ↩️ reply context + user's reply
+                    const preview = referencedMessage.content
+                        ? referencedMessage.content.substring(0, 80).replace(/\n/g, ' ')
+                        : '📎 Attachment';
+                    const ellipsis = referencedMessage.content && referencedMessage.content.length > 80 ? '...' : '';
+                    const replyHeader = `> ↩️ **${referencedMessage.author.username}**: ${preview}${ellipsis}\n\n`;
+
+                    payload.content = replyHeader + (message.content || '');
+                }
+
+                // Truncate content to 2000 characters to prevent API errors
+                if (payload.content && payload.content.length > 2000) {
+                    payload.content = payload.content.substring(0, 1997) + '...';
+                }
             } catch (err) {
-                // Ignore fetch errors (message deleted, etc.)
+                // If fetch fails (message deleted, no access), send reply content as-is
             }
         }
 
