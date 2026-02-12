@@ -202,7 +202,8 @@ class ClientManager {
                         // If original message had embeds/files, carry them over
                         // This corresponds to "news" style messages that are often just one big embed
                         if (payload.embeds.length === 0 && referencedMessage.embeds.length > 0) {
-                            payload.embeds = referencedMessage.embeds;
+                            // Map embeds to plain objects to ensure compatibility between selfbot-v13 and discord.js v14
+                            payload.embeds = referencedMessage.embeds.map(e => e.toJSON ? e.toJSON() : e) as any;
                         }
                         if (payload.files.length === 0 && referencedMessage.attachments.size > 0) {
                             payload.files = referencedMessage.attachments.map((a: any) => a.url);
