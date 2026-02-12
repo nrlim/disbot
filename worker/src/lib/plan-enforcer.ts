@@ -145,17 +145,18 @@ export class PriorityMessageQueue {
 
         while (this.standardQueue.length > 0) {
             const task = this.standardQueue.shift()!;
-            try {
-                await task.fn();
-            } catch (error: any) {
+
+            // Execute task asynchronously (fire-and-forget from the queue's perspective)
+            // This ensures large uploads don't block subsequent messages
+            task.fn().catch((error: any) => {
                 logger.error({
                     configId: task.configId,
                     plan: task.plan,
                     error: error.message || String(error),
                 }, 'Standard queue task failed');
-            }
+            });
 
-            // Brief yield between tasks to avoid starving the event loop
+            // Brief yield between DISPATCHING tasks to avoid starving the event loop
             if (this.standardQueue.length > 0) {
                 await new Promise(r => setTimeout(r, PriorityMessageQueue.STANDARD_DELAY_MS));
             }

@@ -13,7 +13,8 @@ import {
     buildWebhookFilePayload,
     buildBotFilePayload,
     buildRejectionNotice,
-    type MediaForwardResult
+    type MediaForwardResult,
+    type ParsedAttachment
 } from './lib/media';
 import {
     enforcePathLimits,
@@ -433,10 +434,6 @@ class ClientManager {
                 plan: userPlan,
             }, 'Parsing attachments for forwarding');
 
-            // validateMediaForwarding handles all 3 layers:
-            //   1. Plan gate (FREE blocked)
-            //   2. MIME-type allowlist (Starter: image+audio, Pro: +video+docs, Elite: all)
-            //   3. File size limit (8MB / 25MB)
             mediaResult = validateMediaForwarding(rawAttachments, userPlan);
 
             if (mediaResult.rejected.length > 0) {
@@ -466,19 +463,17 @@ class ClientManager {
             avatarURL: string;
             content: string;
             embeds: any[];
-            files: Array<{ attachment: string; name: string }>;
-            botFiles: Array<{ attachment: string; name: string }>;
+            eligibleMedia: ParsedAttachment[];
         } = {
             username: message.author.username,
             avatarURL: message.author.displayAvatarURL(),
             content: '',
             embeds: [],
-            files: [],
-            botFiles: [],
+            eligibleMedia: mediaResult.eligible,
         };
 
+        // ── Handle Forwarded Content ──
         if (isForward) {
-            // ═══ FORWARDED MESSAGE ═══
             const snapshot = (message as any).messageSnapshots?.first?.();
 
             let fwdContent = `-# 📨 Forwarded Message`;
@@ -494,7 +489,7 @@ class ClientManager {
 
             payload.content = fwdContent;
 
-            // Fallback: no snapshot, try fetching original
+            // Fallback: no snapshot, try fetching original reference
             if (!snapshot && message.reference?.messageId) {
                 try {
                     let refMsg: Message | null = null;
@@ -514,8 +509,8 @@ class ClientManager {
                         if (refMsg.attachments.size > 0) {
                             const refParsed = parseAttachments(refMsg.attachments, (refMsg as any).flags);
                             const refFiltered = validateMediaForwarding(refParsed, userPlan);
-                            payload.files = buildWebhookFilePayload(refFiltered.eligible);
-                            payload.botFiles = buildBotFilePayload(refFiltered.eligible);
+                            // Merge allowed media from forwarded message
+                            payload.eligibleMedia = [...payload.eligibleMedia, ...refFiltered.eligible];
                         }
                     }
                 } catch (err: any) {
@@ -527,9 +522,6 @@ class ClientManager {
             // ═══ REPLY MESSAGE ═══
             payload.content = message.content || '';
             payload.embeds = message.embeds as any;
-
-            payload.files = buildWebhookFilePayload(mediaResult.eligible);
-            payload.botFiles = buildBotFilePayload(mediaResult.eligible);
 
             try {
                 let ref: Message | null = null;
@@ -556,8 +548,29 @@ class ClientManager {
             // ═══ REGULAR MESSAGE ═══
             payload.content = message.content || '';
             payload.embeds = message.embeds as any;
-            payload.files = buildWebhookFilePayload(mediaResult.eligible);
-            payload.botFiles = buildBotFilePayload(mediaResult.eligible);
+        }
+
+        // ── Handle SNAPSHOT Strategy (Images/Videos) ──
+        // Generate Embeds for these items
+        const snapshotItems = payload.eligibleMedia.filter(att => att.strategy === 'SNAPSHOT');
+
+        for (const item of snapshotItems) {
+            if (item.category === 'image') {
+                payload.embeds.push({
+                    title: item.name,
+                    url: item.url,
+                    image: { url: item.url },
+                    color: 0x2b2d31 // Discord Dark Theme Color
+                });
+            } else if (item.category === 'video') {
+                // For videos, we create a rich embed with the link
+                payload.embeds.push({
+                    title: `🎥 ${item.name}`,
+                    description: `[Click to Watch Video](${item.url})`,
+                    url: item.url,
+                    color: 0x2b2d31
+                });
+            }
         }
 
         // Append rejection notices
@@ -567,7 +580,7 @@ class ClientManager {
         }
 
         // Add watermark — always add when there's content OR files/embeds
-        const hasFiles = payload.files.length > 0 || payload.botFiles.length > 0;
+        const hasFiles = payload.eligibleMedia.some(att => att.strategy === 'STREAM');
         const hasEmbeds = payload.embeds.length > 0;
         if (payload.content || hasFiles || hasEmbeds) {
             payload.content = (payload.content || '') + `\n-# 📡 via DisBot Engine`;
@@ -612,15 +625,18 @@ class ClientManager {
             username: string;
             avatarURL: string;
             embeds: any[];
-            files: Array<{ attachment: string; name: string }>;
+            eligibleMedia: ParsedAttachment[];
         }
     ) {
+        // Build fresh file payload (including streams) for this request
+        const files = await buildWebhookFilePayload(payload.eligibleMedia);
+
         const sendPayload: any = {
             content: payload.content || undefined,
             username: payload.username,
             avatarURL: payload.avatarURL,
             embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
-            files: payload.files.length > 0 ? payload.files : undefined,
+            files: files.length > 0 ? files : undefined,
             allowedMentions: { parse: [] as string[] }
         };
 
@@ -724,7 +740,7 @@ class ClientManager {
             username: string;
             avatarURL: string;
             embeds: any[];
-            botFiles: Array<{ attachment: string; name: string }>;
+            eligibleMedia: ParsedAttachment[];
         },
         botToken: string
     ) {
@@ -735,6 +751,9 @@ class ClientManager {
         }
 
         const targetChannelId = cfg.targetChannelId || cfg.targetWebhookUrl;
+
+        // Build fresh bot files (streams)
+        let botFiles = await buildBotFilePayload(payload.eligibleMedia);
 
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -757,7 +776,7 @@ class ClientManager {
                     content += payload.content;
                 }
                 // Ensure we always have content when files are present
-                if (!content && payload.botFiles.length > 0) {
+                if (!content && botFiles.length > 0) {
                     content = `-# 📡 via DisBot Engine`;
                 }
                 if (content) {
@@ -768,8 +787,8 @@ class ClientManager {
                     sendOptions.embeds = payload.embeds;
                 }
 
-                if (payload.botFiles.length > 0) {
-                    sendOptions.files = payload.botFiles;
+                if (botFiles.length > 0) {
+                    sendOptions.files = botFiles;
                 }
 
                 await (channel as any).send(sendOptions);
@@ -788,10 +807,10 @@ class ClientManager {
                 if (error.status === 413 || error.code === 40005) {
                     logger.error({
                         configId: cfg.id,
-                        fileCount: payload.botFiles.length,
+                        fileCount: botFiles.length,
                         status: 413
                     }, 'Failed to forward media via bot: Payload too large (413)');
-                    payload.botFiles = [];
+                    botFiles = [];
                     continue;
                 }
 
@@ -811,7 +830,7 @@ class ClientManager {
                         configId: cfg.id,
                         error: error.message,
                     }, 'Failed to forward media via bot: URL expired or file error');
-                    payload.botFiles = [];
+                    botFiles = [];
                     continue;
                 }
 
@@ -824,8 +843,8 @@ class ClientManager {
                         attempt,
                     }, 'Managed Bot send failed after 3 attempts');
                 } else {
-                    if (attempt === 1 && payload.botFiles.length > 0) {
-                        payload.botFiles = [];
+                    if (attempt === 1 && botFiles.length > 0) {
+                        botFiles = [];
                     }
                     await new Promise(r => setTimeout(r, 1000));
                 }

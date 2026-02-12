@@ -1,3 +1,5 @@
+import axios from 'axios';
+import { Readable } from 'stream';
 import { logger } from './logger';
 
 // ──────────────────────────────────────────────────────────────
@@ -63,6 +65,7 @@ const PLAN_FILE_SIZE_LIMITS: Record<string, number> = {
 // ──────────────────────────────────────────────────────────────
 
 type MediaCategory = 'audio' | 'video' | 'document' | 'image' | 'unknown';
+export type MediaStrategy = 'SNAPSHOT' | 'STREAM' | 'REJECT';
 
 /**
  * Categories each plan tier is allowed to forward.
@@ -70,8 +73,8 @@ type MediaCategory = 'audio' | 'video' | 'document' | 'image' | 'unknown';
  */
 const PLAN_ALLOWED_CATEGORIES: Record<string, Set<MediaCategory>> = {
     FREE: new Set(['image']),                                          // FREE: images only
-    STARTER: new Set(['image', 'audio']),                              // Starter: images + audio
-    PRO: new Set(['image', 'audio', 'video', 'document']),             // Pro: full media
+    STARTER: new Set(['image']),                                       // Starter: images only (Audio removed as per strategy)
+    PRO: new Set(['image', 'audio', 'video']),                         // Pro: images+audio+video (Docs removed as per strategy)
     ELITE: new Set(['image', 'audio', 'video', 'document', 'unknown']), // Elite: everything
 };
 
@@ -94,6 +97,8 @@ export interface ParsedAttachment {
     category: MediaCategory;
     /** True if the file is a Discord voice message */
     isVoiceMessage: boolean;
+    /** Forwarding strategy determined by category & plan */
+    strategy: MediaStrategy;
 }
 
 export interface MediaForwardResult {
@@ -141,6 +146,25 @@ export function categoriseAttachment(name: string, contentType: string | null): 
     return 'unknown';
 }
 
+/**
+ * Determines the forwarding strategy based on category.
+ * 
+ * Strategy 1: Images & Videos -> SNAPSHOT (Forward URL, wrap in Embed)
+ * Strategy 2: Audio & Documents -> STREAM (Pipe data directly)
+ */
+export function getMediaStrategy(category: MediaCategory): MediaStrategy {
+    switch (category) {
+        case 'image':
+        case 'video':
+            return 'SNAPSHOT';
+        case 'audio':
+        case 'document':
+            return 'STREAM';
+        default:
+            return 'REJECT'; // Unknown types are rejected or treated as documents if allowed
+    }
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Attachment parsing
 // ──────────────────────────────────────────────────────────────
@@ -169,6 +193,7 @@ export function parseAttachments(attachments: any, messageFlags?: any): ParsedAt
             contentType,
             category,
             isVoiceMessage: isVoice && (category === 'audio' || name.endsWith('.ogg')),
+            strategy: getMediaStrategy(category)
         });
     }
 
@@ -210,8 +235,8 @@ export function getFileSizeLimit(plan: string): number {
 //  │  Plan   │ image/* │ audio/* │ video/*  │ docs/etc │
 //  ├─────────┼─────────┼─────────┼──────────┼──────────┤
 //  │ FREE    │    ✓    │    ✗    │    ✗     │    ✗     │
-//  │ STARTER │    ✓    │    ✓    │    ✗     │    ✗     │
-//  │ PRO     │    ✓    │    ✓    │    ✓     │    ✓     │
+//  │ STARTER │    ✓    │    ✗    │    ✗     │    ✗     │
+//  │ PRO     │    ✓    │    ✓    │    ✓     │    ✗     │
 //  │ ELITE   │    ✓    │    ✓    │    ✓     │    ✓     │
 //  └─────────┴─────────┴─────────┴──────────┴──────────┘
 // ──────────────────────────────────────────────────────────────
@@ -253,19 +278,30 @@ export function validateMediaForwarding(
     const sizeLimit = getFileSizeLimit(userPlan);
 
     for (const att of attachments) {
+        // Special case: Elite users can forward unknown types as Documents (Stream)
+        // We override the strategy to STREAM for unknown types on Elite plan
+        if (userPlan === 'ELITE' && att.category === 'unknown') {
+            att.strategy = 'STREAM';
+            att.category = 'document'; // Treat as document for passing allowlist
+        }
+
         // ── Layer 2: MIME-type / category check ──
-        if (!allowedCategories.has(att.category)) {
-            const reason = `Feature not supported in your plan: ${att.category} files blocked on ${userPlan} plan (${att.name})`;
-            rejected.push({ attachment: att, reason });
+        // Only check against allowed categories if not Elite (Elite allows everything)
+        // Note: We already re-categorized 'unknown' to 'document' for Elite above, but strictly:
+        if (userPlan !== 'ELITE') {
+            if (!allowedCategories.has(att.category)) {
+                const reason = `Feature not supported in your plan: ${att.category} files blocked on ${userPlan} plan (${att.name})`;
+                rejected.push({ attachment: att, reason });
 
-            logger.info({
-                fileName: att.name,
-                category: att.category,
-                contentType: att.contentType,
-                plan: userPlan,
-            }, `Media skipped — ${att.category} not allowed on ${userPlan} plan`);
+                logger.info({
+                    fileName: att.name,
+                    category: att.category,
+                    contentType: att.contentType,
+                    plan: userPlan,
+                }, `Media skipped — ${att.category} not allowed on ${userPlan} plan`);
 
-            continue;
+                continue;
+            }
         }
 
         // ── Layer 3: File-size limit ──
@@ -304,31 +340,74 @@ export function filterAttachments(
 }
 
 // ──────────────────────────────────────────────────────────────
+//  Streaming Helpers
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Fetches a media file as a readable stream.
+ * Used for the "STREAM" strategy (Audio & Documents).
+ */
+export async function fetchMediaStream(url: string): Promise<Readable> {
+    const response = await axios({
+        method: 'GET',
+        url: url,
+        responseType: 'stream'
+    });
+    return response.data;
+}
+
+// ──────────────────────────────────────────────────────────────
 //  Payload builders
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Builds the `files` array for a **Webhook** payload.
- * Webhook.send() accepts either URL strings or { attachment, name } objects.
- * We pass URLs directly — Discord will download and re-host them.
+ * Builds the `files` array for a **Webhook**.
+ * 
+ * UPDATE: Hybrid Forwarding Logic
+ * Snapshot -> Returns URL string (handled by Discord download if in files array, BUT we want Zero Disk Usage).
+ * Stream -> returns Stream object.
  */
-export function buildWebhookFilePayload(eligible: ParsedAttachment[]): Array<{ attachment: string; name: string }> {
-    return eligible.map(att => ({
-        attachment: att.url,
-        name: att.name,
-    }));
+export async function buildWebhookFilePayload(eligible: ParsedAttachment[]): Promise<Array<{ attachment: string | Readable; name: string }>> {
+    const files: Array<{ attachment: string | Readable; name: string }> = [];
+
+    for (const att of eligible) {
+        if (att.strategy === 'STREAM') {
+            try {
+                const stream = await fetchMediaStream(att.url);
+                files.push({
+                    attachment: stream,
+                    name: att.name
+                });
+            } catch (error: any) {
+                logger.error({ fileName: att.name, error: error.message }, 'Failed to stream media');
+            }
+        }
+        // SNAPSHOT strategy items are handled via Embeds in the engine logic
+    }
+    return files;
 }
 
 /**
- * Builds the `files` array for a **Managed Bot** channel.send({ files }) call.
- * discord.js accepts `{ attachment: string | Buffer, name: string }`.
- * We pass CDN URLs so discord.js streams them without buffering into memory.
+ * Builds the `files` array for a **Managed Bot**.
  */
-export function buildBotFilePayload(eligible: ParsedAttachment[]): Array<{ attachment: string; name: string }> {
-    return eligible.map(att => ({
-        attachment: att.url,
-        name: att.name,
-    }));
+export async function buildBotFilePayload(eligible: ParsedAttachment[]): Promise<Array<{ attachment: string | Readable; name: string }>> {
+    const files: Array<{ attachment: string | Readable; name: string }> = [];
+
+    for (const att of eligible) {
+        if (att.strategy === 'STREAM') {
+            try {
+                const stream = await fetchMediaStream(att.url);
+                files.push({
+                    attachment: stream,
+                    name: att.name
+                });
+            } catch (error: any) {
+                logger.error({ fileName: att.name, error: error.message }, 'Failed to stream media');
+            }
+        }
+        // SNAPSHOT strategy items are handled via Embeds in the engine logic
+    }
+    return files;
 }
 
 /**
