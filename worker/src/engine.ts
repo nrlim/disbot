@@ -274,6 +274,11 @@ class ClientManager {
             payload.files = message.attachments.map((a: any) => a.url);
         }
 
+        // Add watermark
+        if (payload.content) {
+            payload.content += `\n-# 📡 via DisBot Engine`;
+        }
+
         // Truncate content to 2000 chars (Discord API limit)
         if (payload.content && payload.content.length > 2000) {
             payload.content = payload.content.substring(0, 1997) + '...';
