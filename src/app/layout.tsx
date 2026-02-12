@@ -9,12 +9,30 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://disbot-neon.vercel.app"),
   title: "DISBOT - Premium Discord Mirroring & Sync Engine",
   description: "Professional Discord mirroring for crypto communities. Zero latency, 100% account safety, and instant sync. The trusted choice for elite traders.",
   openGraph: {
     title: "DISBOT - Premium Discord Mirroring Engine",
     description: "Automate your Discord server with the #1 professional mirroring tool. Safe, fast, and reliable.",
+    url: "https://disbot-neon.vercel.app",
+    siteName: "DISBOT",
+    images: [
+      {
+        url: "/main-logo.png",
+        width: 1200,
+        height: 630,
+        alt: "DISBOT Logo",
+      },
+    ],
+    locale: "en_US",
     type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "DISBOT - Premium Discord Mirroring Engine",
+    description: "Automate your Discord server with the #1 professional mirroring tool. Safe, fast, and reliable.",
+    images: ["/main-logo.png"],
   },
 };
 
