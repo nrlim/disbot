@@ -25,6 +25,116 @@ import {
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
+// ──────────────────────────────────────────────────────────────
+//  Background Task Manager — Resource Guard
+//
+//  Tracks all fire-and-forget snapshot forwarding tasks.
+//  Enforces a per-task timeout (default 10s) and auto-cleans
+//  settled/timed-out entries to maintain the 114.5 MB footprint.
+// ──────────────────────────────────────────────────────────────
+
+interface TrackedTask {
+    promise: Promise<void>;
+    messageId: string;
+    startedAt: number;
+    abortController: AbortController;
+}
+
+class BackgroundTaskManager {
+    private static instance: BackgroundTaskManager;
+    private tasks: Map<string, TrackedTask> = new Map();
+
+    /** Max time a snapshot forwarding task may run before it's force-aborted.
+     *  Set to 10s to accommodate Discord webhook round-trip latency (DNS + TLS + response). */
+    private static readonly TASK_TIMEOUT_MS = 10_000;
+
+    /** Cleanup interval — sweep every 10 seconds */
+    private static readonly CLEANUP_INTERVAL_MS = 10_000;
+
+    private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+    private constructor() {
+        this.cleanupTimer = setInterval(() => this.sweep(), BackgroundTaskManager.CLEANUP_INTERVAL_MS);
+        // Ensure the interval doesn't prevent process exit
+        if (this.cleanupTimer.unref) this.cleanupTimer.unref();
+    }
+
+    public static getInstance(): BackgroundTaskManager {
+        if (!BackgroundTaskManager.instance) {
+            BackgroundTaskManager.instance = new BackgroundTaskManager();
+        }
+        return BackgroundTaskManager.instance;
+    }
+
+    /**
+     * Track a background snapshot task with an automatic timeout.
+     * Returns the AbortController so the caller can wire up timeout logic.
+     */
+    public track(taskId: string, messageId: string, taskFn: (signal: AbortSignal) => Promise<void>): void {
+        const ac = new AbortController();
+
+        // Auto-abort after TASK_TIMEOUT_MS
+        const timer = setTimeout(() => {
+            ac.abort();
+            logger.warn({ taskId, messageId, timeoutMs: BackgroundTaskManager.TASK_TIMEOUT_MS }, '[Async] Snapshot task timed out — aborted after 10s');
+        }, BackgroundTaskManager.TASK_TIMEOUT_MS);
+
+        const wrappedPromise = taskFn(ac.signal)
+            .catch((err: any) => {
+                // Swallow AbortError — it's expected on timeout
+                if (err?.name === 'AbortError' || ac.signal.aborted) return;
+                logger.error({ taskId, messageId, error: err.message || String(err) },
+                    '[Async] Background snapshot task failed');
+            })
+            .finally(() => {
+                clearTimeout(timer);
+                this.tasks.delete(taskId);
+            });
+
+        this.tasks.set(taskId, {
+            promise: wrappedPromise,
+            messageId,
+            startedAt: Date.now(),
+            abortController: ac,
+        });
+    }
+
+    /** Sweep stale entries (defensive — tasks self-cleanup in .finally) */
+    private sweep(): void {
+        const now = Date.now();
+        for (const [id, task] of this.tasks) {
+            if (now - task.startedAt > BackgroundTaskManager.TASK_TIMEOUT_MS * 2) {
+                task.abortController.abort();
+                this.tasks.delete(id);
+                logger.warn({ taskId: id, messageId: task.messageId },
+                    '[Async] Swept stale background task');
+            }
+        }
+    }
+
+    /** Current number of in-flight background tasks */
+    public get activeCount(): number {
+        return this.tasks.size;
+    }
+
+    /** Graceful shutdown — abort all pending tasks */
+    public async shutdown(): Promise<void> {
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
+        for (const [id, task] of this.tasks) {
+            task.abortController.abort();
+        }
+        // Wait for all tasks to settle (they'll resolve/reject quickly after abort)
+        await Promise.allSettled(Array.from(this.tasks.values()).map(t => t.promise));
+        this.tasks.clear();
+    }
+}
+
+// Singleton
+const backgroundTasks = BackgroundTaskManager.getInstance();
+
 // Validate Environment
 validateEncryptionConfig();
 
@@ -397,6 +507,374 @@ class ClientManager {
         });
     }
 
+    // ────────────── NON-BLOCKING SNAPSHOT FORWARDING ──────────────
+
+    /**
+     * Async fire-and-forget function for SNAPSHOT strategy items.
+     *
+     * Extracts `proxy_url` from attachment metadata immediately (zero I/O),
+     * builds lightweight embeds, and forwards them in the background.
+     * Uses `Promise.allSettled` to ensure one failing config never blocks
+     * or crashes the others.
+     *
+     * IMPORTANT: Receives deep-copied configs and snapshot items to prevent
+     * state mutation from the main thread during the next message cycle.
+     *
+     * Wrapped with a 10-second AbortController timeout via BackgroundTaskManager.
+     */
+    private async forwardSnapshotAsync(
+        configs: MirrorActiveConfig[],
+        snapshotItems: ParsedAttachment[],
+        basePayload: {
+            username: string;
+            avatarURL: string;
+            content: string;
+        },
+        messageId: string,
+        token: string,
+        signal: AbortSignal
+    ): Promise<void> {
+        // ── Immediately extract proxy_url from attachment metadata ──
+        // No downloading, no validation — pure metadata extraction
+        const snapshotEmbeds: any[] = [];
+        // Keep raw proxy URLs for plain-text fallback if embed delivery fails
+        const fallbackUrls: string[] = [];
+
+        for (const item of snapshotItems) {
+            // Guard: if we're already aborted, bail out early
+            if (signal.aborted) {
+                logger.warn({ messageId }, '[Async] Snapshot task aborted before embed construction');
+                return;
+            }
+
+            // Extract proxy_url directly from metadata (no download required)
+            // Prefer proxy_url over CDN url — proxy_url is Discord's cached/optimized version
+            const proxyUrl = item.proxyUrl || item.url;
+            fallbackUrls.push(proxyUrl);
+
+            if (item.category === 'image') {
+                // Strict embed format — only include `image.url` to prevent Discord rejection
+                snapshotEmbeds.push({
+                    image: { url: proxyUrl },
+                    color: 0x2b2d31 // Discord Dark Theme Color
+                });
+            } else if (item.category === 'video') {
+                snapshotEmbeds.push({
+                    title: `🎥 ${item.name}`,
+                    description: `[Click to Watch Video](${proxyUrl})`,
+                    url: proxyUrl,
+                    color: 0x2b2d31
+                });
+            }
+        }
+
+        if (snapshotEmbeds.length === 0) return;
+
+        // ── Dispatch to all configs using Promise.allSettled ──
+        // One config failure never blocks or crashes the others
+        const results = await Promise.allSettled(
+            configs.map(async (cfg) => {
+                // Check abort before each forwarding attempt
+                if (signal.aborted) {
+                    throw new DOMException('Snapshot task timed out', 'AbortError');
+                }
+
+                if (cfg.type === 'CUSTOM_HOOK') {
+                    await this.sendWebhookSnapshot(cfg, basePayload, snapshotEmbeds, fallbackUrls, messageId, signal);
+                } else if (cfg.type === 'MANAGED_BOT') {
+                    await this.sendBotSnapshot(cfg, basePayload, snapshotEmbeds, fallbackUrls, messageId, token, signal);
+                }
+            })
+        );
+
+        // ── Log results (non-blocking, informational) ──
+        const failures = results.filter(r => r.status === 'rejected');
+        if (failures.length > 0) {
+            logger.warn({
+                messageId,
+                totalConfigs: configs.length,
+                failed: failures.length,
+                errors: failures.map(f => (f as PromiseRejectedResult).reason?.message || String((f as PromiseRejectedResult).reason)),
+            }, '[Async] Some snapshot forwarding tasks failed (isolated)');
+        } else {
+            logger.debug({
+                messageId,
+                snapshotCount: snapshotItems.length,
+                configCount: configs.length,
+            }, '[Async] All snapshot tasks completed successfully');
+        }
+    }
+
+    // ────────────── SNAPSHOT WEBHOOK DELIVERY ──────────────
+
+    /**
+     * Dedicated webhook sender for SNAPSHOT payloads.
+     *
+     * Key differences from `forwardViaWebhook`:
+     * - Strict Discord-compliant payload: `content` is always a string (never null/undefined)
+     * - 10s request timeout (no files to upload, so 60s is overkill)
+     * - AbortError diagnostics: logs DNS/Connection/TLS failure context
+     * - Fallback: if embed delivery fails, retries as a plain-text URL message
+     */
+    private async sendWebhookSnapshot(
+        cfg: MirrorActiveConfig,
+        basePayload: { username: string; avatarURL: string; content: string },
+        embeds: any[],
+        fallbackUrls: string[],
+        messageId: string,
+        taskSignal: AbortSignal
+    ): Promise<void> {
+        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
+
+        // ── Strict payload structure (content is always "" not null/undefined) ──
+        const sendPayload: any = {
+            content: basePayload.content || '',
+            username: basePayload.username,
+            avatarURL: basePayload.avatarURL,
+            embeds: embeds,
+            allowedMentions: { parse: [] as string[] }
+        };
+
+        // ── Attempt 1: Send with embeds ──
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            // Bail if the background task was timed out
+            if (taskSignal.aborted) {
+                throw new DOMException('Background task aborted', 'AbortError');
+            }
+
+            const controller = new AbortController();
+            // 10s request timeout — snapshot payloads are lightweight (no file upload)
+            const requestTimer = setTimeout(() => controller.abort(), 10_000);
+
+            try {
+                await webhookClient.send({
+                    ...sendPayload,
+                    // @ts-ignore - abort signal for per-request timeout
+                    signal: controller.signal
+                });
+
+                clearTimeout(requestTimer);
+
+                // Success — update lastActiveAt (fire and forget)
+                prisma.mirrorConfig.update({
+                    where: { id: cfg.id },
+                    data: { updatedAt: new Date(), lastActiveAt: new Date() }
+                }).catch(() => { });
+
+                logger.debug({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot webhook delivered');
+                return;
+
+            } catch (error: any) {
+                clearTimeout(requestTimer);
+
+                // ── AbortError diagnostics ──
+                if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
+                    const phase = this.diagnoseAbortPhase(error);
+                    logger.error({
+                        configId: cfg.id,
+                        messageId,
+                        attempt,
+                        phase,
+                        errorCode: error.code,
+                        errorCause: error.cause?.code || error.cause?.message || undefined,
+                    }, `[Async] Snapshot webhook aborted during: ${phase}`);
+
+                    // If task-level signal triggered, don't retry
+                    if (taskSignal.aborted) return;
+
+                    // Retry once after a brief pause
+                    if (attempt < 2) {
+                        await new Promise(r => setTimeout(r, 500));
+                        continue;
+                    }
+                }
+
+                // Webhook permanently invalid
+                if (error.code === 10015 || error.code === 404) {
+                    logger.error({ configId: cfg.id, code: error.code, messageId }, '[Async] Snapshot webhook not found — disabling config');
+                    this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID').catch(() => { });
+                    return;
+                }
+
+                // ── Non-retriable on attempt 2: fall through to fallback ──
+                if (attempt >= 2) {
+                    logger.warn({
+                        configId: cfg.id,
+                        messageId,
+                        error: error.message || String(error),
+                        code: error.code,
+                    }, '[Async] Snapshot embed delivery failed — attempting plain-text fallback');
+                    break; // Fall through to fallback below
+                }
+
+                // Brief backoff before retry
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        // ── Fallback: Send snapshot as plain-text URL ──
+        // Ensures the image is never silently lost
+        if (taskSignal.aborted) return;
+
+        try {
+            const urlLines = fallbackUrls.join('\n');
+            await webhookClient.send({
+                content: `${basePayload.content || ''}\n${urlLines}\n-# 📡 via DisBot Engine`.substring(0, 2000),
+                username: basePayload.username,
+                avatarURL: basePayload.avatarURL,
+                allowedMentions: { parse: [] as string[] }
+            });
+
+            logger.info({ configId: cfg.id, messageId, urlCount: fallbackUrls.length },
+                '[Async] Snapshot delivered via plain-text URL fallback');
+
+            prisma.mirrorConfig.update({
+                where: { id: cfg.id },
+                data: { updatedAt: new Date(), lastActiveAt: new Date() }
+            }).catch(() => { });
+
+        } catch (fallbackError: any) {
+            logger.error({
+                configId: cfg.id,
+                messageId,
+                error: fallbackError.message || String(fallbackError),
+            }, '[Async] Snapshot plain-text fallback also failed');
+        }
+    }
+
+    // ────────────── SNAPSHOT BOT DELIVERY ──────────────
+
+    /**
+     * Dedicated bot sender for SNAPSHOT payloads.
+     * Mirrors `sendWebhookSnapshot` logic for MANAGED_BOT type.
+     */
+    private async sendBotSnapshot(
+        cfg: MirrorActiveConfig,
+        basePayload: { username: string; avatarURL: string; content: string },
+        embeds: any[],
+        fallbackUrls: string[],
+        messageId: string,
+        botToken: string,
+        taskSignal: AbortSignal
+    ): Promise<void> {
+        const botSession = this.botClients.get(botToken);
+        if (!botSession) {
+            logger.error({ configId: cfg.id, messageId }, '[Async] No bot session found for snapshot delivery');
+            return;
+        }
+
+        const targetChannelId = cfg.targetChannelId || cfg.targetWebhookUrl;
+
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            if (taskSignal.aborted) {
+                throw new DOMException('Background task aborted', 'AbortError');
+            }
+
+            try {
+                const channel = await botSession.client.channels.fetch(targetChannelId);
+                if (!channel || !channel.isTextBased()) {
+                    logger.error({ configId: cfg.id, channelId: targetChannelId, messageId }, '[Async] Target channel not found or not text-based');
+                    await this.markConfigInvalid(cfg.id, 'CHANNEL_NOT_FOUND');
+                    return;
+                }
+
+                let content = '';
+                if (basePayload.username) {
+                    content += `-# 👤 ${basePayload.username}\n`;
+                }
+                if (basePayload.content) {
+                    content += basePayload.content;
+                }
+
+                await (channel as any).send({
+                    content: content || '',
+                    embeds: embeds,
+                    allowedMentions: { parse: [] as string[] }
+                });
+
+                prisma.mirrorConfig.update({
+                    where: { id: cfg.id },
+                    data: { updatedAt: new Date(), lastActiveAt: new Date() }
+                }).catch(() => { });
+
+                logger.debug({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot bot message delivered');
+                return;
+
+            } catch (error: any) {
+                if (error.name === 'AbortError') {
+                    const phase = this.diagnoseAbortPhase(error);
+                    logger.error({ configId: cfg.id, messageId, attempt, phase },
+                        `[Async] Snapshot bot send aborted during: ${phase}`);
+                    if (taskSignal.aborted) return;
+                }
+
+                if (error.code === 50013 || error.code === 50001) {
+                    logger.error({ configId: cfg.id, code: error.code, messageId }, '[Async] Bot lacks permissions for snapshot delivery');
+                    await this.markConfigInvalid(cfg.id, 'MISSING_PERMISSIONS');
+                    return;
+                }
+
+                if (attempt >= 2) {
+                    logger.warn({ configId: cfg.id, messageId, error: error.message }, '[Async] Snapshot bot delivery failed — attempting plain-text fallback');
+                    break;
+                }
+
+                await new Promise(r => setTimeout(r, 500));
+            }
+        }
+
+        // ── Fallback: plain-text URL ──
+        if (taskSignal.aborted) return;
+
+        try {
+            const channel = await botSession.client.channels.fetch(targetChannelId);
+            if (channel && channel.isTextBased()) {
+                const urlLines = fallbackUrls.join('\n');
+                let content = basePayload.username ? `-# 👤 ${basePayload.username}\n` : '';
+                content += `${basePayload.content || ''}\n${urlLines}\n-# 📡 via DisBot Engine`;
+
+                await (channel as any).send({
+                    content: content.substring(0, 2000),
+                    allowedMentions: { parse: [] as string[] }
+                });
+
+                logger.info({ configId: cfg.id, messageId, urlCount: fallbackUrls.length },
+                    '[Async] Snapshot delivered via bot plain-text URL fallback');
+            }
+        } catch (fallbackError: any) {
+            logger.error({ configId: cfg.id, messageId, error: fallbackError.message },
+                '[Async] Snapshot bot plain-text fallback also failed');
+        }
+    }
+
+    // ────────────── ABORT PHASE DIAGNOSTICS ──────────────
+
+    /**
+     * Diagnoses which network phase was active when an AbortError occurred.
+     * Inspects the error cause chain to determine DNS/Connection/TLS/Response.
+     */
+    private diagnoseAbortPhase(error: any): string {
+        const causeCode = error.cause?.code || error.cause?.message || '';
+        const message = error.message || '';
+
+        if (causeCode === 'ENOTFOUND' || causeCode === 'EAI_AGAIN' || message.includes('getaddrinfo')) {
+            return 'DNS_RESOLUTION';
+        }
+        if (causeCode === 'ECONNREFUSED' || causeCode === 'ECONNRESET' || causeCode === 'EPIPE') {
+            return 'TCP_CONNECTION';
+        }
+        if (causeCode === 'ERR_TLS_CERT_ALTNAME_INVALID' || causeCode === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' || message.includes('TLS') || message.includes('SSL')) {
+            return 'TLS_HANDSHAKE';
+        }
+        if (causeCode === 'ETIMEDOUT' || causeCode === 'ESOCKETTIMEDOUT') {
+            return 'SOCKET_TIMEOUT';
+        }
+        if (causeCode === 'UND_ERR_CONNECT_TIMEOUT') {
+            return 'CONNECT_TIMEOUT';
+        }
+        return 'UNKNOWN_PHASE';
+    }
+
     // ────────────── MESSAGE HANDLING ──────────────
 
     private async handleMessage(token: string, message: Message, clientType: 'CUSTOM_HOOK' | 'MANAGED_BOT') {
@@ -550,28 +1028,59 @@ class ClientManager {
             payload.embeds = message.embeds as any;
         }
 
-        // ── Handle SNAPSHOT Strategy (Images/Videos) ──
-        // Generate Embeds for these items
+        // ──────────────────────────────────────────────────────────────
+        //  SNAPSHOT Strategy — Non-Blocking Fire-and-Forget
+        //
+        //  Immediately extract proxy_url from metadata (zero I/O),
+        //  then dispatch snapshot forwarding as a background task.
+        //  The main thread continues to process STREAM items without waiting.
+        // ──────────────────────────────────────────────────────────────
+
         const snapshotItems = payload.eligibleMedia.filter(att => att.strategy === 'SNAPSHOT');
 
-        for (const item of snapshotItems) {
-            if (item.category === 'image') {
-                payload.embeds.push({
-                    title: item.name,
-                    url: item.url,
-                    image: { url: item.url },
-                    color: 0x2b2d31 // Discord Dark Theme Color
-                });
-            } else if (item.category === 'video') {
-                // For videos, we create a rich embed with the link
-                payload.embeds.push({
-                    title: `🎥 ${item.name}`,
-                    description: `[Click to Watch Video](${item.url})`,
-                    url: item.url,
-                    color: 0x2b2d31
-                });
-            }
+        if (snapshotItems.length > 0) {
+            const taskId = `snap_${message.id}_${Date.now()}`;
+
+            logger.info({
+                messageId: message.id,
+                taskId,
+                snapshotCount: snapshotItems.length,
+                items: snapshotItems.map(s => ({ name: s.name, category: s.category, proxyUrl: s.proxyUrl })),
+            }, `[Async] Snapshot task started for MessageID: ${message.id}`);
+
+            // ── Deep-copy to prevent state mutation from the main thread ──
+            // The main thread may reassign `configs` during the next sync cycle
+            // or the next messageCreate event. The background task must own its data.
+            const frozenConfigs: MirrorActiveConfig[] = configs.map(c => ({ ...c }));
+            const frozenSnapshots: ParsedAttachment[] = snapshotItems.map(s => ({ ...s }));
+            const frozenPayload = {
+                username: payload.username,
+                avatarURL: payload.avatarURL,
+                content: '', // Snapshot embeds don't need duplicate content
+            };
+
+            // ── Fire-and-forget: use `void` to ensure zero blocking ──
+            // BackgroundTaskManager handles timeout (10s) and cleanup
+            void backgroundTasks.track(taskId, message.id, (signal) =>
+                this.forwardSnapshotAsync(
+                    frozenConfigs,
+                    frozenSnapshots,
+                    frozenPayload,
+                    message.id,
+                    token,
+                    signal
+                )
+            );
+
+            // ── Main thread continues immediately — zero blocking ──
         }
+
+        // ── Handle STREAM Strategy (Audio/Documents) — remains synchronous ──
+        // STREAM items require downloading and piping, so they stay on the main flow
+        const streamItems = payload.eligibleMedia.filter(att => att.strategy === 'STREAM');
+
+        // Only include STREAM items in the synchronous forwarding payload
+        payload.eligibleMedia = streamItems;
 
         // Append rejection notices
         const rejectionNotice = buildRejectionNotice(mediaResult.rejected);
@@ -580,8 +1089,9 @@ class ClientManager {
         }
 
         // Add watermark — always add when there's content OR files/embeds
-        const hasFiles = payload.eligibleMedia.some(att => att.strategy === 'STREAM');
-        const hasEmbeds = payload.embeds.length > 0;
+        const hasFiles = streamItems.length > 0;
+        const hasSnapshotEmbeds = snapshotItems.length > 0;
+        const hasEmbeds = payload.embeds.length > 0 || hasSnapshotEmbeds;
         if (payload.content || hasFiles || hasEmbeds) {
             payload.content = (payload.content || '') + `\n-# 📡 via DisBot Engine`;
         }
@@ -591,12 +1101,14 @@ class ClientManager {
             payload.content = payload.content.substring(0, 1997) + '...';
         }
 
-        // Skip truly empty messages (no content, no embeds, no files)
+        // Skip truly empty messages (no content, no embeds, no stream files)
+        // Note: snapshot embeds are handled in the background, so we still
+        // need to forward text content and stream files synchronously
         if (!payload.content && !hasEmbeds && !hasFiles) {
             return;
         }
 
-        // ── Execute forwarding in parallel ──
+        // ── Execute synchronous forwarding (text + STREAM items) in parallel ──
         const promises = configs.map(async (cfg) => {
             try {
                 if (cfg.type === 'CUSTOM_HOOK') {
@@ -881,6 +1393,10 @@ class ClientManager {
     public async shutdown() {
         logger.info('Shutting down all clients...');
 
+        // ── Drain background snapshot tasks before destroying clients ──
+        logger.info({ activeTasks: backgroundTasks.activeCount }, 'Draining background snapshot tasks...');
+        await backgroundTasks.shutdown();
+
         for (const [token, session] of this.clients) {
             try {
                 session.client.destroy();
@@ -937,4 +1453,6 @@ process.on('SIGTERM', async () => {
 logger.info({
     pathLimits: PLAN_PATH_LIMITS,
     syncInterval: '5 minutes',
-}, 'DISBOT Mirroring Engine Started — Feature Tiering Active');
+    snapshotStrategy: 'ASYNC_FIRE_AND_FORGET',
+    snapshotTimeoutMs: 10_000,
+}, 'DISBOT Mirroring Engine Started — Feature Tiering Active | Async Snapshot Mirroring Enabled');

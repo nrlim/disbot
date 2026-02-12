@@ -87,6 +87,8 @@ export type { MediaCategory };
 export interface ParsedAttachment {
     /** Discord CDN URL */
     url: string;
+    /** Discord proxy URL — used for SNAPSHOT strategy (no download required) */
+    proxyUrl: string;
     /** Original filename */
     name: string;
     /** Size in bytes */
@@ -188,6 +190,7 @@ export function parseAttachments(attachments: any, messageFlags?: any): ParsedAt
 
         parsed.push({
             url: att.url,
+            proxyUrl: att.proxyURL || att.proxy_url || att.url,
             name,
             size: att.size ?? 0,
             contentType,
