@@ -126,7 +126,9 @@ class ClientManager {
     }
 
     private async spawnClient(token: string, initialConfigs: Map<string, MirrorActiveConfig[]>) {
-        const client = new Client();
+        const client = new Client({
+            checkUpdate: false,
+        } as any);
 
         const session = {
             client,
