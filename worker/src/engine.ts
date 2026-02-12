@@ -185,20 +185,50 @@ class ClientManager {
             files: message.attachments.map((a: any) => a.url)
         };
 
-        // Handle Forwarded Messages (Discord's native forward feature)
-        // Forwarded messages have empty content; actual data lives in messageSnapshots
-        const isForward = (message.reference as any)?.type === 'FORWARD';
+        // Detect forwarded messages using multiple signals
+        const refType = (message.reference as any)?.type;
+        const hasSnapshot = (message as any).flags?.has?.(1 << 14); // HAS_SNAPSHOT = 16384
+        const snapshotsCollection = (message as any).messageSnapshots;
+        const snapshotsSize = snapshotsCollection?.size ?? 0;
+        const isForward = refType === 'FORWARD' || refType === 1 || hasSnapshot || snapshotsSize > 0;
 
+        // Debug log for any message that has a reference (reply or forward)
+        if (message.reference) {
+            logger.info({
+                channelId: message.channelId,
+                messageId: message.id,
+                author: message.author.username,
+                content: message.content?.substring(0, 50) || '(empty)',
+                referenceType: refType,
+                referenceTypeOf: typeof refType,
+                referenceMessageId: message.reference.messageId,
+                referenceChannelId: message.reference.channelId,
+                hasSnapshot,
+                snapshotsSize,
+                flagsBitfield: (message as any).flags?.bitfield,
+                isForward,
+            }, 'Message with reference detected');
+        }
+
+        // Handle Forwarded Messages
         if (isForward) {
             try {
-                const snapshot = (message as any).messageSnapshots?.first?.();
+                const snapshot = snapshotsCollection?.first?.();
+
+                logger.info({
+                    messageId: message.id,
+                    hasSnapshotObj: !!snapshot,
+                    snapshotContent: snapshot?.content?.substring(0, 50) || '(no content)',
+                    snapshotEmbedsCount: snapshot?.embeds?.length ?? 0,
+                    snapshotAttachmentsCount: snapshot?.attachments?.size ?? 0,
+                }, 'Processing forwarded message');
 
                 if (snapshot) {
-                    // Format: 📨 Forwarded label + original content
-                    let fwdContent = `📨 **Forwarded Message**\n`;
+                    // Format: small label + original content
+                    let fwdContent = `-# 📨 Forwarded Message`;
 
                     if (snapshot.content) {
-                        fwdContent += `>>> ${snapshot.content}`;
+                        fwdContent += `\n${snapshot.content}`;
                     }
                     payload.content = fwdContent;
 
@@ -211,6 +241,40 @@ class ClientManager {
                     if (payload.files.length === 0 && snapshot.attachments?.size > 0) {
                         payload.files = snapshot.attachments.map((a: any) => a.url);
                     }
+                } else {
+                    // No snapshot available - try fetching the referenced message as fallback
+                    logger.warn({ messageId: message.id }, 'Forward detected but no snapshot available, trying fetch fallback');
+
+                    if (message.reference?.messageId) {
+                        try {
+                            let refMsg: Message | null = null;
+                            if (message.reference.channelId === message.channelId) {
+                                refMsg = await message.channel.messages.fetch(message.reference.messageId);
+                            } else {
+                                const remoteCh = await session.client.channels.fetch(message.reference.channelId) as any;
+                                if (remoteCh && typeof remoteCh.messages?.fetch === 'function') {
+                                    refMsg = await remoteCh.messages.fetch(message.reference.messageId);
+                                }
+                            }
+
+                            if (refMsg) {
+                                let fwdContent = `-# 📨 Forwarded Message`;
+                                if (refMsg.content) {
+                                    fwdContent += `\n${refMsg.content}`;
+                                }
+                                payload.content = fwdContent;
+
+                                if (payload.embeds.length === 0 && refMsg.embeds.length > 0) {
+                                    payload.embeds = refMsg.embeds.map((e: any) => e.toJSON ? e.toJSON() : e) as any;
+                                }
+                                if (payload.files.length === 0 && refMsg.attachments.size > 0) {
+                                    payload.files = refMsg.attachments.map((a: any) => a.url);
+                                }
+                            }
+                        } catch (fetchErr: any) {
+                            logger.warn({ msg: fetchErr?.message || 'Fetch failed' }, 'Forward fallback fetch failed');
+                        }
+                    }
                 }
 
                 // Truncate content to 2000 characters to prevent API errors
@@ -218,7 +282,7 @@ class ClientManager {
                     payload.content = payload.content.substring(0, 1997) + '...';
                 }
             } catch (err: any) {
-                logger.warn({ msg: err?.message || 'Unknown error' }, 'Error processing forwarded message');
+                logger.error({ msg: err?.message || 'Unknown error', stack: err?.stack }, 'Error processing forwarded message');
             }
         }
         // Handle Reply Messages - add context so readers understand what is being replied to
@@ -236,14 +300,13 @@ class ClientManager {
                 }
 
                 if (referencedMessage) {
-                    // Format: ↩️ reply context + user's reply
+                    // Format: small text reply context + user's reply on next line
                     const preview = referencedMessage.content
-                        ? referencedMessage.content.substring(0, 80).replace(/\n/g, ' ')
+                        ? referencedMessage.content.substring(0, 60).replace(/\n/g, ' ')
                         : '📎 Attachment';
-                    const ellipsis = referencedMessage.content && referencedMessage.content.length > 80 ? '...' : '';
-                    const replyHeader = `> ↩️ **${referencedMessage.author.username}**: ${preview}${ellipsis}\n\n`;
+                    const ellipsis = referencedMessage.content && referencedMessage.content.length > 60 ? '...' : '';
 
-                    payload.content = replyHeader + (message.content || '');
+                    payload.content = `-# ↩️ ${referencedMessage.author.username}: ${preview}${ellipsis}\n${message.content || ''}`;
                 }
 
                 // Truncate content to 2000 characters to prevent API errors
