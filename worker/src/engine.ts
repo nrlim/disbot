@@ -185,6 +185,40 @@ class ClientManager {
             files: message.attachments.map((a: any) => a.url)
         };
 
+        // Handle Forwarded Messages / Replies
+        if (message.reference && message.reference.messageId) {
+            try {
+                const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                if (referencedMessage) {
+                    // Logic for "Forward without unique content" (Pure Forward)
+                    // In many clients, forwarding just sends a message with reference to the original, and empty content
+                    if (!message.content && referencedMessage.content) {
+                        payload.content = `> **Forwarded from ${referencedMessage.author.username}**\n\n${referencedMessage.content}`;
+
+                        // If original message had embeds/files, carry them over
+                        if (payload.embeds.length === 0 && referencedMessage.embeds.length > 0) {
+                            payload.embeds = referencedMessage.embeds;
+                        }
+                        if (payload.files.length === 0 && referencedMessage.attachments.size > 0) {
+                            payload.files = referencedMessage.attachments.map((a: any) => a.url);
+                        }
+                    } else if (payload.content) {
+                        // Standard reply with content
+                        const preview = referencedMessage.content ? referencedMessage.content.substring(0, 50).replace(/\n/g, ' ') : 'Attachment/Embed';
+                        const replyContext = `> **Replying to ${referencedMessage.author.username}**: ${preview}${referencedMessage.content.length > 50 ? '...' : ''}\n\n`;
+                        payload.content = replyContext + payload.content;
+                    }
+                }
+            } catch (err) {
+                // Ignore fetch errors (message deleted, etc.)
+            }
+        }
+
+        // Skip empty messages (e.g. stickers, system messages)
+        if (!payload.content && payload.embeds.length === 0 && payload.files.length === 0) {
+            return;
+        }
+
         // Execute Webhooks in Parallel (High Performance Mode)
         const promises = configs.map(async (cfg) => {
             try {
