@@ -44,8 +44,9 @@ const DEFAULT_FILE_SIZE_LIMIT = 25 * 1024 * 1024;
 /** Strict 8 MB limit for free-tier / unboosted guilds */
 const STRICT_FILE_SIZE_LIMIT = 8 * 1024 * 1024;
 
-// Per-plan file size limits — Starter gets 8 MB, Pro/Elite get 25 MB
+// Per-plan file size limits — FREE/Starter gets 8 MB, Pro/Elite get 25 MB
 const PLAN_FILE_SIZE_LIMITS: Record<string, number> = {
+    FREE: STRICT_FILE_SIZE_LIMIT,
     STARTER: STRICT_FILE_SIZE_LIMIT,
     PRO: DEFAULT_FILE_SIZE_LIMIT,
     ELITE: DEFAULT_FILE_SIZE_LIMIT,
@@ -65,9 +66,10 @@ type MediaCategory = 'audio' | 'video' | 'document' | 'image' | 'unknown';
  * 'unknown' is never allowed for any plan — it's rejected at the category level.
  */
 const PLAN_ALLOWED_CATEGORIES: Record<string, Set<MediaCategory>> = {
-    STARTER: new Set(['image', 'audio']),
-    PRO: new Set(['image', 'audio', 'video', 'document']),
-    ELITE: new Set(['image', 'audio', 'video', 'document', 'unknown']), // Elite allows everything
+    FREE: new Set(['image']),                                          // FREE: images only
+    STARTER: new Set(['image', 'audio']),                              // Starter: images + audio
+    PRO: new Set(['image', 'audio', 'video', 'document']),             // Pro: full media
+    ELITE: new Set(['image', 'audio', 'video', 'document', 'unknown']), // Elite: everything
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -171,12 +173,14 @@ export function parseAttachments(attachments: any, messageFlags?: any): ParsedAt
 //  Plan checks
 // ──────────────────────────────────────────────────────────────
 
-/** Plans that are allowed to forward ANY media at all */
-const MEDIA_ALLOWED_PLANS = new Set(['STARTER', 'PRO', 'ELITE']);
+/** Plans that are allowed to forward ANY media at all (FREE included for images) */
+const MEDIA_ALLOWED_PLANS = new Set(['FREE', 'STARTER', 'PRO', 'ELITE']);
 
 /**
  * Checks if the user's plan allows media forwarding at all.
- * FREE plan users get zero media forwarding.
+ * All plans now allow at least basic image forwarding.
+ * The per-category filtering in validateMediaForwarding() handles
+ * restricting non-image media for lower-tier plans.
  */
 export function isMediaForwardingAllowed(plan: string): boolean {
     return MEDIA_ALLOWED_PLANS.has(plan);
@@ -199,7 +203,7 @@ export function getFileSizeLimit(plan: string): number {
 //  ┌─────────┬─────────┬─────────┬──────────┬──────────┐
 //  │  Plan   │ image/* │ audio/* │ video/*  │ docs/etc │
 //  ├─────────┼─────────┼─────────┼──────────┼──────────┤
-//  │ FREE    │    ✗    │    ✗    │    ✗     │    ✗     │
+//  │ FREE    │    ✓    │    ✗    │    ✗     │    ✗     │
 //  │ STARTER │    ✓    │    ✓    │    ✗     │    ✗     │
 //  │ PRO     │    ✓    │    ✓    │    ✓     │    ✓     │
 //  │ ELITE   │    ✓    │    ✓    │    ✓     │    ✓     │

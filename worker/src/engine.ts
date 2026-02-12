@@ -253,7 +253,7 @@ class ClientManager {
                 id: cfg.id,
                 sourceChannelId: cfg.sourceChannelId,
                 targetWebhookUrl: cfg.targetWebhookUrl,
-                targetChannelId: cfg.targetWebhookUrl,
+                targetChannelId: cfg.targetChannelId ?? cfg.targetWebhookUrl,
                 userToken: decryptedToken,
                 type: 'MANAGED_BOT',
                 userPlan: cfg.user?.plan || 'FREE',
