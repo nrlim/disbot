@@ -286,34 +286,69 @@ class ClientManager {
 
         // Execute Webhooks in Parallel
         const promises = configs.map(async (cfg) => {
-            try {
-                const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
+            const sendPayload = {
+                content: payload.content || undefined,
+                username: payload.username,
+                avatarURL: payload.avatarURL,
+                embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
+                files: payload.files.length > 0 ? payload.files : undefined,
+                allowedMentions: { parse: [] as string[] }
+            };
 
-                await webhookClient.send({
-                    content: payload.content || undefined,
-                    username: payload.username,
-                    avatarURL: payload.avatarURL,
-                    embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
-                    files: payload.files.length > 0 ? payload.files : undefined,
-                    allowedMentions: { parse: [] }
-                });
+            // Retry up to 3 times with timeout
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
-                // Update Last Active - Fire and Forget
-                prisma.mirrorConfig.update({
-                    where: { id: cfg.id },
-                    data: { updatedAt: new Date() }
-                }).catch(() => { });
+                    // 10-second timeout to prevent hanging
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), 10000);
 
-            } catch (error: any) {
-                logger.error({
-                    msg: error.message || 'Webhook Failed',
-                    code: error.code,
-                    configId: cfg.id,
-                    isForward,
-                }, 'Webhook send failed');
+                    try {
+                        await webhookClient.send({
+                            ...sendPayload,
+                            // @ts-ignore - abort signal for timeout
+                            signal: controller.signal
+                        });
+                    } finally {
+                        clearTimeout(timeout);
+                    }
 
-                if (error.code === 10015 || error.code === 404) {
-                    this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID').catch(() => { });
+                    // Success — update last active (fire and forget)
+                    prisma.mirrorConfig.update({
+                        where: { id: cfg.id },
+                        data: { updatedAt: new Date() }
+                    }).catch(() => { });
+
+                    return; // Done, exit retry loop
+
+                } catch (error: any) {
+                    const isLastAttempt = attempt === 3;
+
+                    // Webhook permanently invalid — don't retry
+                    if (error.code === 10015 || error.code === 404) {
+                        logger.error({ configId: cfg.id, code: error.code }, 'Webhook not found — disabling config');
+                        this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID').catch(() => { });
+                        return;
+                    }
+
+                    if (isLastAttempt) {
+                        logger.error({
+                            error: error.message || String(error),
+                            code: error.code,
+                            status: error.status,
+                            configId: cfg.id,
+                            attempt,
+                        }, 'Webhook failed after 3 attempts');
+                    } else {
+                        // On retry: strip files/embeds in case they caused the error
+                        if (attempt === 1 && (sendPayload.files || sendPayload.embeds)) {
+                            sendPayload.files = undefined;
+                            sendPayload.embeds = undefined;
+                        }
+                        // Wait 1 second before retry
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
                 }
             }
         });
