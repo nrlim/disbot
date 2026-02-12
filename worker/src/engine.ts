@@ -1,5 +1,5 @@
 
-import { Client, Message } from 'discord.js-selfbot-v13';
+import { Client, Message, Collection } from 'discord.js-selfbot-v13';
 import { WebhookClient } from 'discord.js';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
@@ -188,7 +188,20 @@ class ClientManager {
         // Handle Forwarded Messages / Replies
         if (message.reference && message.reference.messageId) {
             try {
-                const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                let referencedMessage: Message | null = null;
+
+                // Determine source channel
+                if (message.reference.channelId === message.channelId) {
+                    referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                } else {
+                    // Fetch remote channel for cross-channel forwards
+                    const remoteChannel = await session.client.channels.fetch(message.reference.channelId) as any;
+                    // Ensure the channel supports messages (TextChannel, NewsChannel, etc.)
+                    if (remoteChannel && typeof remoteChannel.messages?.fetch === 'function') {
+                        referencedMessage = await remoteChannel.messages.fetch(message.reference.messageId);
+                    }
+                }
+
                 if (referencedMessage) {
                     // Logic for "Forward without unique content" (Pure Forward)
                     // In many updated clients, message.content is empty string for pure forwards
@@ -215,6 +228,11 @@ class ClientManager {
                         const replyContext = `> **Replying to ${referencedMessage.author.username}**: ${preview}${referencedMessage.content && referencedMessage.content.length > 50 ? '...' : ''}\n\n`;
                         payload.content = replyContext + message.content;
                     }
+                }
+
+                // Truncate content to 2000 characters to prevent API errors
+                if (payload.content && payload.content.length > 2000) {
+                    payload.content = payload.content.substring(0, 1997) + '...';
                 }
             } catch (err) {
                 // Ignore fetch errors (message deleted, etc.)
