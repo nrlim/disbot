@@ -68,30 +68,48 @@ enum Plan {
   ELITE
 }
 
-// Custom model for storing user mirror configurations
 model MirrorConfig {
-  id               String   @id @default(cuid())
-  sourceGuildName  String
-  sourceChannelId  String
-  targetWebhookUrl String
+  id                String       @id @default(cuid())
   
-  // Custom Hook Fields
-  userToken        String?  // Encrypted in production
-  active           Boolean  @default(true)
+  // General Configuration
+  sourcePlatform    PlatformType @default(DISCORD)
+  type              MirrorType   @default(CUSTOM_HOOK)
+  active            Boolean      @default(true)
+  status            String       @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
   
-  type             MirrorType @default(CUSTOM_HOOK)
+  // Discord Source Fields
+  sourceGuildName   String?      // Dibuat optional untuk mendukung Telegram
+  sourceChannelId   String?      // Dibuat optional untuk mendukung Telegram
+  userToken         String?      // Encrypted (Untuk Discord UserBot Mode)
+  
+  // Telegram Source Fields (Strictly MTProto/UserBot)
+  telegramSession   String?      @db.Text // Encrypted Session String (GramJS)
+  telegramChatId    String?      // ID Channel atau Group sumber
+  telegramPhone     String?      // Disimpan untuk memudahkan re-auth jika session expire
+  telegramTopicId   String?      // Optional: Filter by specific forum topic ID
+  
+  // Target Configuration
+  targetWebhookUrl  String?      // Digunakan jika type == CUSTOM_HOOK
+  targetChannelId   String?      // Digunakan jika type == MANAGED_BOT
+  
+  // Ownership & Timestamps
+  userId            String
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  lastActiveAt      DateTime?
 
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  
-  status           String   @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
-  lastActiveAt     DateTime?
+  @@index([userId])
+  @@index([sourcePlatform])
 }
 
 enum MirrorType {
   CUSTOM_HOOK
   MANAGED_BOT
+}
+
+enum PlatformType {
+  DISCORD
+  TELEGRAM
 }

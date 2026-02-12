@@ -144,16 +144,28 @@ const prisma = new PrismaClient();
 // Priority queue singleton
 const messageQueue = PriorityMessageQueue.getInstance();
 
+
+import { TelegramListener, TelegramConfig } from './lib/telegramMTProto';
+
 // ──────────────────────────────────────────────────────────────
 //  Types
 // ──────────────────────────────────────────────────────────────
 
 type MirrorActiveConfig = {
     id: string;
-    sourceChannelId: string;
+    sourcePlatform: 'DISCORD' | 'TELEGRAM';
+
+    // Discord fields
+    sourceChannelId: string; // Can be empty for Telegram
+    userToken?: string;      // Can be null for Telegram
+
+    // Telegram fields
+    telegramSession?: string;
+    telegramChatId?: string;
+    telegramTopicId?: string;
+
     targetWebhookUrl: string;
-    userToken: string;
-    /** Mirror type determines forwarding strategy */
+    /** Mirror type determines forwarding strategy (Discord only currently) */
     type: 'CUSTOM_HOOK' | 'MANAGED_BOT';
     /** Target channel ID — only used for MANAGED_BOT */
     targetChannelId?: string;
@@ -162,6 +174,9 @@ type MirrorActiveConfig = {
     /** Owner's userId — for path-limit grouping */
     userId: string;
 };
+
+// Singleton for Telegram Listener
+const telegramListener = TelegramListener.getInstance();
 
 // ──────────────────────────────────────────────────────────────
 //  Client Manager (Singleton)
@@ -201,10 +216,29 @@ class ClientManager {
 
         try {
             // 1. Fetch ALL active configs (both types) with user plan
-            const activeConfigs = await prisma.mirrorConfig.findMany({
+            // The query naturally returns new fields because they are part of the model
+            const activeConfigsRaw = await prisma.mirrorConfig.findMany({
                 where: { active: true },
                 include: { user: { select: { plan: true } } }
             });
+
+            // Map Prisma result to MirrorActiveConfig
+            // We need to handle nulls/formatting
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const activeConfigs: MirrorActiveConfig[] = activeConfigsRaw.map((cfg: any) => ({
+                id: cfg.id,
+                sourcePlatform: (cfg.sourcePlatform as 'DISCORD' | 'TELEGRAM') || 'DISCORD',
+                sourceChannelId: cfg.sourceChannelId || '',
+                userToken: cfg.userToken || undefined,
+                telegramSession: cfg.telegramSession || undefined,
+                telegramChatId: cfg.telegramChatId || undefined,
+                telegramTopicId: cfg.telegramTopicId || undefined,
+                targetWebhookUrl: cfg.targetWebhookUrl,
+                type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
+                targetChannelId: cfg.targetChannelId || undefined,
+                userPlan: cfg.user?.plan || 'FREE',
+                userId: cfg.userId
+            }));
 
             // ── 2. Enforce path limits PER USER ──
             // Group by userId, apply plan caps, flatten back
@@ -215,7 +249,7 @@ class ClientManager {
                 configsByUser.get(uid)!.push(cfg);
             }
 
-            const allowedConfigs: any[] = [];
+            const allowedConfigs: MirrorActiveConfig[] = [];
 
             for (const [userId, userConfigs] of configsByUser) {
                 try {
@@ -243,22 +277,48 @@ class ClientManager {
                 }
             }
 
-            // ── 3. Separate by type & dispatch ──
-            const hookConfigs: typeof allowedConfigs = [];
-            const botConfigs: typeof allowedConfigs = [];
+            // ── 3. Separate by Platform & Type ──
+            const discordHookConfigs: MirrorActiveConfig[] = [];
+            const discordBotConfigs: MirrorActiveConfig[] = [];
+            const telegramConfigs: TelegramConfig[] = []; // Using simplified type for Telegram listener
 
             for (const cfg of allowedConfigs) {
-                if (cfg.type === 'CUSTOM_HOOK') hookConfigs.push(cfg);
-                else if (cfg.type === 'MANAGED_BOT') botConfigs.push(cfg);
+                if (cfg.sourcePlatform === 'TELEGRAM') {
+                    // Decrypt token if needed before passing to listener
+                    // Assuming telegramSession is encrypted
+                    let decryptedSession = cfg.telegramSession || '';
+                    if (decryptedSession && decryptedSession.includes(':')) {
+                        // Decrypting
+                        decryptedSession = decrypt(decryptedSession, process.env.ENCRYPTION_KEY || '') || '';
+                    }
+
+                    if (decryptedSession && cfg.telegramChatId) {
+                        telegramConfigs.push({
+                            id: cfg.id,
+                            telegramSession: decryptedSession,
+                            telegramChatId: cfg.telegramChatId,
+                            telegramTopicId: cfg.telegramTopicId,
+                            targetWebhookUrl: cfg.targetWebhookUrl,
+                        });
+                    }
+                    continue;
+                }
+
+                // Implicitly DISCORD
+                if (cfg.type === 'CUSTOM_HOOK') discordHookConfigs.push(cfg);
+                else if (cfg.type === 'MANAGED_BOT') discordBotConfigs.push(cfg);
             }
 
-            await this.syncCustomHookClients(hookConfigs);
-            await this.syncManagedBotClients(botConfigs);
+            // Sync Clients
+            await this.syncCustomHookClients(discordHookConfigs);
+            await this.syncManagedBotClients(discordBotConfigs);
+            await telegramListener.sync(telegramConfigs);
 
             logger.info({
                 totalActive: allowedConfigs.length,
-                hooks: hookConfigs.length,
-                bots: botConfigs.length,
+                discordHooks: discordHookConfigs.length,
+                discordBots: discordBotConfigs.length,
+                telegramListeners: telegramConfigs.length,
                 queueDepth: messageQueue.queueDepth,
             }, 'Sync cycle complete');
 
@@ -269,7 +329,7 @@ class ClientManager {
 
     // ────────────── CUSTOM HOOK SYNC ──────────────
 
-    private async syncCustomHookClients(activeConfigs: any[]) {
+    private async syncCustomHookClients(activeConfigs: MirrorActiveConfig[]) {
         const configsByToken = new Map<string, MirrorActiveConfig[]>();
 
         for (const cfg of activeConfigs) {
@@ -294,11 +354,12 @@ class ClientManager {
             }
             configsByToken.get(decryptedToken)?.push({
                 id: cfg.id,
+                sourcePlatform: cfg.sourcePlatform,
                 sourceChannelId: cfg.sourceChannelId,
                 targetWebhookUrl: cfg.targetWebhookUrl,
                 userToken: decryptedToken,
                 type: 'CUSTOM_HOOK',
-                userPlan: cfg.user?.plan || 'FREE',
+                userPlan: cfg.userPlan,
                 userId: cfg.userId,
             });
         }
@@ -335,7 +396,7 @@ class ClientManager {
 
     // ────────────── MANAGED BOT SYNC ──────────────
 
-    private async syncManagedBotClients(activeConfigs: any[]) {
+    private async syncManagedBotClients(activeConfigs: MirrorActiveConfig[]) {
         const configsByToken = new Map<string, MirrorActiveConfig[]>();
 
         for (const cfg of activeConfigs) {
@@ -360,12 +421,13 @@ class ClientManager {
             }
             configsByToken.get(decryptedToken)?.push({
                 id: cfg.id,
+                sourcePlatform: cfg.sourcePlatform,
                 sourceChannelId: cfg.sourceChannelId,
                 targetWebhookUrl: cfg.targetWebhookUrl,
                 targetChannelId: cfg.targetChannelId ?? cfg.targetWebhookUrl,
                 userToken: decryptedToken,
                 type: 'MANAGED_BOT',
-                userPlan: cfg.user?.plan || 'FREE',
+                userPlan: cfg.userPlan,
                 userId: cfg.userId,
             });
         }
@@ -632,7 +694,7 @@ class ClientManager {
             username: basePayload.username,
             avatarURL: basePayload.avatarURL,
             embeds: embeds,
-            allowedMentions: { parse: [] as string[] }
+            allowedMentions: { parse: [] }
         };
 
         // ── Attempt 1: Send with embeds ──
@@ -722,7 +784,7 @@ class ClientManager {
                 content: `${basePayload.content || ''}\n${urlLines}\n-# 📡 via DisBot Engine`.substring(0, 2000),
                 username: basePayload.username,
                 avatarURL: basePayload.avatarURL,
-                allowedMentions: { parse: [] as string[] }
+                allowedMentions: { parse: [] }
             });
 
             logger.info({ configId: cfg.id, messageId, urlCount: fallbackUrls.length },
@@ -789,7 +851,7 @@ class ClientManager {
                 await (channel as any).send({
                     content: content || '',
                     embeds: embeds,
-                    allowedMentions: { parse: [] as string[] }
+                    allowedMentions: { parse: [] }
                 });
 
                 prisma.mirrorConfig.update({
@@ -835,7 +897,7 @@ class ClientManager {
 
                 await (channel as any).send({
                     content: content.substring(0, 2000),
-                    allowedMentions: { parse: [] as string[] }
+                    allowedMentions: { parse: [] }
                 });
 
                 logger.info({ configId: cfg.id, messageId, urlCount: fallbackUrls.length },
@@ -1045,7 +1107,7 @@ class ClientManager {
                 messageId: message.id,
                 taskId,
                 snapshotCount: snapshotItems.length,
-                items: snapshotItems.map(s => ({ name: s.name, category: s.category, proxyUrl: s.proxyUrl })),
+                items: snapshotItems.map(s => ({ name: s.name, category: s.category })),
             }, `[Async] Snapshot task started for MessageID: ${message.id}`);
 
             // ── Deep-copy to prevent state mutation from the main thread ──
@@ -1149,7 +1211,7 @@ class ClientManager {
             avatarURL: payload.avatarURL,
             embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
             files: files.length > 0 ? files : undefined,
-            allowedMentions: { parse: [] as string[] }
+            allowedMentions: { parse: [] }
         };
 
         // Ensure we always have content when files are present (Discord API requirement)
@@ -1277,7 +1339,7 @@ class ClientManager {
                 }
 
                 const sendOptions: any = {
-                    allowedMentions: { parse: [] as string[] }
+                    allowedMentions: { parse: [] }
                 };
 
                 let content = '';
@@ -1397,6 +1459,9 @@ class ClientManager {
         logger.info({ activeTasks: backgroundTasks.activeCount }, 'Draining background snapshot tasks...');
         await backgroundTasks.shutdown();
 
+        // ── Shutdown Telegram MTProto sessions ──
+        await telegramListener.shutdown();
+
         for (const [token, session] of this.clients) {
             try {
                 session.client.destroy();
@@ -1455,4 +1520,6 @@ logger.info({
     syncInterval: '5 minutes',
     snapshotStrategy: 'ASYNC_FIRE_AND_FORGET',
     snapshotTimeoutMs: 10_000,
-}, 'DISBOT Mirroring Engine Started — Feature Tiering Active | Async Snapshot Mirroring Enabled');
+    telegramMediaTimeout: 15_000,
+    telegramMaxConcurrentDownloads: 5,
+}, 'DISBOT Mirroring Engine Started — Feature Tiering Active | Async Snapshot & Telegram Mirroring Enabled');

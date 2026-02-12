@@ -13,12 +13,16 @@ import { useRouter } from "next/navigation";
 
 interface MirrorConfig {
     id: string;
+    sourcePlatform?: 'DISCORD' | 'TELEGRAM';
     sourceGuildName: string | null;
-    sourceChannelId: string;
+    sourceChannelId: string; // Empty for Telegram
     targetWebhookUrl: string;
     active: boolean;
     createdAt: Date;
     userToken?: string | null;
+    telegramSession?: string | null;
+    telegramChatId?: string | null;
+    telegramTopicId?: string | null;
 }
 
 interface WebhookListProps {
@@ -175,11 +179,18 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                                         {/* Source */}
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col">
-                                                <span className="text-zinc-200 font-medium text-sm truncate max-w-[180px] font-sans tracking-tight">
-                                                    {config.sourceGuildName || "Unknown Server"}
-                                                </span>
-                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5" title={config.sourceChannelId}>
-                                                    ID: {config.sourceChannelId}
+                                                <div className="flex items-center gap-2">
+                                                    {config.sourcePlatform === 'TELEGRAM' ? (
+                                                        <span className="text-[10px] bg-sky-900/50 text-sky-200 px-1 rounded font-mono">TG</span>
+                                                    ) : (
+                                                        <span className="text-[10px] bg-indigo-900/50 text-indigo-200 px-1 rounded font-mono">DS</span>
+                                                    )}
+                                                    <span className="text-zinc-200 font-medium text-sm truncate max-w-[150px] font-sans tracking-tight">
+                                                        {config.sourceGuildName || "Unknown Source"}
+                                                    </span>
+                                                </div>
+                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 ml-8" title={config.sourcePlatform === 'TELEGRAM' ? config.telegramChatId! : config.sourceChannelId}>
+                                                    ID: {config.sourcePlatform === 'TELEGRAM' ? config.telegramChatId : config.sourceChannelId}
                                                 </span>
                                             </div>
                                         </td>

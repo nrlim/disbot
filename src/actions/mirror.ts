@@ -11,10 +11,51 @@ import { PLAN_LIMITS } from "@/lib/constants";
 // --- Schema ---
 
 const mirrorSchema = z.object({
+    sourcePlatform: z.enum(["DISCORD", "TELEGRAM"]).default("DISCORD"),
     sourceGuildName: z.string().min(1, "Server name is required"),
-    sourceChannelId: z.string().min(17, "Invalid Channel ID"),
     targetWebhookUrl: z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL"),
-    userToken: z.string().min(10, "User Token is required for Custom Hook"),
+
+    // Discord Specific
+    sourceChannelId: z.string().optional(),
+    userToken: z.string().optional(),
+
+    // Telegram Specific
+    telegramSession: z.string().optional(),
+    telegramChatId: z.string().optional(),
+    telegramTopicId: z.string().optional(),
+    telegramPhone: z.string().optional(),
+}).superRefine((data, ctx) => {
+    if (data.sourcePlatform === "DISCORD") {
+        if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Valid Discord Channel ID is required",
+                path: ["sourceChannelId"]
+            });
+        }
+        if (!data.userToken || data.userToken.length < 10) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "User Token is required for Discord Custom Hook",
+                path: ["userToken"]
+            });
+        }
+    } else if (data.sourcePlatform === "TELEGRAM") {
+        if (!data.telegramSession || data.telegramSession.length < 10) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Telegram Session is required",
+                path: ["telegramSession"]
+            });
+        }
+        if (!data.telegramChatId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Telegram Chat ID is required",
+                path: ["telegramChatId"]
+            });
+        }
+    }
 });
 
 // --- Actions ---
@@ -26,10 +67,16 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
     }
 
     const rawData = {
-        sourceGuildName: formData.get("sourceGuildName"),
-        sourceChannelId: formData.get("sourceChannelId"),
-        targetWebhookUrl: formData.get("targetWebhookUrl"),
-        userToken: formData.get("userToken"),
+        sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
+        sourceGuildName: formData.get("sourceGuildName") as string || undefined,
+        sourceChannelId: formData.get("sourceChannelId") as string || undefined,
+        targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
+        userToken: formData.get("userToken") as string || undefined,
+
+        telegramSession: formData.get("telegramSession") || undefined,
+        telegramChatId: formData.get("telegramChatId") || undefined,
+        telegramTopicId: formData.get("telegramTopicId") || undefined,
+        telegramPhone: formData.get("telegramPhone") || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -53,13 +100,24 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
     // Create
     try {
+        const { sourcePlatform, telegramSession, userToken } = validated.data;
+
         await prisma.mirrorConfig.create({
             data: {
                 userId: session.user.id,
+                // @ts-ignore
+                sourcePlatform: sourcePlatform as any,
                 sourceGuildName: validated.data.sourceGuildName,
-                sourceChannelId: validated.data.sourceChannelId,
+                // Discord
+                sourceChannelId: sourcePlatform === "DISCORD" ? validated.data.sourceChannelId || "" : "",
+                userToken: (sourcePlatform === "DISCORD" && userToken) ? encrypt(userToken) : null,
+                // Telegram
+                telegramSession: (sourcePlatform === "TELEGRAM" && telegramSession) ? encrypt(telegramSession) : null,
+                telegramChatId: sourcePlatform === "TELEGRAM" ? validated.data.telegramChatId : null,
+                telegramTopicId: sourcePlatform === "TELEGRAM" ? validated.data.telegramTopicId : null,
+                telegramPhone: sourcePlatform === "TELEGRAM" ? validated.data.telegramPhone : null,
+
                 targetWebhookUrl: validated.data.targetWebhookUrl,
-                userToken: encrypt(validated.data.userToken), // Use provided User Token
                 active: true
             }
         });
@@ -67,7 +125,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        console.error("Failed to create mirror:", e);
+        console.error("Failed to create mirror:", (e as Error)?.message || "Unknown error");
         return { error: "Database error. Please try again." };
     }
 }
@@ -80,6 +138,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
     const userToken = formData.get("userToken") as string;
     const defaultGuildName = (formData.get("defaultGuildName") as string) || "Bulk Import";
 
+    // Bulk create generally assumes Discord for now as per text format heuristic
     if (!bulkData || !userToken) return { error: "Missing required data" };
 
     // Parse Lines
@@ -131,18 +190,20 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
         await prisma.mirrorConfig.createMany({
             data: parsedConfigs.map(c => ({
                 userId: session.user.id,
+                // @ts-ignore
+                sourcePlatform: "DISCORD", // Default to Discord for bulk text parser
                 sourceGuildName: c.sourceGuildName,
                 sourceChannelId: c.sourceChannelId,
                 targetWebhookUrl: c.targetWebhookUrl,
                 userToken: encryptedToken,
-                active: true
+                active: true,
             }))
         });
 
         revalidatePath("/dashboard/expert");
         return { success: true, count: parsedConfigs.length };
     } catch (e) {
-        console.error("Failed to bulk create:", e);
+        console.error("Failed to bulk create:", (e as Error)?.message || "Unknown error");
         return { error: "Database error during bulk creation." };
     }
 }
@@ -155,10 +216,15 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
     if (!id) return { error: "Missing Config ID" };
 
     const rawData = {
-        sourceGuildName: formData.get("sourceGuildName"),
-        sourceChannelId: formData.get("sourceChannelId"),
-        targetWebhookUrl: formData.get("targetWebhookUrl"),
-        userToken: formData.get("userToken"),
+        sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
+        sourceGuildName: formData.get("sourceGuildName") as string || undefined,
+        sourceChannelId: formData.get("sourceChannelId") as string || undefined,
+        targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
+        userToken: formData.get("userToken") as string || undefined,
+        telegramSession: formData.get("telegramSession") as string || undefined,
+        telegramChatId: formData.get("telegramChatId") || undefined,
+        telegramTopicId: formData.get("telegramTopicId") || undefined,
+        telegramPhone: formData.get("telegramPhone") || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -175,20 +241,49 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         if (!existing) return { error: "Configuration not found" };
 
+        const { sourcePlatform, telegramSession, userToken } = validated.data;
+
+        // Handle token encryption if changed or new
+        // If token is mask or empty, we might sustain old one? 
+        // For simplicity, we assume if provided it updates.
+
+        const updateData: any = {
+            // @ts-ignore
+            sourcePlatform: sourcePlatform as any,
+            sourceGuildName: validated.data.sourceGuildName,
+            targetWebhookUrl: validated.data.targetWebhookUrl,
+        };
+
+        if (sourcePlatform === "DISCORD") {
+            updateData.sourceChannelId = validated.data.sourceChannelId!;
+            // Only update token if provided (and not just masked stars)
+            if (userToken && !userToken.includes("***")) {
+                updateData.userToken = encrypt(userToken);
+            }
+            // Clear telegram fields? Optional, but cleaner.
+            updateData.telegramSession = null;
+            updateData.telegramChatId = null;
+        } else {
+            updateData.telegramChatId = validated.data.telegramChatId!;
+            updateData.telegramTopicId = validated.data.telegramTopicId || null;
+            updateData.telegramPhone = validated.data.telegramPhone!;
+            if (telegramSession && !telegramSession.includes("***")) {
+                updateData.telegramSession = encrypt(telegramSession);
+            }
+            // Clear discord fields
+            updateData.sourceChannelId = "";
+            updateData.userToken = null;
+        }
+
         await prisma.mirrorConfig.update({
             where: { id },
-            data: {
-                sourceGuildName: validated.data.sourceGuildName,
-                sourceChannelId: validated.data.sourceChannelId,
-                targetWebhookUrl: validated.data.targetWebhookUrl,
-                userToken: encrypt(validated.data.userToken), // Use provided User Token
-            }
+            data: updateData
         });
 
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        console.error("Failed to update mirror:", e);
+        console.error("Failed to update mirror:", (e as Error)?.message || "Unknown error");
         return { error: "Database error. Please try again." };
     }
 }

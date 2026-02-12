@@ -11,7 +11,12 @@ export const logger = pino({
         }
     },
     redact: {
-        paths: ['userToken', 'token', 'access_token', 'accessToken', 'webhookUrl', 'dsn'],
+        paths: [
+            'userToken', 'token', 'access_token', 'accessToken',
+            'webhookUrl', 'targetWebhookUrl', 'dsn',
+            'telegramSession', 'sessionString', 'telegramPhone',
+            'password', 'phoneCode', 'phoneCodeHash'
+        ],
         censor: '******'
     }
 });
