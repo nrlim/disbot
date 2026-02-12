@@ -72,6 +72,81 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
     }
 }
 
+export async function bulkCreateMirrorConfig(prevState: any, formData: FormData) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return { error: "Unauthorized" };
+
+    const bulkData = formData.get("bulkData") as string;
+    const userToken = formData.get("userToken") as string;
+    const defaultGuildName = (formData.get("defaultGuildName") as string) || "Bulk Import";
+
+    if (!bulkData || !userToken) return { error: "Missing required data" };
+
+    // Parse Lines
+    const lines = bulkData.split("\n").filter(l => l.trim().length > 0);
+    const parsedConfigs = [];
+
+    for (const line of lines) {
+        // Simple heuristic parser: 
+        // Look for Channel ID (17-20 digits)
+        // Look for Webhook URL (https://discord.com/api/webhooks/...)
+        // Rest is Guild Name if provided
+
+        const channelIdMatch = line.match(/\b\d{17,20}\b/);
+        const webhookMatch = line.match(/https:\/\/discord\.com\/api\/webhooks\/[^\s]+/);
+
+        if (channelIdMatch && webhookMatch) {
+            parsedConfigs.push({
+                sourceChannelId: channelIdMatch[0],
+                targetWebhookUrl: webhookMatch[0],
+                sourceGuildName: defaultGuildName, // Could try to extract name from line if needed?
+                userToken
+            });
+        }
+    }
+
+    if (parsedConfigs.length === 0) {
+        return { error: "No valid configurations found in text." };
+    }
+
+    // Check Limits
+    const user = await prisma.user.findUnique({
+        where: { id: session.user.id },
+        include: { _count: { select: { configs: true } } }
+    });
+
+    if (!user) return { error: "User not found" };
+
+    const limit = PLAN_LIMITS[(user as any).plan] || PLAN_LIMITS.FREE;
+    const currentCount = (user as any)._count.configs;
+
+    if (currentCount + parsedConfigs.length > limit) {
+        return { error: `Bulk create exceeds plan limit. You can only create ${limit - currentCount} more.` };
+    }
+
+    // Bulk Create
+    try {
+        const encryptedToken = encrypt(userToken);
+
+        await prisma.mirrorConfig.createMany({
+            data: parsedConfigs.map(c => ({
+                userId: session.user.id,
+                sourceGuildName: c.sourceGuildName,
+                sourceChannelId: c.sourceChannelId,
+                targetWebhookUrl: c.targetWebhookUrl,
+                userToken: encryptedToken,
+                active: true
+            }))
+        });
+
+        revalidatePath("/dashboard/expert");
+        return { success: true, count: parsedConfigs.length };
+    } catch (e) {
+        console.error("Failed to bulk create:", e);
+        return { error: "Database error during bulk creation." };
+    }
+}
+
 export async function updateMirrorConfig(prevState: any, formData: FormData) {
     const session = await getServerSession(authOptions);
     if (!session?.user) return { error: "Unauthorized" };

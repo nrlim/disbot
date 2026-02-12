@@ -79,65 +79,79 @@ const SectionHeading = ({ children, center = true }: { children: React.ReactNode
   </h2>
 );
 
-const PricingCard = ({ tier, price, features, recommended = false, message }: { tier: string, price: string, features: string[], recommended?: boolean, message: string }) => {
+const PricingCard = ({
+  tier,
+  price,
+  quota,
+  features,
+  recommended = false,
+  message
+}: {
+  tier: string,
+  price: string,
+  quota: string,
+  features: { text: string, included: boolean }[],
+  recommended?: boolean,
+  message: string
+}) => {
   const [copied, setCopied] = useState(false);
 
   const handlePayment = () => {
-    // 1. Copy to clipboard
     navigator.clipboard.writeText(message).then(() => {
       setCopied(true);
-      // 2. Show toast (simple alert/text update for now, or could use a toast lib if available)
-      // Since no toast lib is confirmed, we will use a temporary text change on the button or simple alert.
-      // But the requirement says "Show a brief toast notification". Use a custom timeout for button text maybe?
-      // Or just a standard alert? "Pesan pembelian telah disalin! Silakan tempel (paste) di DM Discord."
-      // Let's rely on the button text change "Copied & Redirecting..." for better UX than alert.
-
-      // But adhering to requirement strictly: 
-      // b. Show a brief toast notification
-      // I'll add a simple fixed toast element to the body if I could, but here I'll stick to a "Copied" state visual.
-      // Wait, "Show a brief toast notification: ...". 
-      // I will implement a simple custom toast in the main component.
 
       const toast = document.createElement("div");
-      toast.className = "fixed bottom-5 right-5 bg-emerald-500 text-white px-6 py-3 rounded-lg shadow-xl z-50 font-medium animate-in slide-in-from-bottom-5 fade-in duration-300";
-      toast.innerText = "Pesan pembelian telah disalin! Silakan tempel (paste) di DM Discord.";
+      toast.className = "fixed bottom-5 right-5 bg-emerald-500 text-white px-6 py-3 shadow-xl z-50 font-medium animate-in slide-in-from-bottom-5 fade-in duration-300 rounded-none";
+      toast.innerText = "Pesan pembelian disalin! Mengalihkan ke Discord...";
       document.body.appendChild(toast);
 
       setTimeout(() => {
         toast.remove();
+        setCopied(false);
       }, 3000);
 
-      // 3. Open Discord Link
       setTimeout(() => {
         window.open(DISCORD_ADMIN_LINK, '_blank');
-      }, 800); // Small delay to let user see feedback
+      }, 800);
     });
   };
 
   return (
     <motion.div
-      whileHover={{ y: -10 }}
+      whileHover={{ y: -5 }}
       className={cn(
-        "relative p-8 rounded-2xl border flex flex-col h-full bg-[#1e293b]/50 backdrop-blur-sm",
-        recommended ? "border-[#5865F2] shadow-2xl shadow-[#5865F2]/10" : "border-white/10"
+        "relative p-8 border flex flex-col h-full bg-zinc-950/50 backdrop-blur-sm rounded-none transition-colors duration-300",
+        recommended ? "border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.1)]" : "border-zinc-800 hover:border-zinc-700"
       )}
     >
       {recommended && (
-        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#5865F2] to-[#00D1FF] text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-black px-4 py-1 text-xs font-bold uppercase tracking-widest rounded-none shadow-lg">
           Paling Populer
         </div>
       )}
-      <h3 className="text-xl font-medium text-gray-300 mb-2">{tier}</h3>
-      <div className="mb-6">
-        <span className="text-3xl font-bold text-white">{price}</span>
-        <span className="text-gray-500 text-sm ml-1">/bln</span>
+
+      <div className="mb-8">
+        <h3 className={cn("text-lg font-mono font-bold uppercase tracking-wider mb-2", recommended ? "text-emerald-400" : "text-zinc-400")}>
+          {tier}
+        </h3>
+        <div className="flex items-baseline gap-1 mb-4">
+          <span className="text-3xl font-bold text-white tracking-tight">{price}</span>
+          {price !== "Rp 0" && <span className="text-zinc-500 text-sm">/bln</span>}
+        </div>
+        <div className="py-2 px-3 bg-white/5 border border-white/5 text-center">
+          <span className="text-sm text-zinc-300 font-mono tracking-wide">{quota}</span>
+        </div>
       </div>
 
-      <ul className="space-y-4 mb-8 flex-1">
+      <ul className="space-y-3 mb-8 flex-1">
         {features.map((feat, i) => (
-          <li key={i} className="flex items-start gap-3 text-sm text-gray-300">
-            <Check className="w-5 h-5 text-[#00D1FF] shrink-0" />
-            <span>{feat}</span>
+          <li key={i} className={cn("flex items-start gap-3 text-sm", feat.included ? "text-zinc-300" : "text-zinc-600")}>
+            {feat.included ? (
+              <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+            ) : (
+              <span className="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center text-zinc-700 font-bold text-xs">✕</span>
+            )}
+            <span className={cn(feat.included ? "" : "line-through decoration-zinc-700")}>{feat.text}</span>
           </li>
         ))}
       </ul>
@@ -145,12 +159,23 @@ const PricingCard = ({ tier, price, features, recommended = false, message }: { 
       <button
         onClick={handlePayment}
         className={cn(
-          "w-full py-3 rounded-lg font-medium transition-all text-center flex items-center justify-center gap-2",
-          recommended ? "bg-[#5865F2] hover:bg-[#4752c4] text-white shadow-lg" : "bg-white/5 hover:bg-white/10 text-white border border-white/5"
+          "w-full py-4 font-bold uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-2 rounded-none",
+          recommended
+            ? "bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/20"
+            : "bg-white/5 hover:bg-white/10 text-white border border-white/5 hover:border-white/20"
         )}
       >
-        <MessageSquare className="w-4 h-4" />
-        {copied ? "Redirecting..." : "Pilih Paket"}
+        {copied ? (
+          <>
+            <Check className="w-4 h-4" />
+            Copied!
+          </>
+        ) : (
+          <>
+            {price === "Rp 0" ? "Mulai Gratis" : "Pilih Paket"}
+            <ArrowRight className="w-4 h-4" />
+          </>
+        )}
       </button>
     </motion.div>
   );
@@ -233,56 +258,86 @@ export default function Home() {
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-24 relative overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[1200px] h-[600px] bg-[#5865F2]/5 rounded-full blur-[100px] -z-10" />
-
+      <section id="pricing" className="py-24 relative overflow-hidden bg-zinc-950">
         <div className="max-w-7xl mx-auto px-6">
           <div className="text-center mb-16">
-            <SectionHeading center>Paket Langganan</SectionHeading>
-            <p className="text-gray-400">Investasi terbaik untuk komunitas crypto Anda.</p>
+            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4 text-white">
+              Paket Langganan
+            </h2>
+            <p className="text-zinc-400 font-light">Pilih kapasitas mirroring yang sesuai dengan kebutuhan komunitas Anda.</p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+            {/* FREE TIER */}
             <PricingCard
-              tier="DISBOT Starter"
+              tier="DisBot Trial"
+              price="Rp 0"
+              quota="1 Mirror Path"
+              message="Halo admin DISBOT, saya ingin mencoba Free Trial DisBot."
+              features={[
+                { text: "1 Mirror Path", included: true },
+                { text: "Teruskan Gambar Saja", included: true },
+                { text: "Filter Dasar", included: true },
+                { text: "Support Managed Bot", included: false },
+                { text: "Video & Dokumen", included: false },
+                { text: "Prioritas Support", included: false },
+              ]}
+            />
+
+            {/* STARTER TIER */}
+            <PricingCard
+              tier="DisBot Starter"
               price="Rp 149.000"
-              message="Halo admin DISBOT, saya tertarik berlangganan Paket Starter (Bolo Kenalan) seharga Rp 149.000/bulan."
+              quota="6 Mirror Paths"
+              message="Halo admin DISBOT, saya tertarik berlangganan Paket Starter (Rp 149.000/bln) dengan 6 Mirror Paths."
               features={[
-                "6 Mirror Paths",
-                "Instant Real-Time Sync",
-                "Basic Keyword Filter",
-                "Media & Embeds Support",
-                "Standard Discord Support",
-                "99.9% Uptime SLA"
+                { text: "6 Mirror Paths", included: true },
+                { text: "Teruskan Gambar & Audio", included: true },
+                { text: "Support Managed Bot", included: true },
+                { text: "Video & Dokumen", included: false },
+                { text: "Multi-Akun Support", included: false },
+                { text: "Akses API", included: false },
               ]}
             />
+
+            {/* PRO TIER */}
             <PricingCard
-              tier="DISBOT Pro"
+              tier="DisBot Pro"
               price="Rp 449.000"
+              quota="20 Mirror Paths"
               recommended
-              message="Halo admin DISBOT, saya ingin upgrade ke Paket Pro (Bolo Kepercayaan) seharga Rp 449.000/bulan untuk 20 mirror paths."
+              message="Halo admin DISBOT, saya ingin upgrade ke Paket Pro (Rp 449.000/bln) untuk 20 paths dan full media support."
               features={[
-                "20 Mirror Paths",
-                "Instant Real-Time Sync",
-                "Advanced Regex Filters",
-                "Auto-Translation",
-                "Priority Email Support",
-                "Keamanan Akun & No-Ban"
+                { text: "20 Mirror Paths", included: true },
+                { text: "Audio, Video & Dokumen", included: true },
+                { text: "Advanced Regex Filters", included: true },
+                { text: "3 Akun Discord", included: true },
+                { text: "Prioritas Fast Sync", included: true },
+                { text: "Dedicated Engine", included: false },
               ]}
             />
+
+            {/* ELITE TIER */}
             <PricingCard
-              tier="DISBOT Elite"
+              tier="DisBot Elite"
               price="Rp 999.000"
-              message="Halo admin DISBOT, saya ingin berlangganan Paket Elite (Bolo Andalan) seharga Rp 999.000/bulan. Saya butuh Dedicated Instance."
+              quota="100 Mirror Paths*"
+              message="Halo admin DISBOT, saya ingin berlangganan Paket Elite (Rp 999.000/bln) untuk 100 Paths dan Dedicated Instance."
               features={[
-                "Unlimited Mirror Paths",
-                "Instant Real-Time Sync",
-                "Custom Branding / Whitelabel",
-                "Dedicated Engine Instance",
-                "Priority 24/7 Live Chat",
-                "Akses Full API"
+                { text: "100 Paths (Soft Limit)", included: true },
+                { text: "Semua Tipe File", included: true },
+                { text: "Dedicated Engine Instance", included: true },
+                { text: "Akses Full API", included: true },
+                { text: "Prioritas Support 24/7", included: true },
+                { text: "Whitelabel Branding", included: true },
               ]}
             />
+          </div>
+
+          <div className="text-center mt-12">
+            <p className="text-zinc-500 text-xs text-center max-w-2xl mx-auto font-mono">
+              *Soft Limit: Kapasitas 100 mirror paths dijamin. Lebih dari itu, kami akan alokasikan resource tambahan sesuai kebutuhan tanpa biaya ekstra (Fair Usage Policy).
+            </p>
           </div>
         </div>
       </section>
