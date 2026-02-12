@@ -50,7 +50,7 @@ model User {
   // Custom Relation to MirrorConfig
   configs MirrorConfig[]
   
-  plan    Plan     @default(STARTER)
+  plan    Plan     @default(FREE)
 }
 
 model VerificationToken {
@@ -62,6 +62,7 @@ model VerificationToken {
 }
 
 enum Plan {
+  FREE
   STARTER
   PRO
   ELITE
@@ -74,10 +75,12 @@ model MirrorConfig {
   sourceChannelId  String
   targetWebhookUrl String
   
-  // Expert Mode Fields
+  // Custom Hook Fields
   userToken        String?  // Encrypted in production
   active           Boolean  @default(true)
   
+  type             MirrorType @default(CUSTOM_HOOK)
+
   userId           String
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   
@@ -86,4 +89,9 @@ model MirrorConfig {
   
   status           String   @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
   lastActiveAt     DateTime?
+}
+
+enum MirrorType {
+  CUSTOM_HOOK
+  MANAGED_BOT
 }

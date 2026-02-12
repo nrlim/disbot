@@ -19,10 +19,11 @@ import {
 import { z } from "zod";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
+import ComingSoonModal from "@/components/ComingSoonModal";
 
 // --- Types & Interfaces ---
 
-type Mode = "expert" | "official";
+type Mode = "custom" | "managed";
 
 interface Guild {
     id: string;
@@ -45,7 +46,7 @@ interface ModeSelectorProps {
 
 export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
     // State
-    const [mode, setMode] = useState<Mode>("expert");
+    const [mode, setMode] = useState<Mode>("custom");
     const [isLoading, setIsLoading] = useState(false);
     const [guilds, setGuilds] = useState<Guild[]>([]);
     const [searchQuery, setSearchQuery] = useState("");
@@ -57,6 +58,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
     const [channelId, setChannelId] = useState("");
     const [webhookUrl, setWebhookUrl] = useState("");
     const [isGuildDropdownOpen, setIsGuildDropdownOpen] = useState(false);
+    const [isComingSoonOpen, setIsComingSoonOpen] = useState(false);
 
     // Validation State
     const [tokenError, setTokenError] = useState<string | null>(null);
@@ -72,7 +74,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
 
             try {
                 const params = new URLSearchParams();
-                if (mode === "expert") {
+                if (mode === "custom") {
                     params.append("all", "true");
                 }
 
@@ -93,6 +95,10 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
 
     // Handlers
     const handleModeSwitch = (newMode: Mode) => {
+        if (newMode === "managed") {
+            setIsComingSoonOpen(true);
+            return;
+        }
         if (mode === newMode) return;
         setMode(newMode);
         // Reset form specific to mode if needed, but keeping some state might be user-friendly
@@ -150,7 +156,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                     layoutId="active-pill"
                     className={cn(
                         "absolute top-0.5 bottom-0.5 transition-colors z-0 bg-zinc-900 border border-zinc-700 shadow-sm",
-                        mode === "expert"
+                        mode === "custom"
                             ? "left-0.5 w-[calc(50%-2px)]"
                             : "left-[50%] w-[calc(50%-2px)]"
                     )}
@@ -158,29 +164,29 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                 />
 
                 <button
-                    onClick={() => handleModeSwitch("expert")}
+                    onClick={() => handleModeSwitch("custom")}
                     className={cn(
                         "flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-200",
-                        mode === "expert" ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
+                        mode === "custom" ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
                     )}
                 >
                     <User className="w-4 h-4" />
                     <div className="text-left">
-                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Expert Mode</div>
+                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Custom Hook</div>
                         <div className="text-[10px] font-mono opacity-70">User Token (Any Server)</div>
                     </div>
                 </button>
 
                 <button
-                    onClick={() => handleModeSwitch("official")}
+                    onClick={() => handleModeSwitch("managed")}
                     className={cn(
                         "flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-200",
-                        mode === "official" ? "text-emerald-500" : "text-zinc-500 hover:text-zinc-300"
+                        mode === "managed" ? "text-emerald-500" : "text-zinc-500 hover:text-zinc-300"
                     )}
                 >
                     <Bot className="w-4 h-4" />
                     <div className="text-left">
-                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Official Bot</div>
+                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Managed Bot</div>
                         <div className="text-[10px] font-mono opacity-70">Verified & Safe</div>
                     </div>
                 </button>
@@ -201,16 +207,16 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                         <div className="flex items-start gap-4">
                             <div className={cn(
                                 "p-3 border shrink-0",
-                                mode === "expert" ? "bg-amber-950/10 border-amber-900/50 text-amber-500" : "bg-emerald-950/10 border-emerald-900/50 text-emerald-500"
+                                mode === "custom" ? "bg-amber-950/10 border-amber-900/50 text-amber-500" : "bg-emerald-950/10 border-emerald-900/50 text-emerald-500"
                             )}>
-                                {mode === "expert" ? <ShieldAlert className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
+                                {mode === "custom" ? <ShieldAlert className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
                             </div>
                             <div>
                                 <h2 className="text-xl font-bold text-white mb-2 font-mono uppercase tracking-tight">
-                                    {mode === "expert" ? "Expert Configuration" : "Official Bot Setup"}
+                                    {mode === "custom" ? "Custom Hook Configuration" : "Managed Bot Setup"}
                                 </h2>
                                 <p className="text-zinc-400 text-sm font-mono leading-relaxed max-w-xl">
-                                    {mode === "expert"
+                                    {mode === "custom"
                                         ? "Mirror any channel via User Token. Bypasses admin requirements. Powerful but requires caution."
                                         : "Recommended, TOS-compliant method. Requires 'Manage Guild' permissions to invite the bot."
                                     }
@@ -218,8 +224,8 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                             </div>
                         </div>
 
-                        {/* Expert Warning */}
-                        {mode === "expert" && (
+                        {/* Custom Hook Warning */}
+                        {mode === "custom" && (
                             <div className="mt-6 flex items-start gap-3 p-4 bg-amber-950/10 border-l-2 border-amber-500">
                                 <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                                 <div className="text-xs text-amber-500/80 font-mono">
@@ -230,8 +236,8 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                             </div>
                         )}
 
-                        {/* Official Invite Button */}
-                        {mode === "official" && (
+                        {/* Managed Invite Button */}
+                        {mode === "managed" && (
                             <div className="mt-6">
                                 <a
                                     href={`https://discord.com/oauth2/authorize?client_id=${discordClientId || "YOUR_CLIENT_ID"}&permissions=536870912&scope=bot`}
@@ -249,9 +255,9 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                     {/* --- Unified Configuration Form --- */}
                     <div className="space-y-6">
 
-                        {/* 1. User Token (Expert Only) */}
+                        {/* 1. User Token (Custom Hook Only) */}
                         <AnimatePresence>
-                            {mode === "expert" && (
+                            {mode === "custom" && (
                                 <motion.div
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: "auto" }}
@@ -463,7 +469,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                 type="button"
                                 className={cn(
                                     "px-8 py-3 font-bold text-black transition-all flex items-center gap-2 font-mono text-xs uppercase tracking-widest rounded-none",
-                                    mode === "expert"
+                                    mode === "custom"
                                         ? "bg-amber-500 hover:bg-amber-400"
                                         : "bg-emerald-500 hover:bg-emerald-400"
                                 )}
@@ -476,6 +482,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                     </div>
                 </motion.div>
             </AnimatePresence>
+            <ComingSoonModal isOpen={isComingSoonOpen} onClose={() => setIsComingSoonOpen(false)} featureName="Managed Bot" />
         </div>
     );
 }

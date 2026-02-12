@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import WebhookList from "@/components/WebhookList";
 import crypto from "crypto";
 import { Terminal, Shield, Cpu } from "lucide-react";
+import { PLAN_LIMITS } from "@/lib/constants";
 
 export default async function ExpertDashboard() {
     const session = await getServerSession(authOptions);
@@ -57,15 +58,9 @@ export default async function ExpertDashboard() {
         include: { _count: { select: { configs: true } } }
     });
 
-    const PLAN_LIMITS: Record<string, number> = {
-        STARTER: 2,
-        PRO: 15,
-        ELITE: 9999
-    };
-
-    const userPlan = user?.plan || "STARTER";
+    const userPlan = user?.plan || "FREE";
     const usageCount = user?._count.configs || 0;
-    const limit = PLAN_LIMITS[userPlan] || 2;
+    const limit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.FREE;
     const isLimitReached = usageCount >= limit;
 
     return (
@@ -75,10 +70,10 @@ export default async function ExpertDashboard() {
                 <div className="space-y-2">
                     <div className="flex items-center gap-2 text-primary">
                         <Terminal className="w-5 h-5" />
-                        <span className="text-xs font-mono font-bold uppercase tracking-widest">System Mode: Expert</span>
+                        <span className="text-xs font-mono font-bold uppercase tracking-widest">System Mode: Custom Hook</span>
                     </div>
                     <h1 className="text-3xl font-bold text-white tracking-tight uppercase font-mono">
-                        Advanced Mirroring
+                        Custom Hook Mirroring
                     </h1>
                     <p className="text-zinc-500 font-mono text-sm max-w-2xl">
                         Direct user-token based replication. Bypasses standard bot limitations.
@@ -102,7 +97,7 @@ export default async function ExpertDashboard() {
                         <div className="w-full h-1 bg-zinc-900 mt-3 relative overflow-hidden">
                             <div
                                 className={`absolute top-0 left-0 h-full transition-all duration-500 ${isLimitReached ? "bg-amber-500" : "bg-primary"}`}
-                                style={{ width: `${Math.min((usageCount / limit) * 100, 100)}%` }}
+                                style={{ width: `${limit > 0 ? Math.min((usageCount / limit) * 100, 100) : (usageCount > 0 ? 100 : 0)}%` }}
                             />
                         </div>
                     </div>

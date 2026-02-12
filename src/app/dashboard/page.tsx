@@ -3,6 +3,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import DashboardOverview from "@/components/DashboardOverview";
+import { PLAN_LIMITS } from "@/lib/constants";
 
 export default async function DashboardPage() {
     const session = await getServerSession(authOptions);
@@ -34,16 +35,10 @@ export default async function DashboardPage() {
     const typedConfigs = recentConfigs as any;
 
     // 3. Calculate Stats
-    const PLAN_LIMITS: Record<string, number> = {
-        STARTER: 2,
-        PRO: 15,
-        ELITE: 9999
-    };
-
-    const userPlan = typedUser.plan || "STARTER";
+    const userPlan = typedUser.plan || "FREE";
     const activeCount = typedUser._count.configs || 0;
-    const usageLimit = PLAN_LIMITS[userPlan] || 2;
-    const percentage = Math.min((activeCount / usageLimit) * 100, 100);
+    const usageLimit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.FREE;
+    const percentage = usageLimit > 0 ? Math.min((activeCount / usageLimit) * 100, 100) : 0;
 
     const stats = {
         activeCount,

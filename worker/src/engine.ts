@@ -49,7 +49,10 @@ class ClientManager {
         try {
             // 1. Fetch all ACTIVE configs
             const activeConfigs = await prisma.mirrorConfig.findMany({
-                where: { active: true }
+                where: {
+                    active: true,
+                    type: 'CUSTOM_HOOK'
+                }
             });
 
             // Group by Token
@@ -112,7 +115,7 @@ class ClientManager {
                     session.lastActive = Date.now();
                 } else {
                     // Create new client
-                    logger.info({ token: maskToken(token) }, 'Starting new client session');
+                    logger.info({ token: maskToken(token) }, 'Starting Custom Hook client session');
                     await this.spawnClient(token, configMap);
                 }
             }
@@ -134,7 +137,7 @@ class ClientManager {
         this.clients.set(token, session);
 
         client.on('ready', () => {
-            logger.info({ user: client.user?.tag }, 'Client ready');
+            logger.info({ user: client.user?.tag }, 'Custom Hook Client ready');
         });
 
         client.on('messageCreate', async (message: Message) => {

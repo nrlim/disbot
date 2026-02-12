@@ -3,6 +3,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import Sidebar from "@/components/Sidebar";
+import { PLAN_LIMITS } from "@/lib/constants";
 
 export default async function DashboardLayout({
     children,
@@ -27,16 +28,9 @@ export default async function DashboardLayout({
 
     const typedUser = dbUser as any;
 
-    // Define Limits
-    const PLAN_LIMITS: Record<string, number> = {
-        STARTER: 2,
-        PRO: 15,
-        ELITE: 9999 // Infinity can be tricky to serialize sometimes, using high number
-    };
-
-    const userPlan = typedUser?.plan || "STARTER";
+    const userPlan = typedUser?.plan || "FREE";
     const usageCount = typedUser?._count.configs || 0;
-    const limit = PLAN_LIMITS[userPlan] || 2;
+    const limit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.FREE;
 
     return (
         <div className="min-h-screen bg-[#0B0F1A] text-white flex overflow-hidden">

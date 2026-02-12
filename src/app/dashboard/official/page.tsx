@@ -14,10 +14,10 @@ export default function OfficialBotDashboard() {
                 <div className="space-y-2">
                     <div className="flex items-center gap-2 text-emerald-500">
                         <CheckCircle2 className="w-5 h-5" />
-                        <span className="text-xs font-mono font-bold uppercase tracking-widest">System Mode: Verified</span>
+                        <span className="text-xs font-mono font-bold uppercase tracking-widest">System Mode: Managed</span>
                     </div>
                     <h1 className="text-3xl font-bold text-white tracking-tight uppercase font-mono">
-                        Official Integration
+                        Managed Integration
                     </h1>
                     <p className="text-zinc-500 font-mono text-sm max-w-2xl">
                         Standard protocol mirroring via Discord API.

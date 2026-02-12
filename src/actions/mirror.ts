@@ -6,6 +6,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { encrypt } from "@/lib/encryption";
+import { PLAN_LIMITS } from "@/lib/constants";
 
 // --- Schema ---
 
@@ -13,7 +14,7 @@ const mirrorSchema = z.object({
     sourceGuildName: z.string().min(1, "Server name is required"),
     sourceChannelId: z.string().min(17, "Invalid Channel ID"),
     targetWebhookUrl: z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL"),
-    userToken: z.string().min(10, "User Token is required for Expert Mode"),
+    userToken: z.string().min(10, "User Token is required for Custom Hook"),
 });
 
 // --- Actions ---
@@ -45,13 +46,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
     if (!user) return { error: "User not found" };
 
-    const PLAN_LIMITS: Record<string, number> = {
-        STARTER: 2,
-        PRO: 15,
-        ELITE: 9999
-    };
-
-    const limit = PLAN_LIMITS[(user as any).plan] || 2;
+    const limit = PLAN_LIMITS[(user as any).plan] || PLAN_LIMITS.FREE;
     if ((user as any)._count.configs >= limit) {
         return { error: "Plan limit reached. Upgrade to Pro for more." };
     }

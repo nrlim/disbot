@@ -16,6 +16,8 @@ import {
     Hash
 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import ComingSoonModal from "@/components/ComingSoonModal";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +43,7 @@ interface DashboardOverviewProps {
 }
 
 export default function DashboardOverview({ stats, recentConfigs }: DashboardOverviewProps) {
+    const [isComingSoonOpen, setIsComingSoonOpen] = useState(false);
 
     // Animation Variants
     const container = {
@@ -121,16 +124,53 @@ export default function DashboardOverview({ stats, recentConfigs }: DashboardOve
                 </motion.div>
 
                 {/* Plan Status */}
-                <motion.div variants={item} className="md:col-span-1 p-6 bg-zinc-950 border border-zinc-800 relative group">
-                    <div className="flex flex-col h-full justify-between">
+                <motion.div variants={item} className="md:col-span-1 p-6 bg-zinc-950 border border-zinc-800 relative group overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-zinc-900/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="flex flex-col h-full justify-between relative z-10">
                         <div className="flex items-center justify-between mb-4">
-                            <span className="text-zinc-500 text-xs font-mono uppercase tracking-widest">Tier</span>
-                            <Zap className="w-4 h-4 text-amber-500" />
+                            <span className="text-zinc-500 text-xs font-mono uppercase tracking-widest flex items-center gap-2">
+                                <Zap className="w-3 h-3 text-amber-500" />
+                                Current Tier
+                            </span>
+                            {stats.planName !== "ELITE" && (
+                                <Link
+                                    href="/dashboard/settings"
+                                    className="text-[10px] text-primary hover:text-white uppercase font-mono tracking-wider transition-colors border-b border-dashed border-primary/50 hover:border-white"
+                                >
+                                    Upgrade
+                                </Link>
+                            )}
                         </div>
                         <div>
-                            <div className="text-2xl font-mono font-bold text-white mb-1">{stats.planName}</div>
-                            <div className="w-full bg-zinc-900 h-1 mt-2">
-                                <div className="bg-amber-500 h-1" style={{ width: '60%' }} />
+                            <div className={cn(
+                                "text-3xl font-mono font-black text-white mb-2 tracking-tighter",
+                                stats.planName === "STARTER" && "text-emerald-400",
+                                stats.planName === "PRO" && "text-blue-400",
+                                stats.planName === "ELITE" && "text-purple-400",
+                                stats.planName === "FREE" && "text-zinc-300"
+                            )}>
+                                {stats.planName}
+                            </div>
+
+                            <div className="flex items-center gap-2 text-xs font-mono text-zinc-500 mb-3">
+                                <Server className="w-3 h-3" />
+                                <span>
+                                    {stats.usageLimit === 9999 ? "Unlimited" : `${stats.usageLimit} Max Nodes`}
+                                </span>
+                            </div>
+
+                            <div className="w-full bg-zinc-900 h-1.5 overflow-hidden">
+                                <motion.div
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${stats.percentage}%` }}
+                                    className={cn(
+                                        "h-full transition-all duration-500",
+                                        stats.planName === "STARTER" && "bg-emerald-500",
+                                        stats.planName === "PRO" && "bg-blue-500",
+                                        stats.planName === "ELITE" && "bg-purple-500",
+                                        stats.planName === "FREE" && "bg-amber-500"
+                                    )}
+                                />
                             </div>
                         </div>
                     </div>
@@ -176,18 +216,22 @@ export default function DashboardOverview({ stats, recentConfigs }: DashboardOve
                             <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-primary -translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all" />
                         </div>
                         <div className="mt-4">
-                            <h3 className="font-mono font-bold text-white text-sm uppercase">Expert Mode</h3>
+                            <h3 className="font-mono font-bold text-white text-sm uppercase">Custom Hook</h3>
                             <p className="text-xs text-zinc-500 mt-1 font-mono">User Token Mirroring</p>
                         </div>
                     </Link>
 
-                    <Link href="/dashboard/official" className="group rounded-none bg-zinc-900/50 border border-zinc-800 p-5 hover:bg-zinc-900 hover:border-indigo-500/50 transition-all flex flex-col justify-between">
+                    <Link
+                        href="/dashboard/official"
+                        onClick={(e) => { e.preventDefault(); setIsComingSoonOpen(true); }}
+                        className="group rounded-none bg-zinc-900/50 border border-zinc-800 p-5 hover:bg-zinc-900 hover:border-indigo-500/50 transition-all flex flex-col justify-between"
+                    >
                         <div className="flex justify-between items-start">
                             <Bot className="w-6 h-6 text-zinc-400 group-hover:text-indigo-500 transition-colors" />
                             <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-indigo-500 -translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all" />
                         </div>
                         <div className="mt-4">
-                            <h3 className="font-mono font-bold text-white text-sm uppercase">Official Bot</h3>
+                            <h3 className="font-mono font-bold text-white text-sm uppercase">Managed Bot</h3>
                             <p className="text-xs text-zinc-500 mt-1 font-mono">Verified API Mirroring</p>
                         </div>
                     </Link>
@@ -262,6 +306,7 @@ export default function DashboardOverview({ stats, recentConfigs }: DashboardOve
                     )}
                 </motion.div>
             </motion.div>
-        </div>
+            <ComingSoonModal isOpen={isComingSoonOpen} onClose={() => setIsComingSoonOpen(false)} featureName="Managed Bot" />
+        </div >
     );
 }

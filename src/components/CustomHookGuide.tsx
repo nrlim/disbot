@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, Terminal, ShieldCheck, Globe, Keyboard, Search,
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
-export default function ExpertGuide() {
+export default function CustomHookGuide() {
     const [openSection, setOpenSection] = useState<string | null>("token");
 
     const toggle = (id: string) => setOpenSection(openSection === id ? null : id);

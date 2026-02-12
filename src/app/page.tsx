@@ -32,6 +32,7 @@ import LoginButton from "@/components/LoginButton";
 import Logo from "@/components/Logo";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { DISCORD_ADMIN_LINK } from "@/lib/constants";
 
 // Components
 const Navbar = () => {
@@ -78,42 +79,82 @@ const SectionHeading = ({ children, center = true }: { children: React.ReactNode
   </h2>
 );
 
-const PricingCard = ({ tier, price, features, recommended = false }: { tier: string, price: string, features: string[], recommended?: boolean }) => (
-  <motion.div
-    whileHover={{ y: -10 }}
-    className={cn(
-      "relative p-8 rounded-2xl border flex flex-col h-full bg-[#1e293b]/50 backdrop-blur-sm",
-      recommended ? "border-[#5865F2] shadow-2xl shadow-[#5865F2]/10" : "border-white/10"
-    )}
-  >
-    {recommended && (
-      <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#5865F2] to-[#00D1FF] text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-        Paling Populer
+const PricingCard = ({ tier, price, features, recommended = false, message }: { tier: string, price: string, features: string[], recommended?: boolean, message: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handlePayment = () => {
+    // 1. Copy to clipboard
+    navigator.clipboard.writeText(message).then(() => {
+      setCopied(true);
+      // 2. Show toast (simple alert/text update for now, or could use a toast lib if available)
+      // Since no toast lib is confirmed, we will use a temporary text change on the button or simple alert.
+      // But the requirement says "Show a brief toast notification". Use a custom timeout for button text maybe?
+      // Or just a standard alert? "Pesan pembelian telah disalin! Silakan tempel (paste) di DM Discord."
+      // Let's rely on the button text change "Copied & Redirecting..." for better UX than alert.
+
+      // But adhering to requirement strictly: 
+      // b. Show a brief toast notification
+      // I'll add a simple fixed toast element to the body if I could, but here I'll stick to a "Copied" state visual.
+      // Wait, "Show a brief toast notification: ...". 
+      // I will implement a simple custom toast in the main component.
+
+      const toast = document.createElement("div");
+      toast.className = "fixed bottom-5 right-5 bg-emerald-500 text-white px-6 py-3 rounded-lg shadow-xl z-50 font-medium animate-in slide-in-from-bottom-5 fade-in duration-300";
+      toast.innerText = "Pesan pembelian telah disalin! Silakan tempel (paste) di DM Discord.";
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.remove();
+      }, 3000);
+
+      // 3. Open Discord Link
+      setTimeout(() => {
+        window.open(DISCORD_ADMIN_LINK, '_blank');
+      }, 800); // Small delay to let user see feedback
+    });
+  };
+
+  return (
+    <motion.div
+      whileHover={{ y: -10 }}
+      className={cn(
+        "relative p-8 rounded-2xl border flex flex-col h-full bg-[#1e293b]/50 backdrop-blur-sm",
+        recommended ? "border-[#5865F2] shadow-2xl shadow-[#5865F2]/10" : "border-white/10"
+      )}
+    >
+      {recommended && (
+        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#5865F2] to-[#00D1FF] text-white px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+          Paling Populer
+        </div>
+      )}
+      <h3 className="text-xl font-medium text-gray-300 mb-2">{tier}</h3>
+      <div className="mb-6">
+        <span className="text-3xl font-bold text-white">{price}</span>
+        <span className="text-gray-500 text-sm ml-1">/bln</span>
       </div>
-    )}
-    <h3 className="text-xl font-medium text-gray-300 mb-2">{tier}</h3>
-    <div className="mb-6">
-      <span className="text-3xl font-bold text-white">{price}</span>
-      <span className="text-gray-500 text-sm ml-1">/bln</span>
-    </div>
 
-    <ul className="space-y-4 mb-8 flex-1">
-      {features.map((feat, i) => (
-        <li key={i} className="flex items-start gap-3 text-sm text-gray-300">
-          <Check className="w-5 h-5 text-[#00D1FF] shrink-0" />
-          <span>{feat}</span>
-        </li>
-      ))}
-    </ul>
+      <ul className="space-y-4 mb-8 flex-1">
+        {features.map((feat, i) => (
+          <li key={i} className="flex items-start gap-3 text-sm text-gray-300">
+            <Check className="w-5 h-5 text-[#00D1FF] shrink-0" />
+            <span>{feat}</span>
+          </li>
+        ))}
+      </ul>
 
-    <button className={cn(
-      "w-full py-3 rounded-lg font-medium transition-all",
-      recommended ? "bg-[#5865F2] hover:bg-[#4752c4] text-white shadow-lg" : "bg-white/5 hover:bg-white/10 text-white border border-white/5"
-    )}>
-      Pilih Paket
-    </button>
-  </motion.div>
-);
+      <button
+        onClick={handlePayment}
+        className={cn(
+          "w-full py-3 rounded-lg font-medium transition-all text-center flex items-center justify-center gap-2",
+          recommended ? "bg-[#5865F2] hover:bg-[#4752c4] text-white shadow-lg" : "bg-white/5 hover:bg-white/10 text-white border border-white/5"
+        )}
+      >
+        <MessageSquare className="w-4 h-4" />
+        {copied ? "Redirecting..." : "Pilih Paket"}
+      </button>
+    </motion.div>
+  );
+};
 
 export default function Home() {
   return (
@@ -205,8 +246,9 @@ export default function Home() {
             <PricingCard
               tier="DISBOT Starter"
               price="Rp 149.000"
+              message="Halo admin DISBOT, saya tertarik berlangganan Paket Starter (Bolo Kenalan) seharga Rp 149.000/bulan."
               features={[
-                "2 Mirror Paths",
+                "6 Mirror Paths",
                 "Instant Real-Time Sync",
                 "Basic Keyword Filter",
                 "Media & Embeds Support",
@@ -218,8 +260,9 @@ export default function Home() {
               tier="DISBOT Pro"
               price="Rp 449.000"
               recommended
+              message="Halo admin DISBOT, saya ingin upgrade ke Paket Pro (Bolo Kepercayaan) seharga Rp 449.000/bulan untuk 20 mirror paths."
               features={[
-                "15 Mirror Paths",
+                "20 Mirror Paths",
                 "Instant Real-Time Sync",
                 "Advanced Regex Filters",
                 "Auto-Translation",
@@ -230,6 +273,7 @@ export default function Home() {
             <PricingCard
               tier="DISBOT Elite"
               price="Rp 999.000"
+              message="Halo admin DISBOT, saya ingin berlangganan Paket Elite (Bolo Andalan) seharga Rp 999.000/bulan. Saya butuh Dedicated Instance."
               features={[
                 "Unlimited Mirror Paths",
                 "Instant Real-Time Sync",
