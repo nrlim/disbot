@@ -312,8 +312,11 @@ export function filterAttachments(
  * Webhook.send() accepts either URL strings or { attachment, name } objects.
  * We pass URLs directly — Discord will download and re-host them.
  */
-export function buildWebhookFilePayload(eligible: ParsedAttachment[]): string[] {
-    return eligible.map(att => att.url);
+export function buildWebhookFilePayload(eligible: ParsedAttachment[]): Array<{ attachment: string; name: string }> {
+    return eligible.map(att => ({
+        attachment: att.url,
+        name: att.name,
+    }));
 }
 
 /**

@@ -466,7 +466,7 @@ class ClientManager {
             avatarURL: string;
             content: string;
             embeds: any[];
-            files: string[];
+            files: Array<{ attachment: string; name: string }>;
             botFiles: Array<{ attachment: string; name: string }>;
         } = {
             username: message.author.username,
@@ -612,7 +612,7 @@ class ClientManager {
             username: string;
             avatarURL: string;
             embeds: any[];
-            files: string[];
+            files: Array<{ attachment: string; name: string }>;
         }
     ) {
         const sendPayload: any = {
@@ -634,7 +634,8 @@ class ClientManager {
                 const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 10000);
+                // 60s timeout to allow large files (videos) to upload
+                const timeout = setTimeout(() => controller.abort(), 60000);
 
                 try {
                     await webhookClient.send({
@@ -698,7 +699,13 @@ class ClientManager {
                         attempt,
                     }, 'Webhook failed after 3 attempts');
                 } else {
-                    if (attempt === 1 && (sendPayload.files || sendPayload.embeds)) {
+                    // Retry logic:
+                    // If it's a timeout (AbortError), retry WITH files (maybe it was just slow).
+                    // If it's another error (e.g. 400 Bad Request), retry WITHOUT files as fallback.
+                    const isTimeout = error.name === 'AbortError' || error.code === 'ETIMEDOUT';
+
+                    if (attempt === 1 && !isTimeout && (sendPayload.files || sendPayload.embeds)) {
+                        logger.warn({ configId: cfg.id, error: error.message }, 'First attempt failed with non-timeout error. Retrying without files/embeds.');
                         sendPayload.files = undefined;
                         sendPayload.embeds = undefined;
                     }
