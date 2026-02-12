@@ -177,222 +177,147 @@ class ClientManager {
         const configs = session.configs.get(message.channelId);
         if (!configs || configs.length === 0) return;
 
-        const payload = {
+        // Detect forward FIRST — before building payload
+        const refType = (message.reference as any)?.type;
+        const isForward = refType === 'FORWARD' || refType === 1
+            || (message as any).flags?.has?.(1 << 14)  // HAS_SNAPSHOT flag
+            || ((message as any).messageSnapshots?.size ?? 0) > 0;
+
+        // Build payload based on message type
+        const payload: { username: string; avatarURL: string; content: string; embeds: any[]; files: string[] } = {
             username: message.author.username,
             avatarURL: message.author.displayAvatarURL(),
-            content: message.content,
-            embeds: message.embeds,
-            files: message.attachments.map((a: any) => a.url)
+            content: '',
+            embeds: [],
+            files: []
         };
 
-        // Detect forwarded messages using multiple signals
-        const refType = (message.reference as any)?.type;
-        const hasSnapshot = (message as any).flags?.has?.(1 << 14); // HAS_SNAPSHOT = 16384
-        const snapshotsCollection = (message as any).messageSnapshots;
-        const snapshotsSize = snapshotsCollection?.size ?? 0;
-        const isForward = refType === 'FORWARD' || refType === 1 || hasSnapshot || snapshotsSize > 0;
-
-        // Debug log for any message that has a reference (reply or forward)
-        if (message.reference) {
-            logger.info({
-                channelId: message.channelId,
-                messageId: message.id,
-                author: message.author.username,
-                content: message.content?.substring(0, 50) || '(empty)',
-                referenceType: refType,
-                referenceTypeOf: typeof refType,
-                referenceMessageId: message.reference.messageId,
-                referenceChannelId: message.reference.channelId,
-                hasSnapshot,
-                snapshotsSize,
-                flagsBitfield: (message as any).flags?.bitfield,
-                isForward,
-            }, 'Message with reference detected');
-        }
-
-        // Handle Forwarded Messages
         if (isForward) {
-            try {
-                const snapshot = snapshotsCollection?.first?.();
+            // === FORWARDED MESSAGE ===
+            // Extract data from snapshot (immutable copy of original message)
+            const snapshot = (message as any).messageSnapshots?.first?.();
 
-                logger.info({
-                    messageId: message.id,
-                    hasSnapshotObj: !!snapshot,
-                    snapshotContent: snapshot?.content?.substring(0, 50) || '(no content)',
-                    snapshotEmbedsCount: snapshot?.embeds?.length ?? 0,
-                    snapshotAttachmentsCount: snapshot?.attachments?.size ?? 0,
-                }, 'Processing forwarded message');
+            let fwdContent = `-# 📨 Forwarded Message`;
 
-                if (snapshot) {
-                    // Format: small label + original content
-                    let fwdContent = `-# 📨 Forwarded Message`;
+            if (snapshot?.content) {
+                fwdContent += `\n${snapshot.content}`;
+            }
 
-                    if (snapshot.content) {
-                        fwdContent += `\n${snapshot.content}`;
-                    }
-                    payload.content = fwdContent;
+            // Snapshot attachment URLs have expired CDN tokens — include as text links only
+            // Discord will auto-embed/preview image links
+            if (snapshot?.attachments?.size > 0) {
+                const urls = snapshot.attachments.map((a: any) => a.url);
+                fwdContent += `\n${urls.join('\n')}`;
+            }
 
-                    // Carry over embeds from the snapshot
-                    if (payload.embeds.length === 0 && snapshot.embeds?.length > 0) {
-                        payload.embeds = snapshot.embeds.map((e: any) => e.toJSON ? e.toJSON() : e) as any;
-                    }
+            payload.content = fwdContent;
+            // Never send files/embeds from snapshots — CDN tokens are expired
 
-                    // Carry over attachments from the snapshot
-                    if (payload.files.length === 0 && snapshot.attachments?.size > 0) {
-                        payload.files = snapshot.attachments.map((a: any) => a.url);
-                    }
-                } else {
-                    // No snapshot available - try fetching the referenced message as fallback
-                    logger.warn({ messageId: message.id }, 'Forward detected but no snapshot available, trying fetch fallback');
-
-                    if (message.reference?.messageId) {
-                        try {
-                            let refMsg: Message | null = null;
-                            if (message.reference.channelId === message.channelId) {
-                                refMsg = await message.channel.messages.fetch(message.reference.messageId);
-                            } else {
-                                const remoteCh = await session.client.channels.fetch(message.reference.channelId) as any;
-                                if (remoteCh && typeof remoteCh.messages?.fetch === 'function') {
-                                    refMsg = await remoteCh.messages.fetch(message.reference.messageId);
-                                }
-                            }
-
-                            if (refMsg) {
-                                let fwdContent = `-# 📨 Forwarded Message`;
-                                if (refMsg.content) {
-                                    fwdContent += `\n${refMsg.content}`;
-                                }
-                                payload.content = fwdContent;
-
-                                if (payload.embeds.length === 0 && refMsg.embeds.length > 0) {
-                                    payload.embeds = refMsg.embeds.map((e: any) => e.toJSON ? e.toJSON() : e) as any;
-                                }
-                                if (payload.files.length === 0 && refMsg.attachments.size > 0) {
-                                    payload.files = refMsg.attachments.map((a: any) => a.url);
-                                }
-                            }
-                        } catch (fetchErr: any) {
-                            logger.warn({ msg: fetchErr?.message || 'Fetch failed' }, 'Forward fallback fetch failed');
+            // Fallback: no snapshot, try fetching the original message
+            if (!snapshot && message.reference?.messageId) {
+                try {
+                    let refMsg: Message | null = null;
+                    if (message.reference.channelId === message.channelId) {
+                        refMsg = await message.channel.messages.fetch(message.reference.messageId);
+                    } else {
+                        const ch = await session.client.channels.fetch(message.reference.channelId) as any;
+                        if (ch?.messages?.fetch) {
+                            refMsg = await ch.messages.fetch(message.reference.messageId);
                         }
                     }
+                    if (refMsg) {
+                        let fwd = `-# 📨 Forwarded Message`;
+                        if (refMsg.content) fwd += `\n${refMsg.content}`;
+                        payload.content = fwd;
+                        // Fetched messages have valid CDN URLs
+                        if (refMsg.attachments.size > 0) {
+                            payload.files = refMsg.attachments.map((a: any) => a.url);
+                        }
+                    }
+                } catch {
+                    // Keep whatever content we have
                 }
-
-                // Truncate content to 2000 characters to prevent API errors
-                if (payload.content && payload.content.length > 2000) {
-                    payload.content = payload.content.substring(0, 1997) + '...';
-                }
-            } catch (err: any) {
-                logger.error({ msg: err?.message || 'Unknown error', stack: err?.stack }, 'Error processing forwarded message');
             }
-        }
-        // Handle Reply Messages - add context so readers understand what is being replied to
-        else if (message.reference && message.reference.messageId) {
-            try {
-                let referencedMessage: Message | null = null;
 
+        } else if (message.reference && message.reference.messageId) {
+            // === REPLY MESSAGE ===
+            // Mirror the reply content + add small context of what was replied to
+            payload.content = message.content || '';
+            payload.embeds = message.embeds as any;
+            payload.files = message.attachments.map((a: any) => a.url);
+
+            try {
+                let ref: Message | null = null;
                 if (message.reference.channelId === message.channelId) {
-                    referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
+                    ref = await message.channel.messages.fetch(message.reference.messageId);
                 } else {
-                    const remoteChannel = await session.client.channels.fetch(message.reference.channelId) as any;
-                    if (remoteChannel && typeof remoteChannel.messages?.fetch === 'function') {
-                        referencedMessage = await remoteChannel.messages.fetch(message.reference.messageId);
+                    const ch = await session.client.channels.fetch(message.reference.channelId) as any;
+                    if (ch?.messages?.fetch) {
+                        ref = await ch.messages.fetch(message.reference.messageId);
                     }
                 }
-
-                if (referencedMessage) {
-                    // Format: small text reply context + user's reply on next line
-                    const preview = referencedMessage.content
-                        ? referencedMessage.content.substring(0, 60).replace(/\n/g, ' ')
+                if (ref) {
+                    const preview = ref.content
+                        ? ref.content.substring(0, 60).replace(/\n/g, ' ')
                         : '📎 Attachment';
-                    const ellipsis = referencedMessage.content && referencedMessage.content.length > 60 ? '...' : '';
-
-                    payload.content = `-# ↩️ ${referencedMessage.author.username}: ${preview}${ellipsis}\n${message.content || ''}`;
+                    const ellipsis = ref.content && ref.content.length > 60 ? '...' : '';
+                    payload.content = `-# ↩️ ${ref.author.username}: ${preview}${ellipsis}\n${message.content || ''}`;
                 }
-
-                // Truncate content to 2000 characters to prevent API errors
-                if (payload.content && payload.content.length > 2000) {
-                    payload.content = payload.content.substring(0, 1997) + '...';
-                }
-            } catch (err) {
-                // If fetch fails (message deleted, no access), send reply content as-is
+            } catch {
+                // Reply fetch failed — send reply content as-is
             }
+
+        } else {
+            // === REGULAR MESSAGE ===
+            payload.content = message.content || '';
+            payload.embeds = message.embeds as any;
+            payload.files = message.attachments.map((a: any) => a.url);
         }
 
-        // Skip empty messages (e.g. stickers, system messages)
+        // Truncate content to 2000 chars (Discord API limit)
+        if (payload.content && payload.content.length > 2000) {
+            payload.content = payload.content.substring(0, 1997) + '...';
+        }
+
+        // Skip empty messages (stickers, system messages, etc.)
         if (!payload.content && payload.embeds.length === 0 && payload.files.length === 0) {
-            logger.debug({ messageId: message.id }, 'Skipping empty message');
             return;
         }
 
-        // Log payload before sending
-        logger.info({
-            messageId: message.id,
-            author: payload.username,
-            contentLength: payload.content?.length ?? 0,
-            contentPreview: payload.content?.substring(0, 80) || '(empty)',
-            embedsCount: payload.embeds.length,
-            filesCount: payload.files.length,
-            isForward,
-            configCount: configs.length,
-        }, 'Sending to webhook(s)');
-
-        // Execute Webhooks in Parallel (High Performance Mode)
+        // Execute Webhooks in Parallel
         const promises = configs.map(async (cfg) => {
             try {
-                // Create client (Lightweight operation)
                 const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
-                // Send message
                 await webhookClient.send({
-                    content: payload.content,
+                    content: payload.content || undefined,
                     username: payload.username,
                     avatarURL: payload.avatarURL,
-                    embeds: payload.embeds,
-                    files: payload.files,
+                    embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
+                    files: payload.files.length > 0 ? payload.files : undefined,
                     allowedMentions: { parse: [] }
                 });
 
-                logger.info({ configId: cfg.id }, 'Webhook sent successfully');
-
-                // Update Last Active - Fire and Forget (Non-blocking)
+                // Update Last Active - Fire and Forget
                 prisma.mirrorConfig.update({
                     where: { id: cfg.id },
                     data: { updatedAt: new Date() }
-                }).catch(() => {
-                    // Ignore DB update errors to maintain speed
-                });
+                }).catch(() => { });
 
             } catch (error: any) {
-                logger.error({ msg: error.message || 'Webhook Send Failed', code: error.code, configId: cfg.id, status: error.status }, 'Failed to send webhook');
+                logger.error({
+                    msg: error.message || 'Webhook Failed',
+                    code: error.code,
+                    configId: cfg.id,
+                    isForward,
+                }, 'Webhook send failed');
 
-                // If send failed and we had files, retry without files (snapshot attachment URLs may have expired)
-                if (payload.files.length > 0) {
-                    try {
-                        logger.info({ configId: cfg.id }, 'Retrying webhook without files...');
-                        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
-                        await webhookClient.send({
-                            content: payload.content,
-                            username: payload.username,
-                            avatarURL: payload.avatarURL,
-                            embeds: payload.embeds,
-                            allowedMentions: { parse: [] }
-                        });
-                        logger.info({ configId: cfg.id }, 'Webhook retry without files succeeded');
-                    } catch (retryErr: any) {
-                        logger.error({ msg: retryErr.message || 'Retry Failed', configId: cfg.id }, 'Webhook retry also failed');
-                    }
-                }
-
-                if (error.code === 10015 || error.code === 404) { // Webhook not found
-                    // Mark invalid asynchronously
+                if (error.code === 10015 || error.code === 404) {
                     this.markConfigInvalid(cfg.id, 'WEBHOOK_INVALID').catch(() => { });
-                } else if (error.code === 429) { // Rate limited
-                    logger.warn({ configId: cfg.id }, 'Rate limited on webhook');
                 }
             }
         });
 
-        // Wait for all requests to initiate/complete (Parallel)
         await Promise.all(promises);
     }
 
