@@ -13,8 +13,6 @@ import {
     buildWebhookFilePayload,
     buildBotFilePayload,
     buildRejectionNotice,
-    isMediaForwardingAllowed,
-    type ParsedAttachment,
     type MediaForwardResult
 } from './lib/media';
 import {
@@ -422,6 +420,19 @@ class ClientManager {
         let mediaResult: MediaForwardResult = { eligible: [], rejected: [] };
 
         if (rawAttachments.length > 0) {
+            logger.debug({
+                rawCount: rawAttachments.length,
+                attachments: rawAttachments.map(a => ({
+                    name: a.name,
+                    category: a.category,
+                    contentType: a.contentType,
+                    size: a.size,
+                    isVoiceMessage: a.isVoiceMessage,
+                })),
+                hasContent: !!message.content,
+                plan: userPlan,
+            }, 'Parsing attachments for forwarding');
+
             // validateMediaForwarding handles all 3 layers:
             //   1. Plan gate (FREE blocked)
             //   2. MIME-type allowlist (Starter: image+audio, Pro: +video+docs, Elite: all)
@@ -555,9 +566,11 @@ class ClientManager {
             payload.content += rejectionNotice;
         }
 
-        // Add watermark
-        if (payload.content) {
-            payload.content += `\n-# 📡 via DisBot Engine`;
+        // Add watermark — always add when there's content OR files/embeds
+        const hasFiles = payload.files.length > 0 || payload.botFiles.length > 0;
+        const hasEmbeds = payload.embeds.length > 0;
+        if (payload.content || hasFiles || hasEmbeds) {
+            payload.content = (payload.content || '') + `\n-# 📡 via DisBot Engine`;
         }
 
         // Truncate content to 2000 chars (Discord API limit)
@@ -565,8 +578,8 @@ class ClientManager {
             payload.content = payload.content.substring(0, 1997) + '...';
         }
 
-        // Skip empty messages
-        if (!payload.content && payload.embeds.length === 0 && payload.files.length === 0 && payload.botFiles.length === 0) {
+        // Skip truly empty messages (no content, no embeds, no files)
+        if (!payload.content && !hasEmbeds && !hasFiles) {
             return;
         }
 
@@ -610,6 +623,11 @@ class ClientManager {
             files: payload.files.length > 0 ? payload.files : undefined,
             allowedMentions: { parse: [] as string[] }
         };
+
+        // Ensure we always have content when files are present (Discord API requirement)
+        if (!sendPayload.content && sendPayload.files) {
+            sendPayload.content = `-# 📡 via DisBot Engine`;
+        }
 
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -730,6 +748,10 @@ class ClientManager {
                 }
                 if (payload.content) {
                     content += payload.content;
+                }
+                // Ensure we always have content when files are present
+                if (!content && payload.botFiles.length > 0) {
+                    content = `-# 📡 via DisBot Engine`;
                 }
                 if (content) {
                     sendOptions.content = content.substring(0, 2000);

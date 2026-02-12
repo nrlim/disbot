@@ -4,7 +4,8 @@ import { logger } from './logger';
 //  Supported MIME types & extensions
 // ──────────────────────────────────────────────────────────────
 
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma']);
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.tiff', '.avif']);
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma', '.opus']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.avi', '.mkv', '.flv']);
 const DOCUMENT_EXTENSIONS = new Set([
     '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt',
@@ -14,12 +15,14 @@ const DOCUMENT_EXTENSIONS = new Set([
 
 const AUDIO_MIMES = new Set([
     'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac',
-    'audio/aac', 'audio/mp4', 'audio/x-m4a', 'audio/x-ms-wma'
+    'audio/aac', 'audio/mp4', 'audio/x-m4a', 'audio/x-ms-wma',
+    'audio/opus', 'audio/webm', 'audio/x-wav'
 ]);
 
 const VIDEO_MIMES = new Set([
     'video/mp4', 'video/quicktime', 'video/webm',
-    'video/x-msvideo', 'video/x-matroska', 'video/x-flv'
+    'video/x-msvideo', 'video/x-matroska', 'video/x-flv',
+    'video/mpeg', 'video/ogg'
 ]);
 
 const DOCUMENT_MIMES = new Set([
@@ -124,13 +127,16 @@ export function categoriseAttachment(name: string, contentType: string | null): 
         if (AUDIO_MIMES.has(mime)) return 'audio';
         if (VIDEO_MIMES.has(mime)) return 'video';
         if (DOCUMENT_MIMES.has(mime)) return 'document';
+        // Fallback: generic audio/* or video/* MIME types
+        if (mime.startsWith('audio/')) return 'audio';
+        if (mime.startsWith('video/')) return 'video';
     }
 
     // Fallback to extension
+    if (IMAGE_EXTENSIONS.has(ext)) return 'image';
     if (AUDIO_EXTENSIONS.has(ext)) return 'audio';
     if (VIDEO_EXTENSIONS.has(ext)) return 'video';
     if (DOCUMENT_EXTENSIONS.has(ext)) return 'document';
-    if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(ext)) return 'image';
 
     return 'unknown';
 }
