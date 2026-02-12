@@ -120,8 +120,8 @@ class ClientManager {
                 }
             }
 
-        } catch (error) {
-            logger.error({ err: error }, 'Error during sync cycle');
+        } catch (error: any) {
+            logger.error({ msg: error.message || 'Unknown Error' }, 'Error during sync cycle');
         }
     }
 
@@ -147,8 +147,8 @@ class ClientManager {
         });
 
         // Error handling
-        client.on('error', (err: Error) => {
-            logger.error({ err }, 'Client connection error');
+        client.on('error', (err: any) => {
+            logger.error({ msg: err.message || 'Unknown Connection Error' }, 'Client connection error');
         });
 
         try {
@@ -160,7 +160,7 @@ class ClientManager {
 
             await client.login(token);
         } catch (error: any) {
-            logger.error({ err: error, token: maskToken(token) }, 'Login failed');
+            logger.error({ msg: error.message || 'Login Failed', code: error.code, token: maskToken(token) }, 'Login failed');
 
             // Check for 401 or invalid token
             if (error.message && (error.message.includes('Token') || error.code === 401)) {
@@ -191,22 +191,28 @@ class ClientManager {
                 const referencedMessage = await message.channel.messages.fetch(message.reference.messageId);
                 if (referencedMessage) {
                     // Logic for "Forward without unique content" (Pure Forward)
-                    // In many clients, forwarding just sends a message with reference to the original, and empty content
-                    if (!message.content && referencedMessage.content) {
-                        payload.content = `> **Forwarded from ${referencedMessage.author.username}**\n\n${referencedMessage.content}`;
+                    // In many updated clients, message.content is empty string for pure forwards
+                    if (!message.content) {
+                        let fwdContent = `> **Forwarded from ${referencedMessage.author.username}**\n\n`;
+                        if (referencedMessage.content) {
+                            fwdContent += referencedMessage.content;
+                        }
+                        payload.content = fwdContent;
 
                         // If original message had embeds/files, carry them over
+                        // This corresponds to "news" style messages that are often just one big embed
                         if (payload.embeds.length === 0 && referencedMessage.embeds.length > 0) {
                             payload.embeds = referencedMessage.embeds;
                         }
                         if (payload.files.length === 0 && referencedMessage.attachments.size > 0) {
                             payload.files = referencedMessage.attachments.map((a: any) => a.url);
                         }
-                    } else if (payload.content) {
+                    } else {
                         // Standard reply with content
-                        const preview = referencedMessage.content ? referencedMessage.content.substring(0, 50).replace(/\n/g, ' ') : 'Attachment/Embed';
-                        const replyContext = `> **Replying to ${referencedMessage.author.username}**: ${preview}${referencedMessage.content.length > 50 ? '...' : ''}\n\n`;
-                        payload.content = replyContext + payload.content;
+                        // Only clip if content exists
+                        const preview = referencedMessage.content ? referencedMessage.content.substring(0, 50).replace(/\n/g, ' ') : 'Attachment';
+                        const replyContext = `> **Replying to ${referencedMessage.author.username}**: ${preview}${referencedMessage.content && referencedMessage.content.length > 50 ? '...' : ''}\n\n`;
+                        payload.content = replyContext + message.content;
                     }
                 }
             } catch (err) {
@@ -244,7 +250,7 @@ class ClientManager {
                 });
 
             } catch (error: any) {
-                logger.error({ err: error, configId: cfg.id }, 'Failed to send webhook');
+                logger.error({ msg: error.message || 'Webhook Send Failed', code: error.code, configId: cfg.id }, 'Failed to send webhook');
 
                 if (error.code === 10015 || error.code === 404) { // Webhook not found
                     // Mark invalid asynchronously
@@ -288,8 +294,8 @@ class ClientManager {
             try {
                 session.client.destroy();
                 logger.info({ token: maskToken(token) }, 'Client destroyed');
-            } catch (e) {
-                logger.error({ err: e, token: maskToken(token) }, 'Error destroying client');
+            } catch (e: any) {
+                logger.error({ msg: e.message || 'Error', token: maskToken(token) }, 'Error destroying client');
             }
         }
         this.clients.clear();
