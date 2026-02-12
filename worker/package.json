@@ -4,11 +4,12 @@
     "description": "Discord Mirroring Engine",
     "main": "dist/engine.js",
     "scripts": {
-        "build": "tsc",
-        "start": "node dist/engine.js",
-        "dev": "ts-node-dev src/engine.ts",
-        "encrypt": "ts-node src/encrypt-token.ts",
-        "postinstall": "prisma generate"
+        "install:clean": "npm install --ignore-scripts",
+        "prisma:generate": "prisma generate --schema=../prisma/schema.prisma",
+        "build": "npm run prisma:generate && tsc",
+        "start": "pm2 start dist/engine.js --name disbot-worker",
+        "restart": "pm2 restart disbot-worker",
+        "logs": "pm2 logs disbot-worker"
     },
     "dependencies": {
         "@prisma/client": "^6.19.2",
