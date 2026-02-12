@@ -320,8 +320,21 @@ class ClientManager {
 
         // Skip empty messages (e.g. stickers, system messages)
         if (!payload.content && payload.embeds.length === 0 && payload.files.length === 0) {
+            logger.debug({ messageId: message.id }, 'Skipping empty message');
             return;
         }
+
+        // Log payload before sending
+        logger.info({
+            messageId: message.id,
+            author: payload.username,
+            contentLength: payload.content?.length ?? 0,
+            contentPreview: payload.content?.substring(0, 80) || '(empty)',
+            embedsCount: payload.embeds.length,
+            filesCount: payload.files.length,
+            isForward,
+            configCount: configs.length,
+        }, 'Sending to webhook(s)');
 
         // Execute Webhooks in Parallel (High Performance Mode)
         const promises = configs.map(async (cfg) => {
@@ -339,6 +352,8 @@ class ClientManager {
                     allowedMentions: { parse: [] }
                 });
 
+                logger.info({ configId: cfg.id }, 'Webhook sent successfully');
+
                 // Update Last Active - Fire and Forget (Non-blocking)
                 prisma.mirrorConfig.update({
                     where: { id: cfg.id },
@@ -348,7 +363,25 @@ class ClientManager {
                 });
 
             } catch (error: any) {
-                logger.error({ msg: error.message || 'Webhook Send Failed', code: error.code, configId: cfg.id }, 'Failed to send webhook');
+                logger.error({ msg: error.message || 'Webhook Send Failed', code: error.code, configId: cfg.id, status: error.status }, 'Failed to send webhook');
+
+                // If send failed and we had files, retry without files (snapshot attachment URLs may have expired)
+                if (payload.files.length > 0) {
+                    try {
+                        logger.info({ configId: cfg.id }, 'Retrying webhook without files...');
+                        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
+                        await webhookClient.send({
+                            content: payload.content,
+                            username: payload.username,
+                            avatarURL: payload.avatarURL,
+                            embeds: payload.embeds,
+                            allowedMentions: { parse: [] }
+                        });
+                        logger.info({ configId: cfg.id }, 'Webhook retry without files succeeded');
+                    } catch (retryErr: any) {
+                        logger.error({ msg: retryErr.message || 'Retry Failed', configId: cfg.id }, 'Webhook retry also failed');
+                    }
+                }
 
                 if (error.code === 10015 || error.code === 404) { // Webhook not found
                     // Mark invalid asynchronously
