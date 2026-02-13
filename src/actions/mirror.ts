@@ -126,7 +126,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         return { success: true };
     } catch (e) {
         console.error("Failed to create mirror:", (e as Error)?.message || "Unknown error");
-        return { error: "Database error. Please try again." };
+        return { error: `Error: ${(e as Error)?.message}` }; // Expose error for debugging
     }
 }
 
@@ -204,7 +204,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
         return { success: true, count: parsedConfigs.length };
     } catch (e) {
         console.error("Failed to bulk create:", (e as Error)?.message || "Unknown error");
-        return { error: "Database error during bulk creation." };
+        return { error: `Error: ${(e as Error)?.message}` }; // Expose error
     }
 }
 
@@ -291,7 +291,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         // Distinguish specific errors if possible, otherwise generic
         if (e?.code === 'P2002') return { error: "Unique constraint violation." };
         if (e?.code === 'P2025') return { error: "Configuration no longer exists." };
-        return { error: "Database error. Please try again." };
+        return { error: `Error: ${e?.message || e}` }; // Expose error for debugging
     }
 }
 
