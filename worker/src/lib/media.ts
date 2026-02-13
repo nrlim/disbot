@@ -1,5 +1,3 @@
-import axios from 'axios';
-import { Readable } from 'stream';
 import { logger } from './logger';
 
 // ──────────────────────────────────────────────────────────────
@@ -65,7 +63,7 @@ const PLAN_FILE_SIZE_LIMITS: Record<string, number> = {
 // ──────────────────────────────────────────────────────────────
 
 type MediaCategory = 'audio' | 'video' | 'document' | 'image' | 'unknown';
-export type MediaStrategy = 'SNAPSHOT' | 'STREAM' | 'REJECT';
+export type MediaStrategy = 'SNAPSHOT' | 'REJECT';
 
 /**
  * Categories each plan tier is allowed to forward.
@@ -152,16 +150,15 @@ export function categoriseAttachment(name: string, contentType: string | null): 
  * Determines the forwarding strategy based on category.
  * 
  * Strategy 1: Images & Videos -> SNAPSHOT (Forward URL, wrap in Embed)
- * Strategy 2: Audio & Documents -> STREAM (Pipe data directly)
+ * Strategy 2: Audio & Documents -> SNAPSHOT (Forward URL, wrap in Embed)
  */
 export function getMediaStrategy(category: MediaCategory): MediaStrategy {
     switch (category) {
         case 'image':
         case 'video':
-            return 'SNAPSHOT';
         case 'audio':
         case 'document':
-            return 'STREAM';
+            return 'SNAPSHOT';
         default:
             return 'REJECT'; // Unknown types are rejected or treated as documents if allowed
     }
@@ -281,10 +278,10 @@ export function validateMediaForwarding(
     const sizeLimit = getFileSizeLimit(userPlan);
 
     for (const att of attachments) {
-        // Special case: Elite users can forward unknown types as Documents (Stream)
-        // We override the strategy to STREAM for unknown types on Elite plan
+        // Special case: Elite users can forward unknown types as Documents
+        // We override the strategy to SNAPSHOT for unknown types on Elite plan
         if (userPlan === 'ELITE' && att.category === 'unknown') {
-            att.strategy = 'STREAM';
+            att.strategy = 'SNAPSHOT';
             att.category = 'document'; // Treat as document for passing allowlist
         }
 
@@ -342,117 +339,6 @@ export function filterAttachments(
     return validateMediaForwarding(attachments, plan);
 }
 
-// ──────────────────────────────────────────────────────────────
-//  Streaming Helpers
-// ──────────────────────────────────────────────────────────────
-
-/**
- * Fetches a media file as a readable stream.
- * Used for the "STREAM" strategy (Audio & Documents).
- */
-export async function fetchMediaStream(url: string): Promise<Readable> {
-    const response = await axios({
-        method: 'GET',
-        url: url,
-        responseType: 'stream'
-    });
-    return response.data;
-}
-
-/**
- * Fetches a media file as a Buffer (load into RAM).
- * Used for "Download Once, Upload Many" optimization.
- */
-export async function fetchMediaBuffer(url: string, maxSize = DEFAULT_FILE_SIZE_LIMIT): Promise<Buffer> {
-    const response = await axios({
-        method: 'GET',
-        url: url,
-        responseType: 'arraybuffer',
-        maxContentLength: maxSize,
-        maxBodyLength: maxSize
-    });
-    return Buffer.from(response.data);
-}
-
-// ──────────────────────────────────────────────────────────────
-//  Payload builders
-// ──────────────────────────────────────────────────────────────
-
-/**
- * Builds the `files` array for a **Webhook**.
- * 
- * UPDATE: Hybrid Forwarding Logic
- * Snapshot -> Returns URL string (handled by Discord download if in files array, BUT we want Zero Disk Usage).
- * Stream -> returns Stream object.
- */
-export async function buildWebhookFilePayload(eligible: ParsedAttachment[]): Promise<Array<{ attachment: string | Readable; name: string }>> {
-    const files: Array<{ attachment: string | Readable; name: string }> = [];
-
-    for (const att of eligible) {
-        if (att.strategy === 'STREAM') {
-            try {
-                const stream = await fetchMediaStream(att.url);
-                files.push({
-                    attachment: stream,
-                    name: att.name
-                });
-            } catch (error: any) {
-                logger.error({ fileName: att.name, error: error.message }, 'Failed to stream media');
-            }
-        }
-        // SNAPSHOT strategy items are handled via Embeds in the engine logic
-    }
-    return files;
-}
-
-/**
- * Builds the `files` array for a **Managed Bot**.
- */
-export async function buildBotFilePayload(eligible: ParsedAttachment[]): Promise<Array<{ attachment: string | Readable; name: string }>> {
-    const files: Array<{ attachment: string | Readable; name: string }> = [];
-
-    for (const att of eligible) {
-        if (att.strategy === 'STREAM') {
-            try {
-                const stream = await fetchMediaStream(att.url);
-                files.push({
-                    attachment: stream,
-                    name: att.name
-                });
-            } catch (error: any) {
-                logger.error({ fileName: att.name, error: error.message }, 'Failed to stream media');
-            }
-        }
-        // SNAPSHOT strategy items are handled via Embeds in the engine logic
-    }
-    return files;
-}
-
-/**
- * Builds the `files` array using Buffer downloading (RAM-based).
- * Faster for forwarding to multiple targets (Download Once, Upload Many).
- */
-export async function buildFilePayloadBuffer(eligible: ParsedAttachment[]): Promise<Array<{ attachment: Buffer; name: string }>> {
-    const files: Array<{ attachment: Buffer; name: string }> = [];
-
-    for (const att of eligible) {
-        // Process STREAM items (Audio/Docs) AND forced SNAPSHOT items (Elite Buffering)
-        if (att.strategy === 'STREAM') {
-            try {
-                // Fetch buffer with margin
-                const limit = att.size > 0 ? att.size * 1.5 : DEFAULT_FILE_SIZE_LIMIT;
-                const buffer = await fetchMediaBuffer(att.url, limit);
-                files.push({
-                    attachment: buffer,
-                    name: att.name
-                });
-            } catch (error: any) {
-                logger.error({ fileName: att.name, error: error.message }, 'Failed to buffer media');
-            }
-        }
-    }
-    return files;
-}
 
 /**
  * Generates a human-readable summary line when some files were rejected.

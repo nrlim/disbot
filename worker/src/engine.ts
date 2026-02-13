@@ -10,9 +10,6 @@ import { logger } from './lib/logger';
 import {
     parseAttachments,
     validateMediaForwarding,
-    buildWebhookFilePayload,
-    buildBotFilePayload,
-    buildFilePayloadBuffer,
     buildRejectionNotice,
     type MediaForwardResult,
     type ParsedAttachment,
@@ -682,34 +679,44 @@ class ClientManager {
             const session = this.clients.get(token) || this.botClients.get(token);
 
             if (session && channelId) {
-                // Retry up to 3 times (1.5s total)
-                for (let i = 0; i < 3; i++) {
-                    try {
-                        await new Promise(r => setTimeout(r, 500 * (i + 1)));
-                        const channel = await session.client.channels.fetch(channelId);
-                        // Safe check for isTextBased
-                        if (channel && (channel as any).isTextBased?.()) {
-                            const msg = await (channel as any).messages.fetch(messageId);
-                            if (msg) {
-                                const refreshed = parseAttachments(msg.attachments, msg.flags);
-                                // Merge fresh URLs into our existing items
-                                finalItems = finalItems.map(existing => {
-                                    // Match by URL (CDN link is unique ID)
-                                    const fresh = refreshed.find(a => a.url === existing.url);
-                                    if (fresh) {
-                                        return {
-                                            ...existing,
-                                            proxyUrl: fresh.proxyUrl || existing.proxyUrl,
-                                            url: fresh.url || existing.url
-                                        };
+                // Timeout Guard: Race the retry loop against a 3-second timeout
+                try {
+                    await Promise.race([
+                        (async () => {
+                            // Retry up to 3 times (1.5s total)
+                            for (let i = 0; i < 3; i++) {
+                                try {
+                                    await new Promise(r => setTimeout(r, 500 * (i + 1)));
+                                    const channel = await session.client.channels.fetch(channelId);
+                                    // Safe check for isTextBased
+                                    if (channel && (channel as any).isTextBased?.()) {
+                                        const msg = await (channel as any).messages.fetch(messageId);
+                                        if (msg) {
+                                            const refreshed = parseAttachments(msg.attachments, msg.flags);
+                                            // Merge fresh URLs into our existing items
+                                            finalItems = finalItems.map(existing => {
+                                                // Match by URL (CDN link is unique ID)
+                                                const fresh = refreshed.find(a => a.url === existing.url);
+                                                if (fresh) {
+                                                    return {
+                                                        ...existing,
+                                                        proxyUrl: fresh.proxyUrl || existing.proxyUrl,
+                                                        url: fresh.url || existing.url
+                                                    };
+                                                }
+                                                return existing;
+                                            });
+                                            // If we fixed all of them, break early
+                                            if (finalItems.every(item => item.proxyUrl || item.url)) break;
+                                        }
                                     }
-                                    return existing;
-                                });
-                                // If we fixed all of them, break early
-                                if (finalItems.every(item => item.proxyUrl || item.url)) break;
+                                } catch (e) { /* ignore retry errors */ }
                             }
-                        }
-                    } catch (e) { /* ignore fetch errors */ }
+                        })(),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Metadata timeout')), 3000))
+                    ]);
+                } catch (err) {
+                    logger.warn({ messageId }, '[Async] Metadata refetch timed out — proceeding with fallback data');
                 }
             }
         }
@@ -720,9 +727,12 @@ class ClientManager {
         for (const item of finalItems) {
             if (signal.aborted) return;
 
-            // Metadata Fallback: Use proxyUrl if valid; fallback to standard url immediately.
-            // This ensures we never send a null URL even if metadata refetch failed.
+            // Critical Fallback & Filter:
+            // Use proxyUrl if available, else immediate url fallback.
+            // If BOTH are missing, skip to prevents crashing/hanging on invalid payload.
             const proxyUrl = item.proxyUrl || item.url;
+            if (!proxyUrl) continue;
+
             fallbackUrls.push(proxyUrl);
 
             // Build standard embeds
@@ -735,6 +745,20 @@ class ClientManager {
                 snapshotEmbeds.push({
                     title: `🎥 ${item.name}`,
                     description: `[Click to Watch Video](${proxyUrl})`,
+                    url: proxyUrl,
+                    color: 0x2b2d31
+                });
+            } else if (item.category === 'audio') {
+                snapshotEmbeds.push({
+                    title: `🎵 ${item.name}`,
+                    description: `[Click to Play/Download](${proxyUrl})`,
+                    url: proxyUrl,
+                    color: 0x2b2d31
+                });
+            } else if (item.category === 'document') {
+                snapshotEmbeds.push({
+                    title: `📂 ${item.name}`,
+                    description: `[Click to Download](${proxyUrl})`,
                     url: proxyUrl,
                     color: 0x2b2d31
                 });
@@ -763,6 +787,20 @@ class ClientManager {
                         configEmbeds.push({
                             title: `🎥 ${item.name}`,
                             description: `[Click to Watch Video](${proxyUrl})`,
+                            url: proxyUrl,
+                            color: 0x2b2d31
+                        });
+                    } else if (item.category === 'audio') {
+                        configEmbeds.push({
+                            title: `🎵 ${item.name}`,
+                            description: `[Click to Play/Download](${proxyUrl})`,
+                            url: proxyUrl,
+                            color: 0x2b2d31
+                        });
+                    } else if (item.category === 'document') {
+                        configEmbeds.push({
+                            title: `📂 ${item.name}`,
+                            description: `[Click to Download](${proxyUrl})`,
                             url: proxyUrl,
                             color: 0x2b2d31
                         });
@@ -814,7 +852,7 @@ class ClientManager {
         taskSignal: AbortSignal,
         files?: any[]
     ): Promise<void> {
-        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
+        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl, agent: keepAliveAgent } as any);
 
         // ── Strict payload structure (content is always "" not null/undefined) ──
         // ── Elite Tier: Send with Files if available ──
@@ -845,6 +883,7 @@ class ClientManager {
             const requestTimer = setTimeout(() => controller.abort(), timeoutDuration);
 
             try {
+                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Sending webhook payload...');
                 await webhookClient.send({
                     ...sendPayload,
                     // @ts-ignore - abort signal for per-request timeout
@@ -1276,15 +1315,13 @@ class ClientManager {
             payload.embeds = message.embeds as any;
         }
 
+
+
         // ──────────────────────────────────────────────────────────────
-        //  SNAPSHOT Strategy — Non-Blocking Fire-and-Forget
-        //
-        //  Immediately extract proxy_url from metadata (zero I/O),
-        //  then dispatch snapshot forwarding as a background task.
-        //  The main thread continues to process STREAM items without waiting.
+        //  UNIFIED SNAPSHOT Strategy — All Media is Async
         // ──────────────────────────────────────────────────────────────
 
-        const snapshotItems = payload.eligibleMedia.filter(att => att.strategy === 'SNAPSHOT');
+        const snapshotItems = payload.eligibleMedia;
 
         if (snapshotItems.length > 0) {
             const taskId = `snap_${message.id}_${Date.now()}`;
@@ -1297,8 +1334,6 @@ class ClientManager {
             }, `[Async] Snapshot task started for MessageID: ${message.id}`);
 
             // ── Deep-copy to prevent state mutation from the main thread ──
-            // The main thread may reassign `configs` during the next sync cycle
-            // or the next messageCreate event. The background task must own its data.
             const frozenConfigs: MirrorActiveConfig[] = configs.map(c => ({ ...c }));
             const frozenSnapshots: ParsedAttachment[] = snapshotItems.map(s => ({ ...s }));
             const frozenPayload = {
@@ -1308,7 +1343,6 @@ class ClientManager {
             };
 
             // ── Fire-and-forget: use `void` to ensure zero blocking ──
-            // BackgroundTaskManager handles timeout (10s) and cleanup
             void backgroundTasks.track(taskId, message.id, (signal) =>
                 this.forwardSnapshotAsync(
                     frozenConfigs,
@@ -1319,16 +1353,11 @@ class ClientManager {
                     signal
                 )
             );
-
-            // ── Main thread continues immediately — zero blocking ──
         }
 
-        // ── Handle STREAM Strategy (Audio/Documents) — remains synchronous ──
-        // STREAM items require downloading and piping, so they stay on the main flow
-        const streamItems = payload.eligibleMedia.filter(att => att.strategy === 'STREAM');
-
-        // Only include STREAM items in the synchronous forwarding payload
-        payload.eligibleMedia = streamItems;
+        // ──────────────────────────────────────────────────────────────
+        //  Synchronous TEXT Forwarding (Content & Embeds Only)
+        // ──────────────────────────────────────────────────────────────
 
         // Append rejection notices
         const rejectionNotice = buildRejectionNotice(mediaResult.rejected);
@@ -1337,10 +1366,10 @@ class ClientManager {
         }
 
         // Add watermark — always add when there's content OR files/embeds
-        const hasFiles = streamItems.length > 0;
-        const hasSnapshotEmbeds = snapshotItems.length > 0;
-        const hasEmbeds = payload.embeds.length > 0 || hasSnapshotEmbeds;
-        if (payload.content || hasFiles || hasEmbeds) {
+        const hasMedia = snapshotItems.length > 0;
+        const hasEmbeds = payload.embeds.length > 0;
+
+        if (payload.content || hasMedia || hasEmbeds) {
             payload.content = (payload.content || '') + `\n-# 📡 via DisBot Engine`;
         }
 
@@ -1349,58 +1378,18 @@ class ClientManager {
             payload.content = payload.content.substring(0, 1997) + '...';
         }
 
-        // Skip truly empty messages (no content, no embeds, no stream files)
-        // Note: snapshot embeds are handled in the background, so we still
-        // need to forward text content and stream files synchronously
-        // ── Check if we have ANYTHING to send (Sync or Async) ──
-        // Reliability Fix: Don't perform the strict "sync content check" yet.
-        // If we had snapshot items, the background task is handling them.
-        // We only abort here if we have NO content, NO embeds, NO sync-files AND NO async-snapshots.
-        if (!payload.content && !hasEmbeds && !hasFiles && !hasSnapshotEmbeds) {
+        // Check if we have ANYTHING to send via Sync Text Channel
+        if (!payload.content && !hasEmbeds) {
             return;
         }
 
-        // ── DOWNLOAD ONCE OPTIMIZATION (Sync Media) ──
-        // Instead of downloading inside each config loop locally, download once to RAM here.
-        let sharedSyncFiles: any[] | undefined = undefined;
-        if (streamItems.length > 0) {
-            logger.debug({ count: streamItems.length }, 'Downloading sync media to shared buffer...');
-            sharedSyncFiles = await buildFilePayloadBuffer(streamItems);
-        }
-
-        // ── Execute synchronous forwarding (text + STREAM items) in parallel ──
+        // ── Execute synchronous text forwarding in parallel ──
         const promises = configs.map(async (cfg) => {
-            // ── Re-validate STREAM media for THIS specific config ──
-            // Prevents Audio/Docs from leaking to Free/Starter plans
-            const { eligible } = validateMediaForwarding(streamItems, cfg.userPlan);
-
-            // Filter the shared buffer list to match eligible items for this config
-            let configFiles: any[] | undefined = undefined;
-            if (sharedSyncFiles && sharedSyncFiles.length > 0 && eligible.length > 0) {
-                const eligibleNames = new Set(eligible.map(e => e.name));
-                configFiles = sharedSyncFiles.filter(f => eligibleNames.has(f.name));
-            }
-
-            // If this config has no allowed stream media, and no text/embeds, skip it
-            // (Unless there was snapshot media, which is handled separately)
-            const configHasFiles = configFiles && configFiles.length > 0;
-            const configHasContent = !!payload.content || payload.embeds.length > 0;
-
-            // If strictly nothing to send in this sync phase
-            if (!configHasFiles && !configHasContent) return;
-
-            // Clone payload with filtered media
-            const configPayload = {
-                ...payload,
-                eligibleMedia: eligible
-            };
-
             try {
                 if (cfg.type === 'CUSTOM_HOOK') {
-                    // Pass pre-downloaded buffer files
-                    await this.forwardViaWebhook(cfg, configPayload, configFiles);
+                    await this.sendTextViaWebhook(cfg, payload);
                 } else if (cfg.type === 'MANAGED_BOT') {
-                    await this.forwardViaManagedBot(cfg, configPayload, token, configFiles);
+                    await this.sendTextViaManagedBot(cfg, payload, token);
                 }
             } catch (error: any) {
                 // Isolated: one config's error doesn't crash the others
@@ -1414,52 +1403,43 @@ class ClientManager {
         await Promise.all(promises);
     }
 
-    // ────────────── WEBHOOK FORWARDING ──────────────
+    // ────────────── WEBHOOK FORWARDING (Text Only) ──────────────
 
-    private async forwardViaWebhook(
+    private async sendTextViaWebhook(
         cfg: MirrorActiveConfig,
         payload: {
             content: string;
             username: string;
             avatarURL: string;
             embeds: any[];
-            eligibleMedia: ParsedAttachment[];
-        },
-        preloadedFiles?: any[]
+        }
     ) {
-        // Build fresh file payload (including streams) for this request
-        // OR use preloaded buffer files if available (Download Once Optimization)
-        const files = preloadedFiles || await buildWebhookFilePayload(payload.eligibleMedia);
-
         const sendPayload: any = {
             content: payload.content || undefined,
             username: payload.username,
             avatarURL: payload.avatarURL,
             embeds: payload.embeds.length > 0 ? payload.embeds : undefined,
-            files: files.length > 0 ? files : undefined,
             allowedMentions: { parse: [] }
         };
 
-        // Ensure we always have content when files are present (Discord API requirement)
-        if (!sendPayload.content && sendPayload.files) {
-            sendPayload.content = `-# 📡 via DisBot Engine`;
-        }
+        // Safety check to ensure we don't send emptiness
+        if (!sendPayload.content && !sendPayload.embeds) return;
 
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-                const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
+                const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl, agent: keepAliveAgent } as any);
 
-                // 300s (5m) timeout for reliable media uploads (matches download timeout)
-                const UPLOAD_TIMEOUT_MS = 300_000;
+                // 10s timeout for text/embeds is sufficient
+                const UPLOAD_TIMEOUT_MS = 10_000;
 
                 await Promise.race([
                     webhookClient.send(sendPayload),
                     new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Webhook upload timed out')), UPLOAD_TIMEOUT_MS)
+                        setTimeout(() => reject(new Error('Webhook timeout')), UPLOAD_TIMEOUT_MS)
                     )
                 ]);
 
-                // Success — update last active (fire and forget)
+                // Success
                 prisma.mirrorConfig.update({
                     where: { id: cfg.id },
                     data: { updatedAt: new Date(), lastActiveAt: new Date() }
@@ -1468,23 +1448,6 @@ class ClientManager {
                 return;
 
             } catch (error: any) {
-                const isLastAttempt = attempt === 3;
-
-                // 413 Payload Too Large
-                if (error.status === 413 || error.code === 40005) {
-                    logger.error({
-                        configId: cfg.id,
-                        fileCount: sendPayload.files?.length,
-                        status: 413
-                    }, 'Failed to forward media: Payload too large (413). Retrying without files.');
-
-                    sendPayload.files = undefined;
-                    if (sendPayload.content) {
-                        sendPayload.content += '\n-# ⚠️ Media attachments were too large to forward';
-                    }
-                    continue;
-                }
-
                 // Webhook permanently invalid
                 if (error.code === 10015 || error.code === 404) {
                     logger.error({ configId: cfg.id, code: error.code }, 'Webhook not found — disabling config');
@@ -1492,77 +1455,30 @@ class ClientManager {
                     return;
                 }
 
-                // URL expired
-                if (error.message?.includes('Invalid URL') || error.message?.includes('expired')) {
-                    logger.error({
+                if (attempt === 3) {
+                    logger.warn({
                         configId: cfg.id,
-                        error: error.message,
-                    }, 'Failed to forward media: URL expired or invalid');
-                    sendPayload.files = undefined;
-                    continue;
-                }
-
-                if (isLastAttempt) {
-                    logger.error({
                         error: error.message || String(error),
-                        code: error.code,
-                        status: error.status,
-                        configId: cfg.id,
-                        attempt,
-                    }, 'Webhook failed after 3 attempts');
+                        attempt
+                    }, 'Text webhook failed after 3 attempts');
                 } else {
-                    // Retry logic:
-                    // Treat 'other side closed' (premature close) as a timeout/network error.
-                    // If it's a network error, retry WITH files (maybe it was just glitch).
-                    // If it's a logical error (e.g. 400 Bad Request), retry WITHOUT files as fallback.
-                    const isTimeout = error.name === 'AbortError' || error.message === 'Webhook upload timed out' || error.code === 'ETIMEDOUT';
-                    const isNetworkError = isTimeout ||
-                        error.message?.includes('other side closed') ||
-                        error.code === 'ECONNRESET' ||
-                        error.code === 'EPIPE' ||
-                        error.message?.includes('socket hang up');
-
-                    if (attempt === 1 && !isNetworkError && (sendPayload.files || sendPayload.embeds)) {
-                        logger.warn({ configId: cfg.id, error: error.message }, 'First attempt failed with data error. Retrying without files/embeds (Falling back to Links).');
-
-                        // ── LINK FALLBACK ──
-                        // Mimic "Forward Message" behavior: If upload fails, send the URLs.
-                        const mediaUrls = payload.eligibleMedia.map(m => m.url).join('\n');
-                        if (mediaUrls) {
-                            sendPayload.content = (sendPayload.content || '') + '\n' + mediaUrls;
-                        }
-
-                        sendPayload.files = undefined;
-                        sendPayload.embeds = undefined;
-                    } else if (isNetworkError) {
-                        if (attempt === 3) {
-                            // Last attempt failed due to network? Fallback to links for the final (failed) log/state
-                            // (Ideally we would retry one last time with links, but simpler to just log/accept fail here
-                            //  or maybe force a 4th attempt? Let's keep it simple: if network fails twice,
-                            //  the next loop might trigger the fallback if we change logic slightly.
-                            //  Actually, let's apply Link Fallback on the *Last* retry if it's about to fail?)
-                        }
-                        logger.warn({ configId: cfg.id, error: error.message }, 'Network/Connection error. Retrying with files...');
-                    }
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }
         }
     }
 
-    // ────────────── MANAGED BOT FORWARDING ──────────────
+    // ────────────── MANAGED BOT FORWARDING (Text Only) ──────────────
 
-    private async forwardViaManagedBot(
+    private async sendTextViaManagedBot(
         cfg: MirrorActiveConfig,
         payload: {
             content: string;
             username: string;
             avatarURL: string;
             embeds: any[];
-            eligibleMedia: ParsedAttachment[];
         },
-        botToken: string,
-        preloadedFiles?: any[]
+        botToken: string
     ) {
         const botSession = this.botClients.get(botToken);
         if (!botSession) {
@@ -1572,8 +1488,18 @@ class ClientManager {
 
         const targetChannelId = cfg.targetChannelId || cfg.targetWebhookUrl;
 
-        // Build fresh bot files OR use preloaded
-        let botFiles = preloadedFiles || await buildBotFilePayload(payload.eligibleMedia);
+        // Construct SendOptions
+        const sendOptions: any = {
+            content: payload.content || '',
+            embeds: payload.embeds,
+            allowedMentions: { parse: [] }
+        };
+
+        if (payload.username) {
+            sendOptions.content = `-# 👤 ${payload.username}\n` + sendOptions.content;
+        }
+
+        if (!sendOptions.content && (!sendOptions.embeds || sendOptions.embeds.length === 0)) return;
 
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -1582,44 +1508,6 @@ class ClientManager {
                     logger.error({ configId: cfg.id, channelId: targetChannelId }, 'Target channel not found or not text-based');
                     await this.markConfigInvalid(cfg.id, 'CHANNEL_NOT_FOUND');
                     return;
-                }
-
-                const sendOptions: any = {
-                    allowedMentions: { parse: [] }
-                };
-
-                let content = '';
-                if (payload.username) {
-                    content += `-# 👤 ${payload.username}\n`;
-                }
-                if (payload.content) {
-                    content += payload.content;
-                }
-                // Ensure we always have content when files are present
-                if (!content && botFiles.length > 0) {
-                    content = `-# 📡 via DisBot Engine`;
-                }
-                if (content) {
-                    sendOptions.content = content.substring(0, 2000);
-                }
-
-                // ── LINK FALLBACK ──
-                // If files were stripped (botFiles empty) but we have eligible media, append links
-                if (botFiles.length === 0 && payload.eligibleMedia.length > 0) {
-                    const mediaUrls = payload.eligibleMedia.map(m => m.url).join('\n');
-                    if (sendOptions.content) {
-                        sendOptions.content = (sendOptions.content + '\n' + mediaUrls).substring(0, 2000);
-                    } else {
-                        sendOptions.content = mediaUrls.substring(0, 2000);
-                    }
-                }
-
-                if (payload.embeds.length > 0) {
-                    sendOptions.embeds = payload.embeds;
-                }
-
-                if (botFiles.length > 0) {
-                    sendOptions.files = botFiles;
                 }
 
                 await (channel as any).send(sendOptions);
@@ -1632,19 +1520,6 @@ class ClientManager {
                 return;
 
             } catch (error: any) {
-                const isLastAttempt = attempt === 3;
-
-                // 413 Payload Too Large
-                if (error.status === 413 || error.code === 40005) {
-                    logger.error({
-                        configId: cfg.id,
-                        fileCount: botFiles.length,
-                        status: 413
-                    }, 'Failed to forward media via bot: Payload too large (413)');
-                    botFiles = [];
-                    continue;
-                }
-
                 // Missing permissions
                 if (error.code === 50013 || error.code === 50001) {
                     logger.error({
@@ -1655,36 +1530,12 @@ class ClientManager {
                     return;
                 }
 
-                // URL expired or File Error
-                // Fallback to Links
-                const isMediaError = error.message?.includes('Invalid URL') ||
-                    error.message?.includes('expired') ||
-                    error.message?.includes('Request entity too large') ||
-                    error.status === 413;
-
-                if (isMediaError) {
-                    logger.error({
+                if (attempt === 3) {
+                    logger.warn({
                         configId: cfg.id,
-                        error: error.message,
-                    }, 'Failed to forward media via bot: File error. Falling back to Links.');
-
-                    botFiles = [];
-                    // Just continue. The logic at start of loop detects (botFiles.length === 0) 
-                    // and automatically appends links.
-                    continue;
-                }
-                if (isLastAttempt) {
-                    logger.error({
                         error: error.message || String(error),
-                        code: error.code,
-                        status: error.status,
-                        configId: cfg.id,
-                        attempt,
-                    }, 'Managed Bot send failed after 3 attempts');
+                    }, 'Managed Bot text send failed after 3 attempts');
                 } else {
-                    if (attempt === 1 && botFiles.length > 0) {
-                        botFiles = [];
-                    }
                     await new Promise(r => setTimeout(r, 1000));
                 }
             }

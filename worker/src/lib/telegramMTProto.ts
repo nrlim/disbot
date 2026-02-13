@@ -4,6 +4,9 @@ import { StringSession } from 'telegram/sessions';
 import { NewMessage, NewMessageEvent } from 'telegram/events';
 import { WebhookClient } from 'discord.js';
 import { logger } from './logger';
+import https from 'https';
+
+const keepAliveAgent = new https.Agent({ keepAlive: true });
 
 // ──────────────────────────────────────────────────────────────
 //  Constants
@@ -519,7 +522,7 @@ export class TelegramListener {
 
         for (let attempt = 1; attempt <= MAX_WEBHOOK_RETRIES; attempt++) {
             try {
-                const webhookClient = new WebhookClient({ url: webhookUrl });
+                const webhookClient = new WebhookClient({ url: webhookUrl, agent: keepAliveAgent } as any);
 
                 // Build send options
                 const sendOptions: any = {
