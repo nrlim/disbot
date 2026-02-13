@@ -731,7 +731,11 @@ class ClientManager {
             // Use proxyUrl if available, else immediate url fallback.
             // If BOTH are missing, skip to prevents crashing/hanging on invalid payload.
             const proxyUrl = item.proxyUrl || item.url;
-            if (!proxyUrl) continue;
+
+            if (!proxyUrl) {
+                logger.warn({ messageId, fileName: item.name }, '[Async] Skipping media item with no URL (proxyUrl/url both null)');
+                continue;
+            }
 
             fallbackUrls.push(proxyUrl);
 
@@ -781,6 +785,8 @@ class ClientManager {
                 const configEmbeds: any[] = [];
                 for (const item of eligible) {
                     const proxyUrl = item.proxyUrl || item.url;
+                    if (!proxyUrl) continue; // Should effectively never happen due to previous check
+
                     if (item.category === 'image') {
                         configEmbeds.push({ image: { url: proxyUrl }, color: 0x2b2d31 });
                     } else if (item.category === 'video') {
@@ -839,7 +845,7 @@ class ClientManager {
      *
      * Key differences from `forwardViaWebhook`:
      * - Strict Discord-compliant payload: `content` is always a string (never null/undefined)
-     * - 10s request timeout (no files to upload, so 60s is overkill)
+     * - Uses global task timeout (300s) instead of short request timeout to prevent "Aborted"
      * - AbortError diagnostics: logs DNS/Connection/TLS failure context
      * - Fallback: if embed delivery fails, retries as a plain-text URL message
      */
@@ -852,7 +858,12 @@ class ClientManager {
         taskSignal: AbortSignal,
         files?: any[]
     ): Promise<void> {
-        const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl, agent: keepAliveAgent } as any);
+        // ── Fix 1: Persistent Connection & Long Timeout ──
+        const webhookClient = new WebhookClient({
+            url: cfg.targetWebhookUrl,
+            agent: keepAliveAgent,
+            restRequestTimeout: 300_000, // 5 minutes (matches background task limit)
+        } as any);
 
         // ── Strict payload structure (content is always "" not null/undefined) ──
         // ── Elite Tier: Send with Files if available ──
@@ -865,9 +876,10 @@ class ClientManager {
             allowedMentions: { parse: [] }
         };
 
-        // Ensure content is never empty (Discord Webhook Requirement for some endpoints, and better UX)
-        if (!sendPayload.content) {
-            sendPayload.content = '-# 📡 Forwarding via DisBot Engine';
+        // ── Fix 3: Robust Content Validation ──
+        // Ensure content is never just whitespace or empty
+        if (!sendPayload.content || !sendPayload.content.trim()) {
+            sendPayload.content = '-# 📡 Forwarding Media Content...';
         }
 
         // ── Attempt 1: Send with embeds ──
@@ -877,20 +889,22 @@ class ClientManager {
                 throw new DOMException('Background task aborted', 'AbortError');
             }
 
-            const controller = new AbortController();
-            // Dynamic timeout: 30s for lightweight JSON (Fast-Path), 180s (3m) for file uploads (Elite Buffer)
-            const timeoutDuration = (files && files.length > 0) ? 180_000 : 30_000;
-            const requestTimer = setTimeout(() => controller.abort(), timeoutDuration);
-
             try {
-                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Sending webhook payload...');
+                // ── Fix 4: Handshake Debugging ──
+                logger.info({
+                    configId: cfg.id,
+                    messageId,
+                    attempt,
+                    embedCount: sendPayload.embeds?.length || 0,
+                    contentPreview: sendPayload.content.substring(0, 50),
+                    hasFiles: !!sendPayload.files
+                }, '[Async] Handshake: Sending webhook payload...');
+
                 await webhookClient.send({
                     ...sendPayload,
-                    // @ts-ignore - abort signal for per-request timeout
-                    signal: controller.signal
+                    // @ts-ignore - Use the task signal directly (300s global timeout)
+                    signal: taskSignal
                 });
-
-                clearTimeout(requestTimer);
 
                 // Success — update lastActiveAt (fire and forget)
                 prisma.mirrorConfig.update({
@@ -898,13 +912,10 @@ class ClientManager {
                     data: { updatedAt: new Date(), lastActiveAt: new Date() }
                 }).catch(() => { });
 
-
-
-                logger.info({ configId: cfg.id, messageId, attempt, hasEmbeds: embeds.length > 0 }, '[Async] Snapshot webhook delivered');
+                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot webhook delivered');
                 return;
 
             } catch (error: any) {
-                clearTimeout(requestTimer);
 
                 // ── AbortError diagnostics ──
                 if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
