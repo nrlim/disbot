@@ -658,32 +658,12 @@ class ClientManager {
         token: string,
         signal: AbortSignal
     ): Promise<void> {
-        // ── Check if we need Elite Tier "Buffer Mode" ──
-        const isElite = configs.some(c => c.userPlan === 'ELITE');
-        let files: any[] = [];
+        // ── Fast-Path Strategy: URL-based Forwarding Only ──
+        // We force SNAPSHOT strategy for Images/Videos for ALL tiers (including Elite).
+        // This prevents re-download/re-upload overhead and mimics native "Forward Message" behavior.
 
-        if (isElite) {
-            try {
-                // Elite Tier: Download media to buffer (bypasses 403 / Expires / Proxy issues)
-                logger.debug({ messageId, items: snapshotItems.length }, '[Async] Elite Tier: Downloading snapshot media to buffer');
+        logger.debug({ messageId, items: snapshotItems.length }, '[Async] Fast-Path: Processing snapshot items via Proxy URLs');
 
-                // Reuse existing streaming/download logic (converts ParsedAttachment -> Buffer/Stream)
-                // HACK: Force strategy to 'STREAM' so buildWebhookFilePayload downloads them
-                // We use a shallow copy to not mutate the original 'snapshotItems' which might be used for embeds logic later
-                const forcedStreamItems = snapshotItems.map(s => ({
-                    ...s,
-                    strategy: 'STREAM' as MediaStrategy
-                }));
-
-                // BUFFER MODE: Download Once to RAM
-                files = await buildFilePayloadBuffer(forcedStreamItems);
-            } catch (error: any) {
-                logger.warn({ messageId, error: error.message }, '[Async] Elite Tier download failed, falling back to Proxy URLs');
-                // Fallback to proxyUrl logic below if download fails
-            }
-        }
-
-        // ── Standard Proxy URL Metadata Retrieval ──
         const snapshotEmbeds: any[] = [];
         const fallbackUrls: string[] = [];
 
@@ -693,25 +673,23 @@ class ClientManager {
             const proxyUrl = item.proxyUrl || item.url;
             fallbackUrls.push(proxyUrl);
 
-            // If NOT sending files (Standard Tier or Elite download failed), build embeds
-            if (files.length === 0) {
-                if (item.category === 'image') {
-                    snapshotEmbeds.push({
-                        image: { url: proxyUrl },
-                        color: 0x2b2d31
-                    });
-                } else if (item.category === 'video') {
-                    snapshotEmbeds.push({
-                        title: `🎥 ${item.name}`,
-                        description: `[Click to Watch Video](${proxyUrl})`,
-                        url: proxyUrl,
-                        color: 0x2b2d31
-                    });
-                }
+            // Build standard embeds
+            if (item.category === 'image') {
+                snapshotEmbeds.push({
+                    image: { url: proxyUrl },
+                    color: 0x2b2d31
+                });
+            } else if (item.category === 'video') {
+                snapshotEmbeds.push({
+                    title: `🎥 ${item.name}`,
+                    description: `[Click to Watch Video](${proxyUrl})`,
+                    url: proxyUrl,
+                    color: 0x2b2d31
+                });
             }
         }
 
-        if (snapshotEmbeds.length === 0 && files.length === 0) return;
+        if (snapshotEmbeds.length === 0) return;
 
         // ── Dispatch to all configs ──
         const results = await Promise.allSettled(
@@ -723,50 +701,29 @@ class ClientManager {
                 const { eligible } = validateMediaForwarding(snapshotItems, cfg.userPlan);
                 if (eligible.length === 0) return; // Nothing allowed for this plan
 
-                // Elite Configs get Files; Standard Configs get Embeds
-                // Exception: If we failed to download files (files.length=0), everyone gets embeds
-                // Exception 2: If we are Elite but the media itself was filtered out (rare, but possible), respect filter
-
-                // Construct config-specific file list (intersection of 'files' and 'eligible')
-                // We match by name/url since 'files' are Blob/Stream wrappers
-                let configFiles: any[] | undefined = undefined;
-                if (cfg.userPlan === 'ELITE' && files.length > 0) {
-                    // Filter the downloaded buffer files to only include those that are eligible for this config
-                    // Although Elite allows everything, this is good practice
-                    const eligibleNames = new Set(eligible.map(e => e.name));
-                    configFiles = files.filter(f => eligibleNames.has(f.name));
-                }
-
-                const useFiles = !!configFiles && configFiles.length > 0;
-
-                // Construct config-specific embeds
+                // Construct config-specific embeds from eligible items
                 const configEmbeds: any[] = [];
-                if (!useFiles) {
-                    const eligibleUrls = new Set(eligible.map(e => e.url));
-                    // Filter the pre-built embeds
-                    // We need to match back to the item.
-                    // Simpler: Re-build embeds from 'eligible' items
-                    for (const item of eligible) {
-                        const proxyUrl = item.proxyUrl || item.url;
-                        if (item.category === 'image') {
-                            configEmbeds.push({ image: { url: proxyUrl }, color: 0x2b2d31 });
-                        } else if (item.category === 'video') {
-                            configEmbeds.push({
-                                title: `🎥 ${item.name}`,
-                                description: `[Click to Watch Video](${proxyUrl})`,
-                                url: proxyUrl,
-                                color: 0x2b2d31
-                            });
-                        }
+                for (const item of eligible) {
+                    const proxyUrl = item.proxyUrl || item.url;
+                    if (item.category === 'image') {
+                        configEmbeds.push({ image: { url: proxyUrl }, color: 0x2b2d31 });
+                    } else if (item.category === 'video') {
+                        configEmbeds.push({
+                            title: `🎥 ${item.name}`,
+                            description: `[Click to Watch Video](${proxyUrl})`,
+                            url: proxyUrl,
+                            color: 0x2b2d31
+                        });
                     }
                 }
 
-                if (!useFiles && configEmbeds.length === 0) return;
+                if (configEmbeds.length === 0) return;
 
                 if (cfg.type === 'CUSTOM_HOOK') {
-                    await this.sendWebhookSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, signal, configFiles);
+                    // Pass undefined for 'configFiles' as we are strictly in Fast-Path
+                    await this.sendWebhookSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, signal, undefined);
                 } else if (cfg.type === 'MANAGED_BOT') {
-                    await this.sendBotSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, token, signal, configFiles);
+                    await this.sendBotSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, token, signal, undefined);
                 }
             })
         );
@@ -781,7 +738,7 @@ class ClientManager {
                 reason: (failures[0] as PromiseRejectedResult).reason?.message
             }, '[Async] Some snapshot tasks failed');
         } else {
-            logger.debug({ messageId, mode: isElite && files.length > 0 ? 'ELITE_BUFFER' : 'STANDARD_PROXY' }, '[Async] Snapshot tasks completed');
+            logger.debug({ messageId, mode: 'FAST_PATH_URL' }, '[Async] Snapshot tasks completed');
         }
     }
 
@@ -1076,22 +1033,47 @@ class ClientManager {
         const configs = session.configs.get(message.channelId);
         if (!configs || configs.length === 0) return;
 
-        // Detect forwarded messages (Preliminary)
-        let refType = (message.reference as any)?.type;
-        let isForward = refType === 'FORWARD' || refType === 1
-            || (message as any).flags?.has?.(1 << 14)
-            || ((message as any).messageSnapshots?.size ?? 0) > 0;
+        // ── 1. Ready-State Delay (prevent 403 Forbidden) ──
+        // Discord CDN can be slow to index new attachments. Waiting 1000ms ensures URLs are valid.
+        if (message.attachments.size > 0 || message.embeds.length > 0) {
+            await new Promise(r => setTimeout(r, 1000));
+        }
 
-        // ── Race Condition Fix: Wait for Snapshots ──
-        // If it looks like a reply/forward (reference exists) but not marked as Forward/Snapshot yet
-        if (!isForward && message.reference) {
-            // Short delay to allow Discord to populate snapshots
-            await new Promise(r => setTimeout(r, 500));
-            // Reload message check
-            if (message.client.options.ws?.properties) { // Rough check if it's a selfbot/bot
-                // Force a property re-check or logic re-evaluation
-                const updatedSnapshots = (message as any).messageSnapshots?.size ?? 0;
-                if (updatedSnapshots > 0) isForward = true;
+        // ── 2. Wait for Content (Handle Empty Messages) ──
+        // If message is completely empty (no content, no attachments, no embeds), wait for population.
+        if (!message.content && message.attachments.size === 0 && message.embeds.length === 0 && !message.stickers.size) {
+            await new Promise(r => setTimeout(r, 1500));
+            try {
+                if (message.partial) await message.fetch();
+                else await message.channel.messages.fetch(message.id); // Force refresh
+            } catch (e) { /* Ignore fetch error, message might be deleted */ }
+
+            // Re-check emptiness
+            if (!message.content && message.attachments.size === 0 && message.embeds.length === 0 && !message.stickers.size) {
+                return; // Still empty -> ignore
+            }
+        }
+
+        // ── 3. Detect Forwarded Messages (Robust Race Condition Handling) ──
+        let isForward = false;
+
+        // Loop to check for Snapshots/Forward flags (up to 3 times / 750ms)
+        for (let i = 0; i < 3; i++) {
+            const refType = (message.reference as any)?.type;
+            const hasForwardFlag = (message as any).flags?.has?.(1 << 14); // IS_FORWARD
+            const hasSnapshots = ((message as any).messageSnapshots?.size ?? 0) > 0;
+            const isForwardRef = refType === 'FORWARD' || refType === 1;
+
+            if (isForwardRef || hasForwardFlag || hasSnapshots) {
+                isForward = true;
+                break;
+            }
+
+            // Only wait if it *looks* like it might be a forward (has reference but no content yet?)
+            if (message.reference && !message.content && !hasSnapshots) {
+                await new Promise(r => setTimeout(r, 250));
+            } else {
+                break; // Not a forward candidate
             }
         }
 
@@ -1410,19 +1392,15 @@ class ClientManager {
             try {
                 const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
-                const controller = new AbortController();
-                // 180s (3m) timeout to allow large files (videos/audio) to upload
-                const timeout = setTimeout(() => controller.abort(), 180_000);
+                // 300s (5m) timeout for reliable media uploads (matches download timeout)
+                const UPLOAD_TIMEOUT_MS = 300_000;
 
-                try {
-                    await webhookClient.send({
-                        ...sendPayload,
-                        // @ts-ignore - abort signal for timeout
-                        signal: controller.signal
-                    });
-                } finally {
-                    clearTimeout(timeout);
-                }
+                await Promise.race([
+                    webhookClient.send(sendPayload),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('Webhook upload timed out')), UPLOAD_TIMEOUT_MS)
+                    )
+                ]);
 
                 // Success — update last active (fire and forget)
                 prisma.mirrorConfig.update({
@@ -1480,7 +1458,7 @@ class ClientManager {
                     // Treat 'other side closed' (premature close) as a timeout/network error.
                     // If it's a network error, retry WITH files (maybe it was just glitch).
                     // If it's a logical error (e.g. 400 Bad Request), retry WITHOUT files as fallback.
-                    const isTimeout = error.name === 'AbortError' || error.code === 'ETIMEDOUT';
+                    const isTimeout = error.name === 'AbortError' || error.message === 'Webhook upload timed out' || error.code === 'ETIMEDOUT';
                     const isNetworkError = isTimeout ||
                         error.message?.includes('other side closed') ||
                         error.code === 'ECONNRESET' ||
