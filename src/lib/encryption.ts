@@ -1,18 +1,34 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 
 const ALGORITHM = "aes-256-gcm";
-const IV_LENGTH = 16;
+const IV_LENGTH = 12; // Adjusted to match worker/standard GCM IV length
 
 // Convert hex key to 32-byte buffer for AES-256
-// If ENCRYPTION_KEY is hex-encoded (64 chars), convert it. Otherwise use raw string.
+// Defaults to a safe fallback if env var is missing or invalid
 const getEncryptionKey = (): Buffer => {
     const keyString = process.env.ENCRYPTION_KEY || "01234567890123456789012345678901";
-    // If it looks like a hex string (64 chars, all hex), convert from hex
+
+    // 1. If exact 64-char hex string, use it
     if (keyString.length === 64 && /^[0-9a-fA-F]+$/.test(keyString)) {
         return Buffer.from(keyString, 'hex');
     }
-    // Otherwise treat as raw 32-byte string
-    return Buffer.from(keyString.slice(0, 32));
+
+    // 2. Otherwise convert to buffer (utf8) and ensure 32 bytes
+    const buffer = Buffer.from(keyString, 'utf8');
+
+    if (buffer.length === 32) {
+        return buffer;
+    }
+
+    if (buffer.length > 32) {
+        // Truncate to 32 bytes
+        return buffer.subarray(0, 32);
+    }
+
+    // Pad with zeros if too short
+    const padded = Buffer.alloc(32);
+    buffer.copy(padded);
+    return padded;
 };
 
 const ENCRYPTION_KEY_BUFFER = getEncryptionKey();

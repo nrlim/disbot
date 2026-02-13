@@ -275,6 +275,10 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             updateData.userToken = null;
         }
 
+        // Reset status to ACTIVE when updated by user
+        updateData.active = true;
+        updateData.status = "ACTIVE";
+
         await prisma.mirrorConfig.update({
             where: { id },
             data: updateData
@@ -282,8 +286,11 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         revalidatePath("/dashboard/expert");
         return { success: true };
-    } catch (e) {
-        console.error("Failed to update mirror:", (e as Error)?.message || "Unknown error");
+    } catch (e: any) {
+        console.error("Failed to update mirror:", e?.message || e);
+        // Distinguish specific errors if possible, otherwise generic
+        if (e?.code === 'P2002') return { error: "Unique constraint violation." };
+        if (e?.code === 'P2025') return { error: "Configuration no longer exists." };
         return { error: "Database error. Please try again." };
     }
 }
