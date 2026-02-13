@@ -12,6 +12,7 @@ import {
     validateMediaForwarding,
     buildWebhookFilePayload,
     buildBotFilePayload,
+    buildFilePayloadBuffer,
     buildRejectionNotice,
     type MediaForwardResult,
     type ParsedAttachment,
@@ -46,8 +47,8 @@ class BackgroundTaskManager {
     private tasks: Map<string, TrackedTask> = new Map();
 
     /** Max time a snapshot forwarding task may run before it's force-aborted.
-     *  Set to 20s for Elite Tier heavy media tasks & retry buffers. */
-    private static readonly TASK_TIMEOUT_MS = 20_000;
+     *  Set to 300s (5m) for Elite Tier heavy media tasks & retry buffers. */
+    private static readonly TASK_TIMEOUT_MS = 300_000;
 
     /** Cleanup interval — sweep every 10 seconds */
     private static readonly CLEANUP_INTERVAL_MS = 10_000;
@@ -657,7 +658,8 @@ class ClientManager {
                     strategy: 'STREAM' as MediaStrategy
                 }));
 
-                files = await buildWebhookFilePayload(forcedStreamItems);
+                // BUFFER MODE: Download Once to RAM
+                files = await buildFilePayloadBuffer(forcedStreamItems);
             } catch (error: any) {
                 logger.warn({ messageId, error: error.message }, '[Async] Elite Tier download failed, falling back to Proxy URLs');
                 // Fallback to proxyUrl logic below if download fails
@@ -725,7 +727,7 @@ class ClientManager {
                 if (!useFiles) {
                     const eligibleUrls = new Set(eligible.map(e => e.url));
                     // Filter the pre-built embeds
-                    // We need to match back to the item. 
+                    // We need to match back to the item.
                     // Simpler: Re-build embeds from 'eligible' items
                     for (const item of eligible) {
                         const proxyUrl = item.proxyUrl || item.url;
@@ -812,8 +814,9 @@ class ClientManager {
             }
 
             const controller = new AbortController();
-            // 10s request timeout — snapshot payloads are lightweight (no file upload)
-            const requestTimer = setTimeout(() => controller.abort(), 10_000);
+            // Dynamic timeout: 10s for lightweight JSON, 180s (3m) for file uploads (Elite Buffer)
+            const timeoutDuration = (files && files.length > 0) ? 180_000 : 10_000;
+            const requestTimer = setTimeout(() => controller.abort(), timeoutDuration);
 
             try {
                 await webhookClient.send({
@@ -1301,15 +1304,30 @@ class ClientManager {
             return;
         }
 
+        // ── DOWNLOAD ONCE OPTIMIZATION (Sync Media) ──
+        // Instead of downloading inside each config loop locally, download once to RAM here.
+        let sharedSyncFiles: any[] | undefined = undefined;
+        if (streamItems.length > 0) {
+            logger.debug({ count: streamItems.length }, 'Downloading sync media to shared buffer...');
+            sharedSyncFiles = await buildFilePayloadBuffer(streamItems);
+        }
+
         // ── Execute synchronous forwarding (text + STREAM items) in parallel ──
         const promises = configs.map(async (cfg) => {
             // ── Re-validate STREAM media for THIS specific config ──
             // Prevents Audio/Docs from leaking to Free/Starter plans
             const { eligible } = validateMediaForwarding(streamItems, cfg.userPlan);
 
+            // Filter the shared buffer list to match eligible items for this config
+            let configFiles: any[] | undefined = undefined;
+            if (sharedSyncFiles && sharedSyncFiles.length > 0 && eligible.length > 0) {
+                const eligibleNames = new Set(eligible.map(e => e.name));
+                configFiles = sharedSyncFiles.filter(f => eligibleNames.has(f.name));
+            }
+
             // If this config has no allowed stream media, and no text/embeds, skip it
             // (Unless there was snapshot media, which is handled separately)
-            const configHasFiles = eligible.length > 0;
+            const configHasFiles = configFiles && configFiles.length > 0;
             const configHasContent = !!payload.content || payload.embeds.length > 0;
 
             // If strictly nothing to send in this sync phase
@@ -1323,9 +1341,10 @@ class ClientManager {
 
             try {
                 if (cfg.type === 'CUSTOM_HOOK') {
-                    await this.forwardViaWebhook(cfg, configPayload);
+                    // Pass pre-downloaded buffer files
+                    await this.forwardViaWebhook(cfg, configPayload, configFiles);
                 } else if (cfg.type === 'MANAGED_BOT') {
-                    await this.forwardViaManagedBot(cfg, configPayload, token);
+                    await this.forwardViaManagedBot(cfg, configPayload, token, configFiles);
                 }
             } catch (error: any) {
                 // Isolated: one config's error doesn't crash the others
@@ -1349,10 +1368,12 @@ class ClientManager {
             avatarURL: string;
             embeds: any[];
             eligibleMedia: ParsedAttachment[];
-        }
+        },
+        preloadedFiles?: any[]
     ) {
         // Build fresh file payload (including streams) for this request
-        const files = await buildWebhookFilePayload(payload.eligibleMedia);
+        // OR use preloaded buffer files if available (Download Once Optimization)
+        const files = preloadedFiles || await buildWebhookFilePayload(payload.eligibleMedia);
 
         const sendPayload: any = {
             content: payload.content || undefined,
@@ -1373,8 +1394,8 @@ class ClientManager {
                 const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
                 const controller = new AbortController();
-                // 60s timeout to allow large files (videos) to upload
-                const timeout = setTimeout(() => controller.abort(), 60000);
+                // 180s (3m) timeout to allow large files (videos/audio) to upload
+                const timeout = setTimeout(() => controller.abort(), 180_000);
 
                 try {
                     await webhookClient.send({
@@ -1465,7 +1486,8 @@ class ClientManager {
             embeds: any[];
             eligibleMedia: ParsedAttachment[];
         },
-        botToken: string
+        botToken: string,
+        preloadedFiles?: any[]
     ) {
         const botSession = this.botClients.get(botToken);
         if (!botSession) {
@@ -1475,8 +1497,8 @@ class ClientManager {
 
         const targetChannelId = cfg.targetChannelId || cfg.targetWebhookUrl;
 
-        // Build fresh bot files (streams)
-        let botFiles = await buildBotFilePayload(payload.eligibleMedia);
+        // Build fresh bot files OR use preloaded
+        let botFiles = preloadedFiles || await buildBotFilePayload(payload.eligibleMedia);
 
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {

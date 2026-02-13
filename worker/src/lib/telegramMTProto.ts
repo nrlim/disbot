@@ -10,10 +10,10 @@ import { logger } from './logger';
 // ──────────────────────────────────────────────────────────────
 
 /** Max time to wait for a single media download (prevents hanging forever) */
-const MEDIA_DOWNLOAD_TIMEOUT_MS = 15_000;
+const MEDIA_DOWNLOAD_TIMEOUT_MS = 300_000; // Increased to 5 minutes from 15s
 
-/** Max media file size to attempt downloading (8MB safety — Discord webhook limit) */
-const MAX_MEDIA_SIZE_BYTES = 8 * 1024 * 1024;
+/** Max media file size to attempt downloading (50MB — limit for boosted servers, fail graceful on strict) */
+const MAX_MEDIA_SIZE_BYTES = 50 * 1024 * 1024;
 
 /** Max concurrent media downloads across all sessions (prevents memory pressure) */
 const MAX_CONCURRENT_DOWNLOADS = 5;
@@ -223,13 +223,22 @@ export class TelegramListener {
 
         const chatId = chat.id.toString();
 
+        logger.info({
+            chatId,
+            messageId: message.id,
+            hasMedia: !!message.media
+        }, '[Telegram] New message received');
+
         // ── Match configs by Chat ID ──
         const matchedConfigs = session.configs.filter(c => {
             if (!c.telegramChatId) return false;
             return this.matchChatId(c.telegramChatId, chatId);
         });
 
-        if (matchedConfigs.length === 0) return;
+        if (matchedConfigs.length === 0) {
+            logger.debug({ chatId, availableConfigs: session.configs.length }, '[Telegram] Message ignored: No matching config for this chat');
+            return;
+        }
 
         // ── Filter by Topic ID (Forum support) ──
         const messageTopicId = (message.replyTo as any)?.replyToTopId?.toString() || null;
@@ -239,7 +248,15 @@ export class TelegramListener {
             return c.telegramTopicId === messageTopicId;
         });
 
-        if (targetConfigs.length === 0) return;
+        if (targetConfigs.length === 0) {
+            logger.debug({ chatId, messageTopicId }, '[Telegram] Message ignored: Topic ID mismatch');
+            return;
+        }
+
+        logger.info({
+            chatId,
+            targetConfigCount: targetConfigs.length
+        }, '[Telegram] Processing message for forwarding');
 
         // ── Build sender info ──
         const sender = await message.getSender().catch(() => null);
@@ -251,35 +268,46 @@ export class TelegramListener {
 
         // ── Determine media handling strategy ──
         const mediaInfo = this.analyzeMedia(message);
+        let finalContent = content;
+
+        // If media was skipped due to size, notify the user
+        if (mediaInfo.skippedReason) {
+            finalContent += `\n\n**⚠️ Media Skipped:** ${mediaInfo.skippedReason}`;
+        }
 
         if (mediaInfo.shouldDownload) {
+            // ... download logic ...
+            logger.info({ fileName: mediaInfo.fileName }, '[Telegram] Media detected - starting background download');
+
             // Fire-and-forget: Download media in background, then forward
             // This does NOT block the event loop for subsequent messages
             this.downloadAndForward(
                 message,
                 targetConfigs,
                 username,
-                content,
+                finalContent,
                 sourceLink,
                 mediaInfo.fileName
             ).catch((err: any) => {
                 logger.error(
                     { error: err?.message || 'Unknown error', chatId: normalizedChatId },
-                    'Background media download+forward failed'
+                    '[Telegram] Background media download+forward failed'
                 );
             });
         } else {
+            logger.info('[Telegram] No media/Skipped media - forwarding text immediately');
+
             // No media — forward text immediately (also non-blocking)
             this.forwardToWebhooks(
                 targetConfigs,
                 username,
-                content,
+                finalContent,
                 sourceLink,
                 []
             ).catch((err: any) => {
                 logger.error(
                     { error: err?.message || 'Unknown error', chatId: normalizedChatId },
-                    'Text forwarding failed'
+                    '[Telegram] Text forwarding failed'
                 );
             });
         }
@@ -291,7 +319,7 @@ export class TelegramListener {
      * Analyzes a message's media to determine if we should download it.
      * Returns metadata without performing any I/O.
      */
-    private analyzeMedia(message: any): { shouldDownload: boolean; fileName: string } {
+    private analyzeMedia(message: any): { shouldDownload: boolean; fileName: string; skippedReason?: string } {
         if (!message.media) {
             return { shouldDownload: false, fileName: '' };
         }
@@ -309,7 +337,7 @@ export class TelegramListener {
                     { size, limit: MAX_MEDIA_SIZE_BYTES },
                     'Telegram media exceeds size limit — skipping download'
                 );
-                return { shouldDownload: false, fileName: '' };
+                return { shouldDownload: false, fileName: '', skippedReason: 'File too large (>50MB)' };
             }
 
             // Extract filename from document attributes
@@ -328,7 +356,7 @@ export class TelegramListener {
         if (message.voice || message.audio) {
             const size = (message.voice || message.audio)?.size;
             if (size && size > MAX_MEDIA_SIZE_BYTES) {
-                return { shouldDownload: false, fileName: '' };
+                return { shouldDownload: false, fileName: '', skippedReason: 'Audio too large (>50MB)' };
             }
             return { shouldDownload: true, fileName: message.voice ? 'voice.ogg' : 'audio.mp3' };
         }
@@ -337,7 +365,7 @@ export class TelegramListener {
             const size = (message.video || message.videoNote)?.size;
             if (size && size > MAX_MEDIA_SIZE_BYTES) {
                 logger.debug({ size }, 'Telegram video exceeds size limit — skipping');
-                return { shouldDownload: false, fileName: '' };
+                return { shouldDownload: false, fileName: '', skippedReason: 'Video too large (>50MB)' };
             }
             return { shouldDownload: true, fileName: message.videoNote ? 'videonote.mp4' : 'video.mp4' };
         }
@@ -370,7 +398,7 @@ export class TelegramListener {
         } catch (err: any) {
             logger.warn(
                 { error: err?.message || 'Unknown error', fileName },
-                'Media download failed or timed out'
+                '[Telegram] Media download failed or timed out'
             );
         } finally {
             // Always release the download slot
@@ -380,7 +408,10 @@ export class TelegramListener {
         // Build files array
         const files: { attachment: Buffer; name: string }[] = [];
         if (buffer && Buffer.isBuffer(buffer)) {
+            logger.info({ fileName, size: buffer.length }, '[Telegram] Download successful - Ready to forward');
             files.push({ attachment: buffer, name: fileName });
+        } else {
+            logger.warn({ fileName }, '[Telegram] Download result was empty/null - Forwarding text only');
         }
 
         // Forward (even if media download failed — text content still goes through)
@@ -449,6 +480,11 @@ export class TelegramListener {
                 })
             )
         );
+
+        const successes = results.filter(r => r.status === 'fulfilled');
+        if (successes.length > 0) {
+            logger.info({ count: successes.length }, '[Telegram] Successfully forwarded message to Discord');
+        }
 
         // Log failures (non-blocking, informational)
         const failures = results.filter(r => r.status === 'rejected');

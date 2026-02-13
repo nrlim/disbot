@@ -359,6 +359,21 @@ export async function fetchMediaStream(url: string): Promise<Readable> {
     return response.data;
 }
 
+/**
+ * Fetches a media file as a Buffer (load into RAM).
+ * Used for "Download Once, Upload Many" optimization.
+ */
+export async function fetchMediaBuffer(url: string, maxSize = DEFAULT_FILE_SIZE_LIMIT): Promise<Buffer> {
+    const response = await axios({
+        method: 'GET',
+        url: url,
+        responseType: 'arraybuffer',
+        maxContentLength: maxSize,
+        maxBodyLength: maxSize
+    });
+    return Buffer.from(response.data);
+}
+
 // ──────────────────────────────────────────────────────────────
 //  Payload builders
 // ──────────────────────────────────────────────────────────────
@@ -409,6 +424,32 @@ export async function buildBotFilePayload(eligible: ParsedAttachment[]): Promise
             }
         }
         // SNAPSHOT strategy items are handled via Embeds in the engine logic
+    }
+    return files;
+}
+
+/**
+ * Builds the `files` array using Buffer downloading (RAM-based).
+ * Faster for forwarding to multiple targets (Download Once, Upload Many).
+ */
+export async function buildFilePayloadBuffer(eligible: ParsedAttachment[]): Promise<Array<{ attachment: Buffer; name: string }>> {
+    const files: Array<{ attachment: Buffer; name: string }> = [];
+
+    for (const att of eligible) {
+        // Process STREAM items (Audio/Docs) AND forced SNAPSHOT items (Elite Buffering)
+        if (att.strategy === 'STREAM') {
+            try {
+                // Fetch buffer with margin
+                const limit = att.size > 0 ? att.size * 1.5 : DEFAULT_FILE_SIZE_LIMIT;
+                const buffer = await fetchMediaBuffer(att.url, limit);
+                files.push({
+                    attachment: buffer,
+                    name: att.name
+                });
+            } catch (error: any) {
+                logger.error({ fileName: att.name, error: error.message }, 'Failed to buffer media');
+            }
+        }
     }
     return files;
 }
