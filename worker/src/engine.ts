@@ -14,7 +14,8 @@ import {
     buildBotFilePayload,
     buildRejectionNotice,
     type MediaForwardResult,
-    type ParsedAttachment
+    type ParsedAttachment,
+    type MediaStrategy
 } from './lib/media';
 import {
     enforcePathLimits,
@@ -45,8 +46,8 @@ class BackgroundTaskManager {
     private tasks: Map<string, TrackedTask> = new Map();
 
     /** Max time a snapshot forwarding task may run before it's force-aborted.
-     *  Set to 10s to accommodate Discord webhook round-trip latency (DNS + TLS + response). */
-    private static readonly TASK_TIMEOUT_MS = 10_000;
+     *  Set to 20s for Elite Tier heavy media tasks & retry buffers. */
+    private static readonly TASK_TIMEOUT_MS = 20_000;
 
     /** Cleanup interval — sweep every 10 seconds */
     private static readonly CLEANUP_INTERVAL_MS = 10_000;
@@ -143,6 +144,9 @@ const prisma = new PrismaClient();
 
 // Priority queue singleton
 const messageQueue = PriorityMessageQueue.getInstance();
+
+// Plan priority for resolving best available tier
+const PLAN_PRIORITY: Record<string, number> = { 'FREE': 0, 'STARTER': 1, 'PRO': 2, 'ELITE': 3 };
 
 
 import { TelegramListener, TelegramConfig } from './lib/telegramMTProto';
@@ -485,6 +489,24 @@ class ClientManager {
             this.dispatchMessage(token, message, 'CUSTOM_HOOK');
         });
 
+        client.on('messageUpdate', async (oldMessage, newMessage) => {
+            if (newMessage.partial) {
+                try { await newMessage.fetch(); } catch { return; }
+            }
+            // ── Reliability: Catch Placeholder Updates ──
+            // Triggers if content/attachments were added or significantly changed
+            const oldContent = oldMessage.partial ? null : oldMessage.content;
+            const oldAttachCount = oldMessage.partial ? 0 : oldMessage.attachments.size;
+
+            const hasNewContent = !oldContent && !!newMessage.content;
+            const hasNewMedia = oldAttachCount === 0 && newMessage.attachments.size > 0;
+            const contentChanged = oldContent !== newMessage.content && !!newMessage.content;
+
+            if (hasNewContent || hasNewMedia || contentChanged) {
+                this.dispatchMessage(token, newMessage as Message, 'CUSTOM_HOOK');
+            }
+        });
+
         client.on('error', (err: any) => {
             logger.error({ msg: err.message || 'Unknown Connection Error' }, 'Selfbot client connection error');
         });
@@ -529,6 +551,23 @@ class ClientManager {
             this.dispatchMessage(token, message as any, 'MANAGED_BOT');
         });
 
+        client.on('messageUpdate', async (oldMessage, newMessage) => {
+            if (newMessage.author?.bot) return;
+            if (newMessage.partial) {
+                try { await newMessage.fetch(); } catch { return; }
+            }
+            const oldContent = oldMessage.partial ? null : oldMessage.content;
+            const oldAttachCount = oldMessage.partial ? 0 : oldMessage.attachments.size;
+
+            if (
+                (!oldContent && newMessage.content) ||
+                (oldAttachCount === 0 && newMessage.attachments.size > 0) ||
+                (oldContent !== newMessage.content && !!newMessage.content)
+            ) {
+                this.dispatchMessage(token, newMessage as any, 'MANAGED_BOT');
+            }
+        });
+
         client.on('error', (err: any) => {
             logger.error({ msg: err.message || 'Unknown Connection Error' }, 'Bot client connection error');
         });
@@ -560,7 +599,12 @@ class ClientManager {
         const configs = session.configs.get(message.channelId);
         if (!configs || configs.length === 0) return;
 
-        const userPlan = configs[0].userPlan;
+        // Resolve the best plan from all configs to ensure Elite priority is respected
+        const userPlan = configs.reduce((best, current) => {
+            const pCurrent = PLAN_PRIORITY[current.userPlan] ?? 0;
+            const pBest = PLAN_PRIORITY[best] ?? 0;
+            return pCurrent > pBest ? current.userPlan : best;
+        }, 'FREE');
 
         messageQueue.enqueue({
             plan: userPlan,
@@ -596,74 +640,129 @@ class ClientManager {
         token: string,
         signal: AbortSignal
     ): Promise<void> {
-        // ── Immediately extract proxy_url from attachment metadata ──
-        // No downloading, no validation — pure metadata extraction
-        const snapshotEmbeds: any[] = [];
-        // Keep raw proxy URLs for plain-text fallback if embed delivery fails
-        const fallbackUrls: string[] = [];
+        // ── Check if we need Elite Tier "Buffer Mode" ──
+        const isElite = configs.some(c => c.userPlan === 'ELITE');
+        let files: any[] = [];
 
-        for (const item of snapshotItems) {
-            // Guard: if we're already aborted, bail out early
-            if (signal.aborted) {
-                logger.warn({ messageId }, '[Async] Snapshot task aborted before embed construction');
-                return;
-            }
+        if (isElite) {
+            try {
+                // Elite Tier: Download media to buffer (bypasses 403 / Expires / Proxy issues)
+                logger.debug({ messageId, items: snapshotItems.length }, '[Async] Elite Tier: Downloading snapshot media to buffer');
 
-            // Extract proxy_url directly from metadata (no download required)
-            // Prefer proxy_url over CDN url — proxy_url is Discord's cached/optimized version
-            const proxyUrl = item.proxyUrl || item.url;
-            fallbackUrls.push(proxyUrl);
+                // Reuse existing streaming/download logic (converts ParsedAttachment -> Buffer/Stream)
+                // HACK: Force strategy to 'STREAM' so buildWebhookFilePayload downloads them
+                // We use a shallow copy to not mutate the original 'snapshotItems' which might be used for embeds logic later
+                const forcedStreamItems = snapshotItems.map(s => ({
+                    ...s,
+                    strategy: 'STREAM' as MediaStrategy
+                }));
 
-            if (item.category === 'image') {
-                // Strict embed format — only include `image.url` to prevent Discord rejection
-                snapshotEmbeds.push({
-                    image: { url: proxyUrl },
-                    color: 0x2b2d31 // Discord Dark Theme Color
-                });
-            } else if (item.category === 'video') {
-                snapshotEmbeds.push({
-                    title: `🎥 ${item.name}`,
-                    description: `[Click to Watch Video](${proxyUrl})`,
-                    url: proxyUrl,
-                    color: 0x2b2d31
-                });
+                files = await buildWebhookFilePayload(forcedStreamItems);
+            } catch (error: any) {
+                logger.warn({ messageId, error: error.message }, '[Async] Elite Tier download failed, falling back to Proxy URLs');
+                // Fallback to proxyUrl logic below if download fails
             }
         }
 
-        if (snapshotEmbeds.length === 0) return;
+        // ── Standard Proxy URL Metadata Retrieval ──
+        const snapshotEmbeds: any[] = [];
+        const fallbackUrls: string[] = [];
 
-        // ── Dispatch to all configs using Promise.allSettled ──
-        // One config failure never blocks or crashes the others
+        for (const item of snapshotItems) {
+            if (signal.aborted) return;
+
+            const proxyUrl = item.proxyUrl || item.url;
+            fallbackUrls.push(proxyUrl);
+
+            // If NOT sending files (Standard Tier or Elite download failed), build embeds
+            if (files.length === 0) {
+                if (item.category === 'image') {
+                    snapshotEmbeds.push({
+                        image: { url: proxyUrl },
+                        color: 0x2b2d31
+                    });
+                } else if (item.category === 'video') {
+                    snapshotEmbeds.push({
+                        title: `🎥 ${item.name}`,
+                        description: `[Click to Watch Video](${proxyUrl})`,
+                        url: proxyUrl,
+                        color: 0x2b2d31
+                    });
+                }
+            }
+        }
+
+        if (snapshotEmbeds.length === 0 && files.length === 0) return;
+
+        // ── Dispatch to all configs ──
         const results = await Promise.allSettled(
             configs.map(async (cfg) => {
-                // Check abort before each forwarding attempt
-                if (signal.aborted) {
-                    throw new DOMException('Snapshot task timed out', 'AbortError');
+                if (signal.aborted) throw new DOMException('Snapshot task timed out', 'AbortError');
+
+                // ── Re-validate media for THIS specific config ──
+                // Prevents feature leakage (e.g. Free plan getting Videos)
+                const { eligible } = validateMediaForwarding(snapshotItems, cfg.userPlan);
+                if (eligible.length === 0) return; // Nothing allowed for this plan
+
+                // Elite Configs get Files; Standard Configs get Embeds
+                // Exception: If we failed to download files (files.length=0), everyone gets embeds
+                // Exception 2: If we are Elite but the media itself was filtered out (rare, but possible), respect filter
+
+                // Construct config-specific file list (intersection of 'files' and 'eligible')
+                // We match by name/url since 'files' are Blob/Stream wrappers
+                let configFiles: any[] | undefined = undefined;
+                if (cfg.userPlan === 'ELITE' && files.length > 0) {
+                    // Filter the downloaded buffer files to only include those that are eligible for this config
+                    // Although Elite allows everything, this is good practice
+                    const eligibleNames = new Set(eligible.map(e => e.name));
+                    configFiles = files.filter(f => eligibleNames.has(f.name));
                 }
 
+                const useFiles = !!configFiles && configFiles.length > 0;
+
+                // Construct config-specific embeds
+                const configEmbeds: any[] = [];
+                if (!useFiles) {
+                    const eligibleUrls = new Set(eligible.map(e => e.url));
+                    // Filter the pre-built embeds
+                    // We need to match back to the item. 
+                    // Simpler: Re-build embeds from 'eligible' items
+                    for (const item of eligible) {
+                        const proxyUrl = item.proxyUrl || item.url;
+                        if (item.category === 'image') {
+                            configEmbeds.push({ image: { url: proxyUrl }, color: 0x2b2d31 });
+                        } else if (item.category === 'video') {
+                            configEmbeds.push({
+                                title: `🎥 ${item.name}`,
+                                description: `[Click to Watch Video](${proxyUrl})`,
+                                url: proxyUrl,
+                                color: 0x2b2d31
+                            });
+                        }
+                    }
+                }
+
+                if (!useFiles && configEmbeds.length === 0) return;
+
                 if (cfg.type === 'CUSTOM_HOOK') {
-                    await this.sendWebhookSnapshot(cfg, basePayload, snapshotEmbeds, fallbackUrls, messageId, signal);
+                    await this.sendWebhookSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, signal, configFiles);
                 } else if (cfg.type === 'MANAGED_BOT') {
-                    await this.sendBotSnapshot(cfg, basePayload, snapshotEmbeds, fallbackUrls, messageId, token, signal);
+                    await this.sendBotSnapshot(cfg, basePayload, configEmbeds, fallbackUrls, messageId, token, signal, configFiles);
                 }
             })
         );
 
-        // ── Log results (non-blocking, informational) ──
+        // ── Log results ──
         const failures = results.filter(r => r.status === 'rejected');
         if (failures.length > 0) {
             logger.warn({
                 messageId,
-                totalConfigs: configs.length,
                 failed: failures.length,
-                errors: failures.map(f => (f as PromiseRejectedResult).reason?.message || String((f as PromiseRejectedResult).reason)),
-            }, '[Async] Some snapshot forwarding tasks failed (isolated)');
+                total: configs.length,
+                reason: (failures[0] as PromiseRejectedResult).reason?.message
+            }, '[Async] Some snapshot tasks failed');
         } else {
-            logger.debug({
-                messageId,
-                snapshotCount: snapshotItems.length,
-                configCount: configs.length,
-            }, '[Async] All snapshot tasks completed successfully');
+            logger.debug({ messageId, mode: isElite && files.length > 0 ? 'ELITE_BUFFER' : 'STANDARD_PROXY' }, '[Async] Snapshot tasks completed');
         }
     }
 
@@ -684,18 +783,26 @@ class ClientManager {
         embeds: any[],
         fallbackUrls: string[],
         messageId: string,
-        taskSignal: AbortSignal
+        taskSignal: AbortSignal,
+        files?: any[]
     ): Promise<void> {
         const webhookClient = new WebhookClient({ url: cfg.targetWebhookUrl });
 
         // ── Strict payload structure (content is always "" not null/undefined) ──
+        // ── Elite Tier: Send with Files if available ──
         const sendPayload: any = {
             content: basePayload.content || '',
             username: basePayload.username,
             avatarURL: basePayload.avatarURL,
             embeds: embeds,
+            files: files,
             allowedMentions: { parse: [] }
         };
+
+        // If sending files, ensure content is non-empty (Discord requirement workaround)
+        if (files && files.length > 0 && !sendPayload.content) {
+            sendPayload.content = '-# 📡 via DisBot Engine';
+        }
 
         // ── Attempt 1: Send with embeds ──
         for (let attempt = 1; attempt <= 2; attempt++) {
@@ -817,7 +924,8 @@ class ClientManager {
         fallbackUrls: string[],
         messageId: string,
         botToken: string,
-        taskSignal: AbortSignal
+        taskSignal: AbortSignal,
+        files?: any[]
     ): Promise<void> {
         const botSession = this.botClients.get(botToken);
         if (!botSession) {
@@ -849,8 +957,9 @@ class ClientManager {
                 }
 
                 await (channel as any).send({
-                    content: content || '',
+                    content: content || (files && files.length > 0 ? '' : ''),
                     embeds: embeds,
+                    files: files,
                     allowedMentions: { parse: [] }
                 });
 
@@ -947,14 +1056,32 @@ class ClientManager {
         const configs = session.configs.get(message.channelId);
         if (!configs || configs.length === 0) return;
 
-        // Detect forwarded messages
-        const refType = (message.reference as any)?.type;
-        const isForward = refType === 'FORWARD' || refType === 1
+        // Detect forwarded messages (Preliminary)
+        let refType = (message.reference as any)?.type;
+        let isForward = refType === 'FORWARD' || refType === 1
             || (message as any).flags?.has?.(1 << 14)
             || ((message as any).messageSnapshots?.size ?? 0) > 0;
 
-        // Resolve the user's plan from the first matching config
-        const userPlan = configs[0].userPlan;
+        // ── Race Condition Fix: Wait for Snapshots ──
+        // If it looks like a reply/forward (reference exists) but not marked as Forward/Snapshot yet
+        if (!isForward && message.reference) {
+            // Short delay to allow Discord to populate snapshots
+            await new Promise(r => setTimeout(r, 500));
+            // Reload message check
+            if (message.client.options.ws?.properties) { // Rough check if it's a selfbot/bot
+                // Force a property re-check or logic re-evaluation
+                const updatedSnapshots = (message as any).messageSnapshots?.size ?? 0;
+                if (updatedSnapshots > 0) isForward = true;
+            }
+        }
+
+        // Resolve the user's plan: Use the HIGHEST tier among all matching configs
+        // Priority: ELITE > PRO > STARTER > FREE
+        const userPlan = configs.reduce((best, current) => {
+            const pCurrent = PLAN_PRIORITY[current.userPlan] ?? 0;
+            const pBest = PLAN_PRIORITY[best] ?? 0;
+            return pCurrent > pBest ? current.userPlan : best;
+        }, 'FREE');
 
         // ── Parse & filter attachments via validateMediaForwarding ──
         const rawAttachments = parseAttachments(message.attachments, (message as any).flags);
@@ -1166,17 +1293,39 @@ class ClientManager {
         // Skip truly empty messages (no content, no embeds, no stream files)
         // Note: snapshot embeds are handled in the background, so we still
         // need to forward text content and stream files synchronously
-        if (!payload.content && !hasEmbeds && !hasFiles) {
+        // ── Check if we have ANYTHING to send (Sync or Async) ──
+        // Reliability Fix: Don't perform the strict "sync content check" yet.
+        // If we had snapshot items, the background task is handling them.
+        // We only abort here if we have NO content, NO embeds, NO sync-files AND NO async-snapshots.
+        if (!payload.content && !hasEmbeds && !hasFiles && !hasSnapshotEmbeds) {
             return;
         }
 
         // ── Execute synchronous forwarding (text + STREAM items) in parallel ──
         const promises = configs.map(async (cfg) => {
+            // ── Re-validate STREAM media for THIS specific config ──
+            // Prevents Audio/Docs from leaking to Free/Starter plans
+            const { eligible } = validateMediaForwarding(streamItems, cfg.userPlan);
+
+            // If this config has no allowed stream media, and no text/embeds, skip it
+            // (Unless there was snapshot media, which is handled separately)
+            const configHasFiles = eligible.length > 0;
+            const configHasContent = !!payload.content || payload.embeds.length > 0;
+
+            // If strictly nothing to send in this sync phase
+            if (!configHasFiles && !configHasContent) return;
+
+            // Clone payload with filtered media
+            const configPayload = {
+                ...payload,
+                eligibleMedia: eligible
+            };
+
             try {
                 if (cfg.type === 'CUSTOM_HOOK') {
-                    await this.forwardViaWebhook(cfg, payload);
+                    await this.forwardViaWebhook(cfg, configPayload);
                 } else if (cfg.type === 'MANAGED_BOT') {
-                    await this.forwardViaManagedBot(cfg, payload, token);
+                    await this.forwardViaManagedBot(cfg, configPayload, token);
                 }
             } catch (error: any) {
                 // Isolated: one config's error doesn't crash the others
