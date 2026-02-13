@@ -23,6 +23,13 @@ import {
     PLAN_PATH_LIMITS,
     PriorityMessageQueue,
 } from './lib/plan-enforcer';
+import https from 'https';
+
+// ──────────────────────────────────────────────────────────────
+//  Global HTTPS Agent (Keep-Alive)
+//  Reuses TCP connections to eliminate TLS handshake overhead.
+// ──────────────────────────────────────────────────────────────
+const keepAliveAgent = new https.Agent({ keepAlive: true });
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -662,14 +669,59 @@ class ClientManager {
         // We force SNAPSHOT strategy for Images/Videos for ALL tiers (including Elite).
         // This prevents re-download/re-upload overhead and mimics native "Forward Message" behavior.
 
-        logger.debug({ messageId, items: snapshotItems.length }, '[Async] Fast-Path: Processing snapshot items via Proxy URLs');
+        logger.info({ messageId }, '[Async] Attempting to build snapshot embeds');
+
+        // ── Metadata Integrity Check (Retry Loop) ──
+        // If proxy_url is missing (fresh media race condition), refetch message to populate it.
+        let finalItems = snapshotItems;
+        const hasMissingUrls = snapshotItems.some(i => !i.proxyUrl && !i.url);
+
+        if (hasMissingUrls) {
+            logger.warn({ messageId }, '[Async] Detected missing media URLs - attempting to refetch metadata...');
+            const channelId = configs[0]?.sourceChannelId;
+            const session = this.clients.get(token) || this.botClients.get(token);
+
+            if (session && channelId) {
+                // Retry up to 3 times (1.5s total)
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        await new Promise(r => setTimeout(r, 500 * (i + 1)));
+                        const channel = await session.client.channels.fetch(channelId);
+                        // Safe check for isTextBased
+                        if (channel && (channel as any).isTextBased?.()) {
+                            const msg = await (channel as any).messages.fetch(messageId);
+                            if (msg) {
+                                const refreshed = parseAttachments(msg.attachments, msg.flags);
+                                // Merge fresh URLs into our existing items
+                                finalItems = finalItems.map(existing => {
+                                    // Match by URL (CDN link is unique ID)
+                                    const fresh = refreshed.find(a => a.url === existing.url);
+                                    if (fresh) {
+                                        return {
+                                            ...existing,
+                                            proxyUrl: fresh.proxyUrl || existing.proxyUrl,
+                                            url: fresh.url || existing.url
+                                        };
+                                    }
+                                    return existing;
+                                });
+                                // If we fixed all of them, break early
+                                if (finalItems.every(item => item.proxyUrl || item.url)) break;
+                            }
+                        }
+                    } catch (e) { /* ignore fetch errors */ }
+                }
+            }
+        }
 
         const snapshotEmbeds: any[] = [];
         const fallbackUrls: string[] = [];
 
-        for (const item of snapshotItems) {
+        for (const item of finalItems) {
             if (signal.aborted) return;
 
+            // Metadata Fallback: Use proxyUrl if valid; fallback to standard url immediately.
+            // This ensures we never send a null URL even if metadata refetch failed.
             const proxyUrl = item.proxyUrl || item.url;
             fallbackUrls.push(proxyUrl);
 
@@ -775,9 +827,9 @@ class ClientManager {
             allowedMentions: { parse: [] }
         };
 
-        // If sending files, ensure content is non-empty (Discord requirement workaround)
-        if (files && files.length > 0 && !sendPayload.content) {
-            sendPayload.content = '-# 📡 via DisBot Engine';
+        // Ensure content is never empty (Discord Webhook Requirement for some endpoints, and better UX)
+        if (!sendPayload.content) {
+            sendPayload.content = '-# 📡 Forwarding via DisBot Engine';
         }
 
         // ── Attempt 1: Send with embeds ──
@@ -807,7 +859,9 @@ class ClientManager {
                     data: { updatedAt: new Date(), lastActiveAt: new Date() }
                 }).catch(() => { });
 
-                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot webhook delivered');
+
+
+                logger.info({ configId: cfg.id, messageId, attempt, hasEmbeds: embeds.length > 0 }, '[Async] Snapshot webhook delivered');
                 return;
 
             } catch (error: any) {
@@ -933,8 +987,11 @@ class ClientManager {
                     content += basePayload.content;
                 }
 
+                // Force content validation
+                const finalContent = content || '-# 📡 Forwarding via DisBot Engine';
+
                 await (channel as any).send({
-                    content: content || (files && files.length > 0 ? '' : ''),
+                    content: finalContent,
                     embeds: embeds,
                     files: files,
                     allowedMentions: { parse: [] }
