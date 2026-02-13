@@ -15,8 +15,8 @@ interface MirrorConfig {
     id: string;
     sourcePlatform?: 'DISCORD' | 'TELEGRAM';
     sourceGuildName: string | null;
-    sourceChannelId: string; // Empty for Telegram
-    targetWebhookUrl: string;
+    sourceChannelId: string | null; // Empty for Telegram
+    targetWebhookUrl: string | null;
     active: boolean;
     createdAt: Date;
     userToken?: string | null;
@@ -189,7 +189,7 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                                                         {config.sourceGuildName || "Unknown Source"}
                                                     </span>
                                                 </div>
-                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 ml-8" title={config.sourcePlatform === 'TELEGRAM' ? config.telegramChatId! : config.sourceChannelId}>
+                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 ml-8" title={config.sourcePlatform === 'TELEGRAM' ? (config.telegramChatId || "") : (config.sourceChannelId || "")}>
                                                     ID: {config.sourcePlatform === 'TELEGRAM' ? config.telegramChatId : config.sourceChannelId}
                                                 </span>
                                             </div>
@@ -199,7 +199,7 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 group-hover:text-zinc-300 transition-colors">
                                                 <div className="w-1.5 h-1.5 bg-indigo-500" />
-                                                {maskWebhook(config.targetWebhookUrl)}
+                                                {maskWebhook(config.targetWebhookUrl || "")}
                                             </div>
                                         </td>
 

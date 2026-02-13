@@ -22,8 +22,8 @@ export interface MirrorConfig {
     id: string;
     sourcePlatform?: 'DISCORD' | 'TELEGRAM';
     sourceGuildName: string | null;
-    sourceChannelId: string;
-    targetWebhookUrl: string;
+    sourceChannelId: string | null;
+    targetWebhookUrl: string | null;
     active: boolean;
     userToken?: string | null;
     telegramSession?: string | null;
@@ -89,7 +89,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
             // If editing, setup initial state
             if (config) {
                 setSourcePlatform(config.sourcePlatform || 'DISCORD');
-                setWebhookUrl(config.targetWebhookUrl);
+                setWebhookUrl(config.targetWebhookUrl || "");
 
                 if (config.sourcePlatform === 'TELEGRAM') {
                     setManualGuildName(config.sourceGuildName || "");
@@ -97,7 +97,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
                     setTelegramChatId(config.telegramChatId || "");
                     setTelegramTopicId(config.telegramTopicId || "");
                 } else {
-                    setChannelId(config.sourceChannelId);
+                    setChannelId(config.sourceChannelId || "");
                     if (config.userToken) setUserToken(config.userToken);
                 }
 
