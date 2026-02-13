@@ -788,8 +788,8 @@ class ClientManager {
             }
 
             const controller = new AbortController();
-            // Dynamic timeout: 10s for lightweight JSON, 180s (3m) for file uploads (Elite Buffer)
-            const timeoutDuration = (files && files.length > 0) ? 180_000 : 10_000;
+            // Dynamic timeout: 30s for lightweight JSON (Fast-Path), 180s (3m) for file uploads (Elite Buffer)
+            const timeoutDuration = (files && files.length > 0) ? 180_000 : 30_000;
             const requestTimer = setTimeout(() => controller.abort(), timeoutDuration);
 
             try {
@@ -807,7 +807,7 @@ class ClientManager {
                     data: { updatedAt: new Date(), lastActiveAt: new Date() }
                 }).catch(() => { });
 
-                logger.debug({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot webhook delivered');
+                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot webhook delivered');
                 return;
 
             } catch (error: any) {
@@ -945,7 +945,7 @@ class ClientManager {
                     data: { updatedAt: new Date(), lastActiveAt: new Date() }
                 }).catch(() => { });
 
-                logger.debug({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot bot message delivered');
+                logger.info({ configId: cfg.id, messageId, attempt }, '[Async] Snapshot bot message delivered');
                 return;
 
             } catch (error: any) {
