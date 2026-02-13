@@ -105,8 +105,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         await prisma.mirrorConfig.create({
             data: {
                 userId: session.user.id,
-                // @ts-ignore
-                sourcePlatform: sourcePlatform as any,
+                sourcePlatform: sourcePlatform,
                 sourceGuildName: validated.data.sourceGuildName,
                 // Discord
                 sourceChannelId: sourcePlatform === "DISCORD" ? validated.data.sourceChannelId || "" : "",
@@ -190,7 +189,6 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
         await prisma.mirrorConfig.createMany({
             data: parsedConfigs.map(c => ({
                 userId: session.user.id,
-                // @ts-ignore
                 sourcePlatform: "DISCORD", // Default to Discord for bulk text parser
                 sourceGuildName: c.sourceGuildName,
                 sourceChannelId: c.sourceChannelId,
@@ -248,8 +246,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         // For simplicity, we assume if provided it updates.
 
         const updateData: any = {
-            // @ts-ignore
-            sourcePlatform: sourcePlatform as any,
+            sourcePlatform: sourcePlatform,
             sourceGuildName: validated.data.sourceGuildName,
             targetWebhookUrl: validated.data.targetWebhookUrl,
         };

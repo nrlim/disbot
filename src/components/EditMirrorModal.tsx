@@ -105,15 +105,15 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config }: 
             } else {
                 // Reset if adding new
                 // Check localStorage for draft session
+                // Check localStorage for draft session
                 const draftSession = localStorage.getItem("draft_telegram_session");
                 if (draftSession) {
                     setTelegramSession(draftSession);
-                    setSourcePlatform('TELEGRAM'); // Switch to Telegram if we have a draft
                     setManualGuildName("");
                 } else {
                     setTelegramSession("");
-                    setSourcePlatform('DISCORD');
                 }
+                setSourcePlatform('DISCORD');
 
                 setChannelId("");
                 setWebhookUrl("");
