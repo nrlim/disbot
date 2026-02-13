@@ -1168,7 +1168,11 @@ class ClientManager {
         for (let i = 0; i < 3; i++) {
             const refType = (message.reference as any)?.type;
             const hasForwardFlag = (message as any).flags?.has?.(1 << 14); // IS_FORWARD
-            const hasSnapshots = ((message as any).messageSnapshots?.size ?? 0) > 0;
+
+            // Robust snapshot check (Collection or Array)
+            const snapshots = (message as any).messageSnapshots || (message as any).message_snapshots;
+            const hasSnapshots = (snapshots?.size ?? snapshots?.length ?? 0) > 0;
+
             const isForwardRef = refType === 'FORWARD' || refType === 1;
 
             if (isForwardRef || hasForwardFlag || hasSnapshots) {
@@ -1177,7 +1181,7 @@ class ClientManager {
             }
 
             // Only wait if it *looks* like it might be a forward (has reference but no content yet?)
-            if (message.reference && !message.content && !hasSnapshots) {
+            if ((message.reference || hasForwardFlag) && !message.content && !hasSnapshots) {
                 await new Promise(r => setTimeout(r, 250));
             } else {
                 break; // Not a forward candidate
@@ -1250,7 +1254,9 @@ class ClientManager {
 
         // ── Handle Forwarded Content ──
         if (isForward) {
-            const snapshot = (message as any).messageSnapshots?.first?.();
+            // Robust snapshot extraction
+            const snapshots = (message as any).messageSnapshots || (message as any).message_snapshots;
+            const snapshot = snapshots?.first?.() || snapshots?.[0];
 
             let fwdContent = `-# 📨 Forwarded Message`;
 
@@ -1258,9 +1264,18 @@ class ClientManager {
                 fwdContent += `\n${snapshot.content}`;
             }
 
-            if (snapshot?.attachments?.size > 0) {
-                const urls = snapshot.attachments.map((a: any) => a.url);
-                fwdContent += `\n${urls.join('\n')}`;
+            if ((snapshot?.attachments?.size ?? 0) > 0 || (snapshot?.attachments?.length ?? 0) > 0) {
+                const snapParsed = parseAttachments(snapshot.attachments, (message as any).flags);
+                const snapFiltered = validateMediaForwarding(snapParsed, userPlan);
+
+                // Merge allowed media from snapshot
+                payload.eligibleMedia = [...payload.eligibleMedia, ...snapFiltered.eligible];
+
+                // Append rejected/fallback URLs to content
+                if (snapFiltered.rejected.length > 0) {
+                    const urls = snapFiltered.rejected.map(r => r.attachment.url);
+                    fwdContent += `\n${urls.join('\n')}`;
+                }
             }
 
             payload.content = fwdContent;

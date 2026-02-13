@@ -173,14 +173,25 @@ export function getMediaStrategy(category: MediaCategory): MediaStrategy {
  * Handles both regular attachments and voice messages.
  */
 export function parseAttachments(attachments: any, messageFlags?: any): ParsedAttachment[] {
-    if (!attachments || attachments.size === 0) return [];
+    if (!attachments) return [];
+
+    // Support both Collection (Map-like) and Array
+    const isCollection = typeof attachments.size === 'number' && typeof attachments.entries === 'function';
+    const isEmpty = isCollection ? attachments.size === 0 : (Array.isArray(attachments) && attachments.length === 0);
+
+    if (isEmpty) return [];
 
     const parsed: ParsedAttachment[] = [];
 
     // Check if the message is a voice message (flag 1 << 13 = 8192)
     const isVoice = messageFlags?.has?.(1 << 13) ?? false;
 
-    for (const [, att] of attachments) {
+    // Normalize iteration: if Map/Collection, use .values(); if Array, use valid iterator
+    const iterator = isCollection ? attachments.values() : attachments;
+
+    for (const att of iterator) {
+        if (!att) continue;
+
         const name = att.name || 'unknown';
         const contentType: string | null = att.contentType ?? null;
         const category = categoriseAttachment(name, contentType);
