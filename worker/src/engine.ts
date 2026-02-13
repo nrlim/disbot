@@ -230,20 +230,27 @@ class ClientManager {
             // Map Prisma result to MirrorActiveConfig
             // We need to handle nulls/formatting
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const activeConfigs: MirrorActiveConfig[] = activeConfigsRaw.map((cfg: any) => ({
-                id: cfg.id,
-                sourcePlatform: (cfg.sourcePlatform as 'DISCORD' | 'TELEGRAM') || 'DISCORD',
-                sourceChannelId: cfg.sourceChannelId || '',
-                userToken: cfg.userToken || undefined,
-                telegramSession: cfg.telegramSession || undefined,
-                telegramChatId: cfg.telegramChatId || undefined,
-                telegramTopicId: cfg.telegramTopicId || undefined,
-                targetWebhookUrl: cfg.targetWebhookUrl,
-                type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
-                targetChannelId: cfg.targetChannelId || undefined,
-                userPlan: cfg.user?.plan || 'FREE',
-                userId: cfg.userId
-            }));
+            const activeConfigs: MirrorActiveConfig[] = activeConfigsRaw.map((cfg: any) => {
+                // Auto-detect platform if not explicitly set
+                let platform = (cfg.sourcePlatform as 'DISCORD' | 'TELEGRAM');
+                if (!platform && cfg.telegramSession) platform = 'TELEGRAM';
+                if (!platform) platform = 'DISCORD';
+
+                return {
+                    id: cfg.id,
+                    sourcePlatform: platform,
+                    sourceChannelId: cfg.sourceChannelId || '',
+                    userToken: cfg.userToken || undefined,
+                    telegramSession: cfg.telegramSession || undefined,
+                    telegramChatId: cfg.telegramChatId || undefined,
+                    telegramTopicId: cfg.telegramTopicId || undefined,
+                    targetWebhookUrl: cfg.targetWebhookUrl,
+                    type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
+                    targetChannelId: cfg.targetChannelId || undefined,
+                    userPlan: cfg.user?.plan || 'FREE',
+                    userId: cfg.userId
+                };
+            });
 
             // ── 2. Enforce path limits PER USER ──
             // Group by userId, apply plan caps, flatten back
@@ -287,6 +294,14 @@ class ClientManager {
             const discordBotConfigs: MirrorActiveConfig[] = [];
             const telegramConfigs: TelegramConfig[] = []; // Using simplified type for Telegram listener
 
+            logger.info({
+                totalAllowed: allowedConfigs.length,
+                breakdown: {
+                    telegram: allowedConfigs.filter(c => c.sourcePlatform === 'TELEGRAM').length,
+                    discord: allowedConfigs.filter(c => c.sourcePlatform === 'DISCORD').length
+                }
+            }, '[Sync] Config breakdown by platform');
+
             for (const cfg of allowedConfigs) {
                 if (cfg.sourcePlatform === 'TELEGRAM') {
                     // Decrypt token if needed before passing to listener
@@ -305,6 +320,8 @@ class ClientManager {
                             telegramTopicId: cfg.telegramTopicId,
                             targetWebhookUrl: cfg.targetWebhookUrl,
                         });
+                    } else {
+                        logger.warn({ configId: cfg.id, hasSession: !!decryptedSession, hasChatId: !!cfg.telegramChatId }, '[Sync] Skipping Telegram config: Missing session or Chat ID');
                     }
                     continue;
                 }
@@ -1460,14 +1477,37 @@ class ClientManager {
                     }, 'Webhook failed after 3 attempts');
                 } else {
                     // Retry logic:
-                    // If it's a timeout (AbortError), retry WITH files (maybe it was just slow).
-                    // If it's another error (e.g. 400 Bad Request), retry WITHOUT files as fallback.
+                    // Treat 'other side closed' (premature close) as a timeout/network error.
+                    // If it's a network error, retry WITH files (maybe it was just glitch).
+                    // If it's a logical error (e.g. 400 Bad Request), retry WITHOUT files as fallback.
                     const isTimeout = error.name === 'AbortError' || error.code === 'ETIMEDOUT';
+                    const isNetworkError = isTimeout ||
+                        error.message?.includes('other side closed') ||
+                        error.code === 'ECONNRESET' ||
+                        error.code === 'EPIPE' ||
+                        error.message?.includes('socket hang up');
 
-                    if (attempt === 1 && !isTimeout && (sendPayload.files || sendPayload.embeds)) {
-                        logger.warn({ configId: cfg.id, error: error.message }, 'First attempt failed with non-timeout error. Retrying without files/embeds.');
+                    if (attempt === 1 && !isNetworkError && (sendPayload.files || sendPayload.embeds)) {
+                        logger.warn({ configId: cfg.id, error: error.message }, 'First attempt failed with data error. Retrying without files/embeds (Falling back to Links).');
+
+                        // ── LINK FALLBACK ──
+                        // Mimic "Forward Message" behavior: If upload fails, send the URLs.
+                        const mediaUrls = payload.eligibleMedia.map(m => m.url).join('\n');
+                        if (mediaUrls) {
+                            sendPayload.content = (sendPayload.content || '') + '\n' + mediaUrls;
+                        }
+
                         sendPayload.files = undefined;
                         sendPayload.embeds = undefined;
+                    } else if (isNetworkError) {
+                        if (attempt === 3) {
+                            // Last attempt failed due to network? Fallback to links for the final (failed) log/state
+                            // (Ideally we would retry one last time with links, but simpler to just log/accept fail here
+                            //  or maybe force a 4th attempt? Let's keep it simple: if network fails twice,
+                            //  the next loop might trigger the fallback if we change logic slightly.
+                            //  Actually, let's apply Link Fallback on the *Last* retry if it's about to fail?)
+                        }
+                        logger.warn({ configId: cfg.id, error: error.message }, 'Network/Connection error. Retrying with files...');
                     }
                     await new Promise(r => setTimeout(r, 1000));
                 }
@@ -1528,6 +1568,17 @@ class ClientManager {
                     sendOptions.content = content.substring(0, 2000);
                 }
 
+                // ── LINK FALLBACK ──
+                // If files were stripped (botFiles empty) but we have eligible media, append links
+                if (botFiles.length === 0 && payload.eligibleMedia.length > 0) {
+                    const mediaUrls = payload.eligibleMedia.map(m => m.url).join('\n');
+                    if (sendOptions.content) {
+                        sendOptions.content = (sendOptions.content + '\n' + mediaUrls).substring(0, 2000);
+                    } else {
+                        sendOptions.content = mediaUrls.substring(0, 2000);
+                    }
+                }
+
                 if (payload.embeds.length > 0) {
                     sendOptions.embeds = payload.embeds;
                 }
@@ -1569,16 +1620,24 @@ class ClientManager {
                     return;
                 }
 
-                // URL expired
-                if (error.message?.includes('Invalid URL') || error.message?.includes('expired') || error.message?.includes('Request entity too large')) {
+                // URL expired or File Error
+                // Fallback to Links
+                const isMediaError = error.message?.includes('Invalid URL') ||
+                    error.message?.includes('expired') ||
+                    error.message?.includes('Request entity too large') ||
+                    error.status === 413;
+
+                if (isMediaError) {
                     logger.error({
                         configId: cfg.id,
                         error: error.message,
-                    }, 'Failed to forward media via bot: URL expired or file error');
+                    }, 'Failed to forward media via bot: File error. Falling back to Links.');
+
                     botFiles = [];
+                    // Just continue. The logic at start of loop detects (botFiles.length === 0) 
+                    // and automatically appends links.
                     continue;
                 }
-
                 if (isLastAttempt) {
                     logger.error({
                         error: error.message || String(error),
