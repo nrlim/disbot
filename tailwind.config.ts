@@ -9,11 +9,13 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        primary: "#5865F2", // Discord Blue
-        secondary: "#00D1FF", // Electric Cyan
-        dark: "#0f172a", // Custom Dark
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        primary: "#1A56DB", // Deep Blue
+        secondary: "#4B5563", // Soft Slate
+        background: "#F9FAFB", // Light Grey
+        surface: "#FFFFFF", // Pure White
+        foreground: "#111827", // Dark Grey
+        muted: "#6B7280", // Medium Grey
+        border: "#E5E7EB", // Light Border
       },
       fontFamily: {
         inter: ["var(--font-inter)", "sans-serif"],

@@ -14,7 +14,8 @@ import {
     Eye,
     EyeOff,
     Send,
-    Terminal
+    Terminal,
+    AlertCircle
 } from "lucide-react";
 import { z } from "zod";
 import Image from "next/image";
@@ -151,14 +152,14 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
         <div className="w-full max-w-4xl mx-auto space-y-8">
 
             {/* --- Mode Selector Switch --- */}
-            <div className="bg-zinc-950 p-0.5 border border-zinc-800 flex relative">
+            <div className="bg-gray-100 p-1 rounded-xl flex relative">
                 <motion.div
                     layoutId="active-pill"
                     className={cn(
-                        "absolute top-0.5 bottom-0.5 transition-colors z-0 bg-zinc-900 border border-zinc-700 shadow-sm",
+                        "absolute top-1 bottom-1 transition-colors z-0 bg-white border border-gray-200 shadow-sm rounded-lg",
                         mode === "custom"
-                            ? "left-0.5 w-[calc(50%-2px)]"
-                            : "left-[50%] w-[calc(50%-2px)]"
+                            ? "left-1 w-[calc(50%-4px)]"
+                            : "left-[50%] w-[calc(50%-4px)]"
                     )}
                     transition={{ type: "spring", bounce: 0, duration: 0.3 }}
                 />
@@ -166,28 +167,28 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                 <button
                     onClick={() => handleModeSwitch("custom")}
                     className={cn(
-                        "flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-200",
-                        mode === "custom" ? "text-primary" : "text-zinc-500 hover:text-zinc-300"
+                        "flex-1 flex items-center justify-center gap-3 py-3 relative z-10 transition-colors duration-200",
+                        mode === "custom" ? "text-primary" : "text-gray-500 hover:text-gray-700"
                     )}
                 >
                     <User className="w-4 h-4" />
                     <div className="text-left">
-                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Custom Hook</div>
-                        <div className="text-[10px] font-mono opacity-70">User Token (Any Server)</div>
+                        <div className="font-bold text-xs uppercase tracking-wider">Custom Hook</div>
+                        <div className="text-[10px] opacity-70">User Token (Any Server)</div>
                     </div>
                 </button>
 
                 <button
                     onClick={() => handleModeSwitch("managed")}
                     className={cn(
-                        "flex-1 flex items-center justify-center gap-3 py-4 relative z-10 transition-colors duration-200",
-                        mode === "managed" ? "text-emerald-500" : "text-zinc-500 hover:text-zinc-300"
+                        "flex-1 flex items-center justify-center gap-3 py-3 relative z-10 transition-colors duration-200",
+                        mode === "managed" ? "text-emerald-600" : "text-gray-500 hover:text-gray-700"
                     )}
                 >
                     <Bot className="w-4 h-4" />
                     <div className="text-left">
-                        <div className="font-mono font-bold text-xs uppercase tracking-wider">Managed Bot</div>
-                        <div className="text-[10px] font-mono opacity-70">Verified & Safe</div>
+                        <div className="font-bold text-xs uppercase tracking-wider">Managed Bot</div>
+                        <div className="text-[10px] opacity-70">Verified & Safe</div>
                     </div>
                 </button>
             </div>
@@ -200,22 +201,22 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.2 }}
-                    className="bg-zinc-950 border border-zinc-800 p-8 overflow-hidden"
+                    className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 overflow-hidden"
                 >
                     {/* Header Info */}
-                    <div className="mb-8 border-b border-zinc-800 pb-6">
+                    <div className="mb-8 border-b border-gray-100 pb-6">
                         <div className="flex items-start gap-4">
                             <div className={cn(
-                                "p-3 border shrink-0",
-                                mode === "custom" ? "bg-amber-950/10 border-amber-900/50 text-amber-500" : "bg-emerald-950/10 border-emerald-900/50 text-emerald-500"
+                                "p-3 border rounded-lg shrink-0",
+                                mode === "custom" ? "bg-amber-50 border-amber-200 text-amber-600" : "bg-emerald-50 border-emerald-200 text-emerald-600"
                             )}>
                                 {mode === "custom" ? <ShieldAlert className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
                             </div>
                             <div>
-                                <h2 className="text-xl font-bold text-white mb-2 font-mono uppercase tracking-tight">
+                                <h2 className="text-xl font-bold text-gray-900 mb-2 uppercase tracking-tight">
                                     {mode === "custom" ? "Custom Hook Configuration" : "Managed Bot Setup"}
                                 </h2>
-                                <p className="text-zinc-400 text-sm font-mono leading-relaxed max-w-xl">
+                                <p className="text-gray-500 text-sm leading-relaxed max-w-xl">
                                     {mode === "custom"
                                         ? "Mirror any channel via User Token. Bypasses admin requirements. Powerful but requires caution."
                                         : "Recommended, TOS-compliant method. Requires 'Manage Guild' permissions to invite the bot."
@@ -226,12 +227,12 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
 
                         {/* Custom Hook Warning */}
                         {mode === "custom" && (
-                            <div className="mt-6 flex items-start gap-3 p-4 bg-amber-950/10 border-l-2 border-amber-500">
-                                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                                <div className="text-xs text-amber-500/80 font-mono">
-                                    <strong className="text-amber-500 block mb-1 uppercase">Warning: Account Safety</strong>
+                            <div className="mt-6 flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                                <div className="text-xs text-amber-800">
+                                    <strong className="text-amber-900 block mb-1 uppercase">Warning: Account Safety</strong>
                                     Using a User Token is technically against Discord ToS.
-                                    We recommend using a <span className="underline decoration-dashed">secondary account</span>.
+                                    We recommend using a <span className="underline decoration-dashed font-semibold">secondary account</span>.
                                 </div>
                             </div>
                         )}
@@ -243,7 +244,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                     href={`https://discord.com/oauth2/authorize?client_id=${discordClientId || "YOUR_CLIENT_ID"}&permissions=536870912&scope=bot`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-black font-mono font-bold text-xs uppercase tracking-wider transition-all"
+                                    className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider transition-all rounded-lg shadow-sm"
                                 >
                                     <Bot className="w-4 h-4" />
                                     Invite DISBOT to Server
@@ -264,8 +265,8 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                     exit={{ opacity: 0, height: 0 }}
                                     className="space-y-2 overflow-hidden"
                                 >
-                                    <label className="block text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider">
-                                        Discord User Token <span className="text-amber-500">*</span>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                        Discord User Token <span className="text-red-500">*</span>
                                     </label>
                                     <div className="relative">
                                         <input
@@ -276,21 +277,24 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                                 validateToken(e.target.value);
                                             }}
                                             className={cn(
-                                                "w-full bg-zinc-900 border text-white px-4 py-3 pr-12 focus:border-primary transition-all outline-none font-mono text-sm placeholder:text-zinc-700 rounded-none",
-                                                tokenError ? "border-red-900 focus:border-red-500" : "border-zinc-800"
+                                                "w-full bg-white border px-4 py-3 pr-12 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all outline-none font-mono text-sm placeholder:text-gray-400 rounded-lg text-gray-900",
+                                                tokenError ? "border-red-300 focus:border-red-500 focus:ring-red-200" : "border-gray-200"
                                             )}
                                             placeholder="OTk5..."
                                         />
                                         <button
                                             type="button"
                                             onClick={() => setShowToken(!showToken)}
-                                            className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-white transition-colors"
+                                            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
                                         >
                                             {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                         </button>
                                     </div>
                                     {tokenError && (
-                                        <p className="text-red-500 text-[10px] font-mono mt-1 uppercase">{tokenError}</p>
+                                        <div className="flex items-center gap-1.5 mt-1.5 text-red-600">
+                                            <AlertCircle className="w-3 h-3" />
+                                            <p className="text-xs font-medium">{tokenError}</p>
+                                        </div>
                                     )}
                                 </motion.div>
                             )}
@@ -301,7 +305,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
 
                             {/* Guild Selector */}
                             <div className="space-y-2 relative">
-                                <label className="block text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
                                     Source Server <span className="text-red-500">*</span>
                                 </label>
                                 <div className="relative">
@@ -309,8 +313,8 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                         type="button"
                                         onClick={() => setIsGuildDropdownOpen(!isGuildDropdownOpen)}
                                         className={cn(
-                                            "w-full flex items-center justify-between bg-zinc-900 border px-4 py-3 text-left transition-all rounded-none",
-                                            isGuildDropdownOpen ? "border-primary" : "border-zinc-800 hover:border-zinc-700"
+                                            "w-full flex items-center justify-between bg-white border px-4 py-3 text-left transition-all rounded-lg",
+                                            isGuildDropdownOpen ? "border-primary ring-2 ring-primary/20" : "border-gray-200 hover:border-gray-300"
                                         )}
                                     >
                                         {selectedGuild ? (
@@ -321,22 +325,22 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                                         alt={selectedGuild.name}
                                                         width={20}
                                                         height={20}
-                                                        className="rounded-none grayscale group-hover:grayscale-0"
+                                                        className="rounded-full"
                                                         unoptimized
                                                     />
                                                 ) : (
-                                                    <div className="w-5 h-5 bg-zinc-800 flex items-center justify-center text-[8px] font-bold font-mono">
+                                                    <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">
                                                         {selectedGuild.name.substring(0, 2).toUpperCase()}
                                                     </div>
                                                 )}
-                                                <span className="font-mono text-sm text-zinc-200 truncate max-w-[180px]">
+                                                <span className="font-medium text-sm text-gray-900 truncate max-w-[180px]">
                                                     {selectedGuild.name}
                                                 </span>
                                             </div>
                                         ) : (
-                                            <span className="text-zinc-600 font-mono text-sm">Select a server...</span>
+                                            <span className="text-gray-500 text-sm">Select a server...</span>
                                         )}
-                                        <ChevronDown className={cn("w-4 h-4 text-zinc-600 transition-transform", isGuildDropdownOpen && "rotate-180")} />
+                                        <ChevronDown className={cn("w-4 h-4 text-gray-400 transition-transform", isGuildDropdownOpen && "rotate-180")} />
                                     </button>
 
                                     {/* Dropdown Menu */}
@@ -346,24 +350,24 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                                 initial={{ opacity: 0, y: 10 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 exit={{ opacity: 0, y: 10 }}
-                                                className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-zinc-950 border border-zinc-800 shadow-2xl overflow-hidden"
+                                                className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl overflow-hidden"
                                             >
-                                                <div className="p-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">
+                                                <div className="p-2 border-b border-gray-100 sticky top-0 bg-white">
                                                     <div className="relative">
-                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-500" />
+                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
                                                         <input
                                                             type="text"
                                                             value={searchQuery}
                                                             onChange={(e) => setSearchQuery(e.target.value)}
-                                                            className="w-full bg-zinc-900 text-xs text-white pl-8 pr-3 py-2 border border-zinc-800 focus:outline-none focus:border-primary font-mono rounded-none"
-                                                            placeholder="SEARCH..."
+                                                            className="w-full bg-gray-50 text-xs text-gray-900 pl-9 pr-3 py-2 border border-gray-200 rounded-md focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                                                            placeholder="Search servers..."
                                                             autoFocus
                                                         />
                                                     </div>
                                                 </div>
-                                                <div className="max-h-60 overflow-y-auto custom-scrollbar">
+                                                <div className="max-h-60 overflow-y-auto custom-scrollbar p-1">
                                                     {isLoading ? (
-                                                        <div className="p-4 text-center text-zinc-500 text-xs font-mono">LOADING...</div>
+                                                        <div className="p-4 text-center text-gray-400 text-xs">Loading servers...</div>
                                                     ) : filteredGuilds.length > 0 ? (
                                                         filteredGuilds.map((guild) => (
                                                             <button
@@ -372,22 +376,22 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                                                     setSelectedGuild(guild);
                                                                     setIsGuildDropdownOpen(false);
                                                                 }}
-                                                                className="w-full flex items-center gap-3 p-3 hover:bg-zinc-900/50 transition-colors text-left group border-b border-zinc-900 last:border-0"
+                                                                className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left group"
                                                             >
-                                                                <div className="w-6 h-6 bg-zinc-800 flex items-center justify-center shrink-0 border border-zinc-700 group-hover:border-white/50">
+                                                                <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center shrink-0 border border-gray-200 overflow-hidden">
                                                                     {guild.icon ? (
-                                                                        <Image src={guild.icon} alt={guild.name} width={24} height={24} unoptimized className="object-cover" />
+                                                                        <Image src={guild.icon} alt={guild.name} width={32} height={32} unoptimized className="object-cover w-full h-full" />
                                                                     ) : (
-                                                                        <span className="text-[10px] font-mono text-zinc-400">{guild.name.substring(0, 2)}</span>
+                                                                        <span className="text-[10px] font-bold text-gray-400">{guild.name.substring(0, 2)}</span>
                                                                     )}
                                                                 </div>
-                                                                <span className="text-zinc-400 group-hover:text-white truncate text-xs font-mono uppercase tracking-tight">
+                                                                <span className="text-gray-700 font-medium text-sm truncate">
                                                                     {guild.name}
                                                                 </span>
                                                             </button>
                                                         ))
                                                     ) : (
-                                                        <div className="p-4 text-center text-zinc-500 text-xs font-mono">NO SERVERS FOUND</div>
+                                                        <div className="p-4 text-center text-gray-400 text-xs">No servers found</div>
                                                     )}
                                                 </div>
                                             </motion.div>
@@ -398,7 +402,7 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
 
                             {/* Channel ID Input */}
                             <div className="space-y-2">
-                                <label className="block text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider">
+                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
                                     Source Channel ID <span className="text-red-500">*</span>
                                 </label>
                                 <input
@@ -409,22 +413,25 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                         validateChannel(e.target.value);
                                     }}
                                     className={cn(
-                                        "w-full bg-zinc-900 border text-white px-4 py-3 focus:outline-none transition-all font-mono text-sm placeholder:text-zinc-700 rounded-none",
+                                        "w-full bg-white border px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono text-sm placeholder:text-gray-400 rounded-lg text-gray-900",
                                         channelError
-                                            ? "border-red-900 focus:border-red-500"
-                                            : "border-zinc-800 focus:border-primary"
+                                            ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                                            : "border-gray-200 focus:border-primary"
                                     )}
                                     placeholder="123456789012345678"
                                 />
                                 {channelError && (
-                                    <p className="text-red-500 text-[10px] font-mono mt-1 uppercase">{channelError}</p>
+                                    <div className="flex items-center gap-1.5 mt-1.5 text-red-600">
+                                        <AlertCircle className="w-3 h-3" />
+                                        <p className="text-xs font-medium">{channelError}</p>
+                                    </div>
                                 )}
                             </div>
                         </div>
 
                         {/* 3. Target Configuration */}
                         <div className="space-y-2">
-                            <label className="block text-xs font-mono font-bold text-zinc-400 uppercase tracking-wider">
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
                                 Destination Webhook URL <span className="text-red-500">*</span>
                             </label>
                             <div className="flex gap-2">
@@ -436,42 +443,45 @@ export default function ModeSelector({ discordClientId }: ModeSelectorProps) {
                                         validateWebhook(e.target.value);
                                     }}
                                     className={cn(
-                                        "flex-1 bg-zinc-900 border text-white px-4 py-3 focus:outline-none transition-all font-mono text-sm placeholder:text-zinc-700 rounded-none",
+                                        "flex-1 bg-white border px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all font-mono text-sm placeholder:text-gray-400 rounded-lg text-gray-900",
                                         webhookError
-                                            ? "border-red-900 focus:border-red-500"
-                                            : "border-zinc-800 focus:border-primary"
+                                            ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                                            : "border-gray-200 focus:border-primary"
                                     )}
                                     placeholder="https://discord.com/api/webhooks/..."
                                 />
                                 <button
                                     type="button"
                                     onClick={handleTestConnection}
-                                    className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 transition-colors flex items-center gap-2 rounded-none font-mono text-xs uppercase"
+                                    className="px-4 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 transition-colors flex items-center gap-2 rounded-lg font-bold text-xs uppercase shadow-sm"
                                 >
-                                    <Send className="w-3 h-3" />
+                                    <Send className="w-3.5 h-3.5" />
                                     Test
                                 </button>
                             </div>
                             {webhookError && (
-                                <p className="text-red-500 text-[10px] font-mono mt-1 uppercase">{webhookError}</p>
+                                <div className="flex items-center gap-1.5 mt-1.5 text-red-600">
+                                    <AlertCircle className="w-3 h-3" />
+                                    <p className="text-xs font-medium">{webhookError}</p>
+                                </div>
                             )}
                         </div>
 
                         {/* 4. Action Buttons */}
-                        <div className="pt-6 flex items-center justify-end gap-4 border-t border-zinc-800">
+                        <div className="pt-6 flex items-center justify-end gap-3 border-t border-gray-100">
                             <button
                                 type="button"
-                                className="px-6 py-3 text-zinc-500 hover:text-white transition-colors font-mono text-xs uppercase tracking-wider border border-transparent hover:border-zinc-800"
+                                className="px-5 py-2.5 text-gray-500 hover:text-gray-900 transition-colors font-bold text-xs uppercase tracking-wider"
                             >
                                 Cancel
                             </button>
                             <button
                                 type="button"
                                 className={cn(
-                                    "px-8 py-3 font-bold text-black transition-all flex items-center gap-2 font-mono text-xs uppercase tracking-widest rounded-none",
+                                    "px-6 py-2.5 font-bold text-white transition-all flex items-center gap-2 text-xs uppercase tracking-widest rounded-lg shadow-sm hover:shadow-md active:scale-95",
                                     mode === "custom"
-                                        ? "bg-amber-500 hover:bg-amber-400"
-                                        : "bg-emerald-500 hover:bg-emerald-400"
+                                        ? "bg-amber-500 hover:bg-amber-600"
+                                        : "bg-emerald-600 hover:bg-emerald-700"
                                 )}
                             >
                                 <CheckCircle2 className="w-4 h-4" />

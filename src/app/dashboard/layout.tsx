@@ -33,7 +33,7 @@ export default async function DashboardLayout({
     const limit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.FREE;
 
     return (
-        <div className="min-h-screen bg-[#0B0F1A] text-white flex overflow-hidden">
+        <div className="min-h-screen bg-gray-50 text-gray-900 flex overflow-hidden font-sans">
             {/* Sidebar */}
             <Sidebar
                 usageCount={usageCount}
@@ -42,8 +42,10 @@ export default async function DashboardLayout({
             />
 
             {/* Main Content */}
-            <main className="flex-1 md:ml-72 p-8 overflow-y-auto h-screen custom-scrollbar">
-                {children}
+            <main className="flex-1 md:ml-64 p-8 overflow-y-auto h-screen">
+                <div className="max-w-7xl mx-auto">
+                    {children}
+                </div>
             </main>
         </div>
     );

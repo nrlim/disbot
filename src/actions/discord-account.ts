@@ -194,7 +194,8 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
     try {
         const token = decrypt(account.token);
         const res = await fetch(`https://discord.com/api/v9/guilds/${guildId}/channels`, {
-            headers: { Authorization: token }
+            headers: { Authorization: token },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
@@ -202,6 +203,7 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
         }
 
         const channels = await res.json();
+        console.log(`[getChannelsForGuild] Fetched ${channels.length} channels for guild ${guildId}`);
         // Filter for text and news channels (0: GUILD_TEXT, 5: GUILD_ANNOUNCEMENT)
         return channels
             .filter((c: any) => c.type === 0 || c.type === 5)
@@ -232,7 +234,8 @@ export async function getWebhooksForChannel(accountId: string, channelId: string
     try {
         const token = decrypt(account.token);
         const res = await fetch(`https://discord.com/api/v9/channels/${channelId}/webhooks`, {
-            headers: { Authorization: token }
+            headers: { Authorization: token },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
@@ -241,13 +244,23 @@ export async function getWebhooksForChannel(accountId: string, channelId: string
         }
 
         const webhooks = await res.json();
-        return webhooks.map((w: any) => ({
-            id: w.id,
-            name: w.name,
-            token: w.token,
-            url: `https://discord.com/api/webhooks/${w.id}/${w.token}`,
-            avatar: w.avatar
-        }));
+
+        if (!Array.isArray(webhooks)) {
+            console.error(`[getWebhooksForChannel] Unexpected response format:`, webhooks);
+            return { error: "Unexpected response from Discord" };
+        }
+
+        console.log(`[getWebhooksForChannel] Fetched ${webhooks.length} webhooks for channel ${channelId}`);
+
+        return webhooks
+            .filter((w: any) => w.token)
+            .map((w: any) => ({
+                id: w.id,
+                name: w.name,
+                token: w.token,
+                url: `https://discord.com/api/webhooks/${w.id}/${w.token}`,
+                avatar: w.avatar
+            }));
 
     } catch (e) {
         return { error: "Internal Error" };

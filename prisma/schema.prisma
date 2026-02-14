@@ -75,19 +75,20 @@ enum Plan {
   ELITE
 }
 
+
 model MirrorConfig {
   id                String       @id @default(cuid())
   
   // General Configuration
+  name              String?
   sourcePlatform    PlatformType @default(DISCORD)
   type              MirrorType   @default(CUSTOM_HOOK)
   active            Boolean      @default(true)
   status            String       @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
   
-
-  // Source Configuration
-  sourceGuildName   String?      // Optional: Friendly name for UI
-  sourceChannelId   String       // The ID of the channel/chat to watch (Universal)
+  // Source Configuration (Legacy / Group Level)
+  sourceGuildName   String?      // Optional: Friendly name for UI (Group Name?)
+  sourceChannelId   String?      // The ID of the channel/chat to watch (Legacy)
   
   // Discord Source Reference
   discordAccountId  String?      
@@ -114,6 +115,7 @@ model MirrorConfig {
   @@index([discordAccountId])
   @@index([telegramAccountId])
 }
+
 
 model DiscordAccount {
   id              String         @id @default(cuid())

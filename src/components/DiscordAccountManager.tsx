@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { Plus, Trash2, ShieldCheck, ShieldAlert, Loader2 } from "lucide-react";
+import { Plus, Trash2, ShieldCheck, ShieldAlert, Loader2, AlertCircle } from "lucide-react";
 import { addDiscordAccount, deleteDiscordAccount } from "@/actions/discord-account";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
 interface Account {
     id: string;
@@ -65,87 +66,63 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between">
-                <h3 className="text-sm font-mono font-bold text-zinc-400 uppercase tracking-widest">Linked Accounts</h3>
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Linked Accounts</h3>
                 <button
                     onClick={() => setIsAdding(!isAdding)}
-                    className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-primary hover:text-white transition-colors"
+                    className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors"
                 >
-                    <Plus className="w-3 h-3" />
+                    <Plus className="w-3.5 h-3.5" />
                     Add Account
                 </button>
             </div>
 
-            {/* Suggestion for Current Login */}
-            {currentUser && !isAdding && accounts.length < 3 && !accounts.some(a => a.username === currentUser.name) && (
-                <div className="p-3 border border-dashed border-zinc-700 bg-zinc-900/20 rounded-lg flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        {currentUser.image ? (
-                            <Image src={currentUser.image} width={32} height={32} alt="" className="rounded-full grayscale opacity-70" unoptimized />
-                        ) : (
-                            <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">
-                                {currentUser.name?.substring(0, 2).toUpperCase()}
-                            </div>
-                        )}
-                        <div>
-                            <p className="text-[10px] text-zinc-400 font-mono uppercase font-bold">Current Login: {currentUser.name}</p>
-                            <p className="text-[9px] text-zinc-600 font-mono">Link this account?</p>
-                        </div>
-                    </div>
-                    <button
-                        onClick={() => setIsAdding(true)}
-                        className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-bold uppercase tracking-wider rounded-md border border-zinc-700 transition-all"
-                    >
-                        Connect
-                    </button>
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 gap-3">
+            {/* Account List */}
+            <div className="space-y-3">
                 {accounts.map(acc => (
-                    <div key={acc.id} className="flex items-center justify-between p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg group hover:border-zinc-700 transition-all">
+                    <div key={acc.id} className="flex items-center justify-between p-3 bg-white border border-gray-200 rounded-lg group hover:border-gray-300 hover:shadow-sm transition-all">
                         <div className="flex items-center gap-3">
                             <div className="relative">
                                 {acc.avatar ? (
                                     <Image
                                         src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`}
-                                        width={32}
-                                        height={32}
+                                        width={40}
+                                        height={40}
                                         alt={acc.username}
-                                        className="rounded-full ring-2 ring-zinc-800"
+                                        className="rounded-full ring-2 ring-gray-100"
                                         unoptimized
                                     />
                                 ) : (
-                                    <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[10px] text-zinc-500 font-bold">
+                                    <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-400">
                                         {acc.username.substring(0, 2).toUpperCase()}
                                     </div>
                                 )}
-                                <div className="absolute -bottom-0.5 -right-0.5 bg-zinc-950 rounded-full p-0.5">
+                                <div className="absolute -bottom-0.5 -right-0.5 bg-white rounded-full p-0.5 ring-1 ring-gray-100">
                                     {acc.valid ? (
-                                        <ShieldCheck className="w-3 h-3 text-emerald-500 fill-emerald-500/20" />
+                                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
                                     ) : (
-                                        <ShieldAlert className="w-3 h-3 text-red-500 fill-red-500/20" />
+                                        <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
                                     )}
                                 </div>
                             </div>
                             <div>
-                                <p className="text-xs font-mono font-bold text-zinc-200">{acc.username}</p>
-                                <p className="text-[10px] text-zinc-500 font-mono">ID: {acc.discordId}</p>
+                                <p className="text-sm font-bold text-gray-900">{acc.username}</p>
+                                <p className="text-[10px] text-gray-400 font-mono">ID: {acc.discordId}</p>
                             </div>
                         </div>
                         <button
                             onClick={() => handleDelete(acc.id)}
-                            disabled={isDeleting === acc.id}
-                            className="p-2 text-zinc-600 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                            disabled={!!isDeleting}
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 disabled:opacity-50"
                         >
-                            {isDeleting === acc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            {isDeleting === acc.id ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <Trash2 className="w-4 h-4" />}
                         </button>
                     </div>
                 ))}
 
                 {accounts.length === 0 && !isAdding && (
-                    <p className="text-center py-6 text-[10px] font-mono text-zinc-600 border border-dashed border-zinc-800 rounded-lg">
-                        No accounts linked.
-                    </p>
+                    <div className="text-center py-6 border border-dashed border-gray-200 rounded-lg bg-gray-50/50">
+                        <p className="text-xs text-gray-500">No accounts linked yet.</p>
+                    </div>
                 )}
             </div>
 
@@ -157,41 +134,62 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
                         exit={{ opacity: 0, height: 0 }}
                         className="overflow-hidden"
                     >
-                        <div className="p-4 bg-zinc-900/30 border border-zinc-800 rounded-lg space-y-3 mt-3">
-                            <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wide">Connect New Account</h4>
+                        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4 mt-2">
+                            <div className="flex items-center justify-between">
+                                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wide">Connect New Account</h4>
+                                <button
+                                    onClick={() => setIsAdding(false)}
+                                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                                >
+                                    <span className="sr-only">Close</span>
+                                    <Plus className="w-4 h-4 rotate-45" />
+                                </button>
+                            </div>
+
                             <div className="space-y-1">
+                                <label className="text-xs font-semibold text-gray-500">User Token</label>
                                 <input
                                     type="password"
                                     value={token}
                                     onChange={(e) => setToken(e.target.value)}
-                                    placeholder="Paste Discord Token here..."
-                                    className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-3 py-2 text-xs font-mono text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary rounded-md"
+                                    placeholder="Paste your Discord User Token"
+                                    className="w-full bg-white border border-gray-300 px-3 py-2 text-sm text-gray-900 rounded-lg outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all placeholder:text-gray-400"
                                 />
-                                <p className="text-[9px] text-zinc-500 font-mono">
-                                    Token is encrypted and stored securely. Max 3 accounts.
-                                </p>
-                            </div>
-                            <div className="p-2 bg-blue-900/20 border border-blue-900/50 rounded flex gap-2">
-                                <ShieldAlert className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />
-                                <p className="text-[9px] text-blue-300 font-mono leading-relaxed">
-                                    <strong>Why manual?</strong> The &quot;Login&quot; button uses a safe OAuth token. Mirroring requires your full <strong>User Token</strong> (Self-Bot), which Discord never shares automatically.
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                    Your token is encrypted and stored securely. We only use it to mirror messages.
                                 </p>
                             </div>
 
-                            {error && <p className="text-[10px] text-red-500 font-mono">{error}</p>}
-                            <div className="flex justify-end gap-2">
+                            <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex gap-3 items-start">
+                                <AlertCircle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                                <div className="space-y-1">
+                                    <p className="text-xs font-semibold text-blue-900">Why do I need to provide a token?</p>
+                                    <p className="text-[11px] text-blue-800/80 leading-relaxed">
+                                        Standard bots can't read messages from other servers/channels you don't own. Mirroring as a user requires your personal token.
+                                    </p>
+                                </div>
+                            </div>
+
+                            {error && (
+                                <div className="p-2 bg-red-50 border border-red-100 text-red-600 text-xs rounded-lg flex items-center gap-2">
+                                    <ShieldAlert className="w-3.5 h-3.5" />
+                                    {error}
+                                </div>
+                            )}
+
+                            <div className="flex justify-end gap-3 pt-2">
                                 <button
                                     onClick={() => setIsAdding(false)}
-                                    className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500 hover:text-zinc-300 transition-colors"
+                                    className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 transition-colors"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={handleAdd}
                                     disabled={isLoading || !token}
-                                    className="px-3 py-1.5 bg-primary/10 border border-primary/50 hover:bg-primary/20 text-primary text-[10px] font-bold uppercase tracking-wider rounded-md transition-all flex items-center gap-2"
+                                    className="px-4 py-2 bg-primary hover:bg-primary/90 text-white text-xs font-semibold rounded-lg shadow-sm transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                                 >
-                                    {isLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {isLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                     Verify & Add
                                 </button>
                             </div>
@@ -199,6 +197,6 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
                     </motion.div>
                 )}
             </AnimatePresence>
-        </div >
+        </div>
     );
 }

@@ -21,7 +21,7 @@ const Logo = ({ className, classNameText, showText = true }: LogoProps) => {
             </div>
 
             {showText && (
-                <span className={cn("text-xl font-bold tracking-tight text-white", classNameText)}>
+                <span className={cn("text-xl font-bold tracking-tight text-gray-900", classNameText)}>
                     DISBOT
                 </span>
             )}

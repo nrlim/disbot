@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal } from "lucide-react";
+import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal, ArrowRight, UserPlus, Trash2, Globe, MessageSquare, Monitor, LayoutGrid, ChevronLeft } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
 import Image from "next/image";
@@ -54,17 +54,20 @@ const webhookSchema = z.string().url("Invalid Webhook URL").startsWith("https://
 const channelIdSchema = z.string().min(17, "Invalid Channel ID").regex(/^\d+$/, "Channel ID must be numeric");
 
 export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, accounts }: EditMirrorModalProps) {
+    // Flow State
+    const [step, setStep] = useState<1 | 2>(1);
+    const [mirrorTitle, setMirrorTitle] = useState("");
+
     // Form State
     const [sourcePlatform, setSourcePlatform] = useState<'DISCORD' | 'TELEGRAM'>('DISCORD');
     const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
-    const [manualGuildName, setManualGuildName] = useState(""); // For Telegram source name
     const [channelId, setChannelId] = useState("");
     const [webhookUrl, setWebhookUrl] = useState("");
     const [userToken, setUserToken] = useState("");
     const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
     const [useSavedAccount, setUseSavedAccount] = useState(true);
 
-    // Target Lookup State - Enforce CHANNEL mode
+    // Target Lookup State
     const [targetMode, setTargetMode] = useState<'CHANNEL'>('CHANNEL');
     const [targetGuild, setTargetGuild] = useState<Guild | null>(null);
     const [targetChannels, setTargetChannels] = useState<Channel[]>([]);
@@ -92,11 +95,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [telegramChatId, setTelegramChatId] = useState("");
     const [telegramTopicId, setTelegramTopicId] = useState("");
 
-    const [showUserToken, setShowUserToken] = useState(false);
-    const [showTelegramSession, setShowTelegramSession] = useState(false);
-    const [showGuide, setShowGuide] = useState(false);
-    const [showTelegramGuide, setShowTelegramGuide] = useState(false);
-
     // Telegram Auth State
     const [telegramPhone, setTelegramPhone] = useState("");
     const [phoneCodeHash, setPhoneCodeHash] = useState("");
@@ -123,26 +121,24 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [error, setError] = useState<string | null>(null);
     const [authError, setAuthError] = useState(false);
 
-    // Fetch Guilds when modal opens
+    // Initialize Modal
     useEffect(() => {
         if (isOpen) {
-            // Initialize local accounts from prop
             setLocalAccounts(accounts || []);
             setIsAddingAccount(false);
             setNewAccountToken("");
 
-            // If editing, setup initial state
             if (config) {
+                // Edit Mode
+                setStep(2);
+                setMirrorTitle(config.sourceGuildName || "");
                 setSourcePlatform(config.sourcePlatform || 'DISCORD');
                 setWebhookUrl(config.targetWebhookUrl || "");
 
                 if (config.sourcePlatform === 'TELEGRAM') {
-                    setManualGuildName(config.sourceGuildName || "");
-                    // For Telegram, the session string is passed via userToken prop (decrypted by page)
                     setTelegramSession(config.telegramSession || config.userToken || "");
-                    // Chat ID is now stored in sourceChannelId
                     setTelegramChatId(config.telegramChatId || config.sourceChannelId || "");
-                    setTelegramTopicId(""); // Feature removed from schema
+                    setTelegramTopicId("");
                 } else {
                     setChannelId(config.sourceChannelId || "");
                     if (config.discordAccountId) {
@@ -153,15 +149,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                         setUseSavedAccount(false);
                     }
                 }
-
                 setIsBulkMode(false);
             } else {
-                // Reset if adding new
-                // Check localStorage for draft session
+                // Create Mode
+                setStep(1);
+                setMirrorTitle("");
                 const draftSession = localStorage.getItem("draft_telegram_session");
                 if (draftSession) {
                     setTelegramSession(draftSession);
-                    setManualGuildName("");
                 } else {
                     setTelegramSession("");
                 }
@@ -172,41 +167,46 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setUserToken("");
                 setTelegramChatId("");
                 setTelegramTopicId("");
-                setTelegramTopicId("");
                 setSelectedGuild(null);
                 setChannels([]);
                 setBulkText("");
                 setSelectedAccountId(null);
-                setUseSavedAccount(true); // Default to saved account
+                setUseSavedAccount(true);
+
+                // Reset Target/Destination State
+                setTargetGuild(null);
+                setTargetChannelId("");
+                setSelectedWebhook(null);
+                setWebhooks([]);
+                setWebhookError("");
+                setTargetSearchQuery("");
+                setTargetChannelSearchQuery("");
             }
         }
     }, [isOpen, config, accounts]);
 
-    // Fetch Guilds when account changes or mode changes
+    // Fetch Guilds
+
     useEffect(() => {
-        if (!isOpen || !sourcePlatform || sourcePlatform !== 'DISCORD') return;
+        if (!isOpen) return;
 
         const fetchGuilds = async () => {
             setIsLoadingGuilds(true);
             setAuthError(false);
-            setGuilds([]); // Clear previous
+            setGuilds([]);
 
             try {
                 let data = [];
                 if (useSavedAccount && selectedAccountId) {
-                    // Fetch for specific account
                     const res = await getGuildsForAccount(selectedAccountId);
-                    if (res.error) {
-                        // setAuthError(true); // Maybe show specific error?
-                    } else {
+                    if (!res.error) {
                         data = res;
                     }
                 } else if (!useSavedAccount) {
-                    // Fetch for login session (Manual mode fallback or default)
                     const res = await fetch("/api/discord/guilds?all=true");
                     if (res.status === 401) {
                         setAuthError(true);
-                        return; // Stop here
+                        return;
                     }
                     if (res.ok) {
                         data = await res.json();
@@ -215,7 +215,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
                 if (data && Array.isArray(data)) {
                     setGuilds(data);
-                    // If editing DISCORD, try to find the guild object by name
                     if (config && (!config.sourcePlatform || config.sourcePlatform === 'DISCORD')) {
                         const found = data.find((g: Guild) => g.name === config.sourceGuildName);
                         if (found) setSelectedGuild(found);
@@ -228,16 +227,15 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             }
         };
 
-        // Debounce? No, just run on dependency change
         if (useSavedAccount && !selectedAccountId) {
-            setGuilds([]); // No account selected
+            setGuilds([]);
         } else {
             fetchGuilds();
         }
 
     }, [isOpen, sourcePlatform, useSavedAccount, selectedAccountId, config]);
 
-    // Fetch Channels when Guild is selected
+    // Fetch Channels
     useEffect(() => {
         if (!isOpen || !selectedGuild || !selectedAccountId || !useSavedAccount) {
             setChannels([]);
@@ -248,12 +246,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             setIsLoadingChannels(true);
             try {
                 const res = await getChannelsForGuild(selectedAccountId, selectedGuild.id);
-                if (res.error) {
-                    // Handle error silently or show toast
-                    console.error(res.error);
-                } else {
+                if (!res.error) {
                     setChannels(res);
-                    // If editing, check if current channelId exists in list (optional validation)
                 }
             } catch (e) {
                 console.error(e);
@@ -265,12 +259,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         fetchChannels();
     }, [selectedGuild, selectedAccountId, useSavedAccount, isOpen]);
 
-    // Original Guild Fetch Effect (Removed/Replaced above)
-    /*
-    useEffect(() => {
-    ...
-    }, [isOpen, config]);
-    */
 
     // Auth Handlers
     const handleSendCode = async () => {
@@ -314,13 +302,12 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             } else if (result.sessionString) {
                 setTelegramSession(result.sessionString);
                 localStorage.setItem("draft_telegram_session", result.sessionString);
-                // Auto-fill chatId instruction if possible or just let user do it
             }
         } catch (e: any) {
             console.error(e);
             if (e.message && (e.message.includes("2FA Password Required") || e.message.includes("SESSION_PASSWORD_NEEDED"))) {
                 setAuthStep('PASSWORD');
-                setError(null); // Clear error as we are moving to next step
+                setError(null);
             } else {
                 setError("Login failed: " + (e.message || "Unknown error"));
             }
@@ -339,21 +326,13 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             if (res.error) {
                 setAddAccountError(res.error);
             } else if (res.success && res.account) {
-                // Success
                 const newAcc = res.account;
-
-                // Update local list
                 setLocalAccounts(prev => {
-                    // Check if exists
                     const exists = prev.find(a => a.id === newAcc.id);
                     if (exists) return prev.map(a => a.id === newAcc.id ? newAcc : a);
                     return [newAcc, ...prev];
                 });
-
-                // Select the new account
                 setSelectedAccountId(newAcc.id);
-
-                // Close add mode
                 setIsAddingAccount(false);
                 setNewAccountToken("");
             }
@@ -367,16 +346,18 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     // --- Target Logic ---
     useEffect(() => {
         if (targetMode === 'CHANNEL' && targetGuild && selectedAccountId) {
+            console.log("Fetching channels for guild:", targetGuild.name, "Account:", selectedAccountId);
             const fetchCh = async () => {
                 setIsLoadingTargetChannels(true);
                 try {
                     const res = await getChannelsForGuild(selectedAccountId, targetGuild.id);
                     if (!res.error) setTargetChannels(res);
-                } catch (e) { } finally { setIsLoadingTargetChannels(false); }
+                } catch (e) { console.error("Fetch Error:", e); }
+                finally { setIsLoadingTargetChannels(false); }
             };
             fetchCh();
         } else {
-            setTargetChannels([]);
+            console.log("Target Channel fetch skipped:", { targetMode, targetGuild, selectedAccountId });
         }
     }, [targetGuild, targetMode, selectedAccountId]);
 
@@ -387,21 +368,30 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setWebhookError("");
                 try {
                     const res = await getWebhooksForChannel(selectedAccountId, targetChannelId);
-                    if (res.error) {
-                        // setWebhookError(res.error);
+                    if ('error' in res) {
+                        setWebhookError(res.error as string);
                         setWebhooks([]);
                     } else {
                         setWebhooks(res);
-                        // Auto-select if only one? No, let user choose
                     }
                 } catch (e) { setWebhookError("Failed to fetch"); }
                 finally { setIsLoadingWebhooks(false); }
             };
             fetchWh();
+            console.log("Fetching webhooks for channel:", targetChannelId);
         } else {
             setWebhooks([]);
         }
     }, [targetChannelId, targetMode, selectedAccountId]);
+
+    // Reset Target Channel when Guild changes to prevent stale state
+    useEffect(() => {
+        setTargetChannelId("");
+        setWebhooks([]);
+        setWebhookError("");
+        setTargetChannelSearchQuery("");
+        setTargetSearchQuery("");
+    }, [targetGuild]);
 
     const handleCreateWebhook = async () => {
         if (!targetChannelId || !selectedAccountId) return;
@@ -414,7 +404,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             } else if (res.success && res.webhook) {
                 setWebhooks(prev => [...prev, res.webhook]);
                 setSelectedWebhook(res.webhook);
-                setWebhookUrl(res.webhook.url); // Auto fill
+                setWebhookUrl(res.webhook.url);
             }
         } catch (e) {
             setWebhookError("Failed to create webhook");
@@ -435,37 +425,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
         const formData = new FormData();
 
-        // --- BULK MODE SUBMISSION ---
-        // Bulk mode currently supports only Discord via the text parser heuristic
-        if (isBulkMode) {
-            if (!bulkText.trim()) { setError("Please enter configuration data"); setIsSubmitting(false); return; }
-            if (!userToken) { setError("User Token is required for all mirrors"); setIsSubmitting(false); return; }
-
-            formData.append("bulkData", bulkText);
-            formData.append("userToken", userToken);
-            if (selectedGuild) formData.append("defaultGuildName", selectedGuild.name);
-
-            try {
-                const result: any = await bulkCreateMirrorConfig(null, formData);
-                if (result.error) {
-                    setError(result.error);
-                } else {
-                    onSuccess();
-                    onClose();
-                    setBulkText("");
-                    setUserToken("");
-                }
-            } catch (e) {
-                setError("Bulk creation failed. Check format.");
-            } finally {
-                setIsSubmitting(false);
-            }
-            return;
-        }
-
-        // --- STANDARD MODE SUBMISSION ---
-
-        // Common Validation
         const webhookVal = webhookSchema.safeParse(webhookUrl);
         if (!webhookVal.success) { setError(webhookVal.error.issues[0].message); setIsSubmitting(false); return; }
 
@@ -481,7 +440,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             if (useSavedAccount && !selectedAccountId) { setError("Please select an account or switch to Manual Token"); setIsSubmitting(false); return; }
             if (!useSavedAccount && !config && !userToken) { setError("User Token is required"); setIsSubmitting(false); return; }
 
-            formData.append("sourceGuildName", selectedGuild.name);
+            // Use the Manual Title if provided, otherwise default to Guild Name
+            const finalSourceGuildName = mirrorTitle.trim() || selectedGuild.name;
+            formData.append("sourceGuildName", finalSourceGuildName);
             formData.append("sourceChannelId", channelId);
 
             if (useSavedAccount && selectedAccountId) {
@@ -490,12 +451,13 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 formData.append("userToken", userToken);
             }
         } else {
-            // TELEGRAM
-            if (!manualGuildName.trim()) { setError("Please enter a source name (e.g. Channel Name)"); setIsSubmitting(false); return; }
+            // Telegram
+            const finalSourceName = mirrorTitle.trim();
+            if (!finalSourceName) { setError("Please provide a name for this mirror"); setIsSubmitting(false); return; }
             if (!telegramChatId.trim()) { setError("Telegram Chat ID is required"); setIsSubmitting(false); return; }
             if (!config && !telegramSession) { setError("Telegram Session is required"); setIsSubmitting(false); return; }
 
-            formData.append("sourceGuildName", manualGuildName);
+            formData.append("sourceGuildName", finalSourceName);
             formData.append("telegramSession", telegramSession);
             formData.append("telegramChatId", telegramChatId);
             if (telegramTopicId) formData.append("telegramTopicId", telegramTopicId);
@@ -516,23 +478,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             } else {
                 onSuccess();
                 onClose();
-                // Reset form
-                onSuccess();
-                onClose();
-                // Reset form
-                setSelectedGuild(null);
-                setChannels([]);
-                setChannelSearchQuery("");
-                setChannelId("");
-                setWebhookUrl("");
-                setWebhookUrl("");
-                setUserToken("");
-                setSelectedAccountId(null);
-                setTelegramSession("");
-                setTelegramChatId("");
-                setTelegramTopicId("");
-                // Clear draft
-                localStorage.removeItem("draft_telegram_session");
             }
         } catch (e) {
             setError("Something went wrong. Please try again.");
@@ -541,27 +486,28 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     };
 
-    const filteredGuilds = guilds.filter(g =>
-        g.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
-    const filteredChannels = channels.filter(c =>
-        c.name.toLowerCase().includes(channelSearchQuery.toLowerCase())
-    );
+    // Filter Logic
+    const filteredGuilds = guilds.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    const filteredChannels = channels.filter(c => c.name.toLowerCase().includes(channelSearchQuery.toLowerCase()));
+    const filteredTargetGuilds = guilds.filter(g => g.name.toLowerCase().includes(targetSearchQuery.toLowerCase()));
+    const filteredTargetChannels = targetChannels.filter(c => c.name.toLowerCase().includes(targetChannelSearchQuery.toLowerCase()));
 
     const selectedChannel = channels.find(c => c.id === channelId);
-
-    const filteredTargetGuilds = guilds.filter(g =>
-        g.name.toLowerCase().includes(targetSearchQuery.toLowerCase())
-    );
-
-    const filteredTargetChannels = targetChannels.filter(c =>
-        c.name.toLowerCase().includes(targetChannelSearchQuery.toLowerCase())
-    );
-
     const selectedTargetChannel = targetChannels.find(c => c.id === targetChannelId);
-
     const isEdit = !!config;
+
+    // Step Logic
+    const nextStep = () => {
+        if (step === 1) {
+            if (!mirrorTitle.trim()) {
+                setError("Please provide a name for this mirror");
+                return;
+            }
+            setError(null);
+            setStep(2);
+        }
+    }
+    const prevStep = () => setStep(1);
 
     return (
         <AnimatePresence>
@@ -572,785 +518,531 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50"
+                        className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50"
                     />
 
                     <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none p-4">
                         <motion.div
-                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            initial={{ opacity: 0, scale: 0.98, y: 10 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            transition={{ duration: 0.15, ease: "easeOut" }}
-                            className="bg-zinc-950 border border-zinc-800 w-full max-w-2xl shadow-2xl pointer-events-auto flex flex-col max-h-[90vh]"
+                            exit={{ opacity: 0, scale: 0.98, y: 10 }}
+                            transition={{ duration: 0.2, ease: "easeOut" }}
+                            className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-2xl pointer-events-auto flex flex-col max-h-[90vh]"
                         >
                             {/* Header */}
-                            <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+                            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-lg font-mono font-bold text-white uppercase tracking-tight flex items-center gap-2">
-                                        <Terminal className="w-5 h-5 text-primary" />
-                                        {isEdit ? "Reconfigure Node" : "Initialize Node"}
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                        {step === 1 ? (
+                                            <>
+                                                <Layers className="w-5 h-5 text-gray-400" />
+                                                Select Platform
+                                            </>
+                                        ) : (
+                                            <>
+                                                {sourcePlatform === 'DISCORD' ? <Monitor className="w-5 h-5 text-gray-400" /> : <Signal className="w-5 h-5 text-blue-500" />}
+                                                Configure Mirror
+                                            </>
+                                        )}
                                     </h2>
-                                    <p className="text-[10px] text-zinc-500 font-mono mt-1 uppercase tracking-wider">
-                                        {isEdit ? "Update existing parameters" : "Establish new mirror connection"}
+                                    <p className="text-sm text-gray-500 mt-0.5">
+                                        {step === 1 ? "Choose your source and target platforms" : `Setup your ${sourcePlatform === 'DISCORD' ? 'Discord' : 'Telegram'} connection details`}
                                     </p>
                                 </div>
-                                <div className="flex items-center gap-4">
-                                    {/* isBulkMode button removed */}
-                                    <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
-                                        <X className="w-5 h-5" />
-                                    </button>
-                                </div>
+                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-full">
+                                    <X className="w-5 h-5" />
+                                </button>
                             </div>
 
                             {/* Body */}
-                            <div className="p-8 overflow-y-auto space-y-8 bg-zinc-950">
-
-                                {/* Platform Selector */}
-                                {!isBulkMode && (
-                                    <div className="grid grid-cols-2 gap-2 p-1 bg-zinc-900/50 rounded-lg border border-zinc-800">
-                                        <button
-                                            onClick={() => setSourcePlatform('DISCORD')}
-                                            className={cn(
-                                                "py-2 text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-all",
-                                                sourcePlatform === 'DISCORD'
-                                                    ? "bg-zinc-800 text-white shadow-sm"
-                                                    : "text-zinc-500 hover:text-zinc-300"
-                                            )}
+                            <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
+                                <AnimatePresence mode="wait">
+                                    {step === 1 ? (
+                                        <motion.div
+                                            key="step1"
+                                            initial={{ opacity: 0, x: -10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            exit={{ opacity: 0, x: -10 }}
+                                            className="space-y-6"
                                         >
-                                            Discord
-                                        </button>
-                                        <button
-                                            onClick={() => setSourcePlatform('TELEGRAM')}
-                                            className={cn(
-                                                "py-2 text-xs font-mono font-bold uppercase tracking-wider rounded-md transition-all",
-                                                sourcePlatform === 'TELEGRAM'
-                                                    ? "bg-sky-900/40 text-sky-200 border border-sky-800/50 shadow-sm"
-                                                    : "text-zinc-500 hover:text-zinc-300"
-                                            )}
-                                        >
-                                            Telegram
-                                        </button>
-                                    </div>
-                                )}
-
-                                {/* Info Box - Warning */}
-                                <div className="p-3 bg-amber-950/20 border border-amber-900/50 flex gap-3 items-start">
-                                    <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                                    <div>
-                                        <strong className="text-amber-500 text-xs font-mono block mb-1 uppercase tracking-wide">Sensitive Credential</strong>
-                                        <p className="text-[10px] text-amber-500/80 font-mono leading-relaxed">
-                                            Your Token is required for the engine to read messages. It is encrypted at rest using AES-256-GCM.
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <form id="mirror-form" onSubmit={handleSubmit} className="space-y-6">
-
-                                    {/* --- DYNAMIC CONTENT --- */}
-                                    {isBulkMode ? (
-                                        <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                                            {/* Bulk User Token */}
-                                            <div className="space-y-2">
-                                                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Discord User Token (Applied to All)</label>
-                                                <div className="relative">
-                                                    <input
-                                                        type={showUserToken ? "text" : "password"}
-                                                        value={userToken}
-                                                        onChange={(e) => setUserToken(e.target.value)}
-                                                        className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm pr-10"
-                                                        placeholder="OTMz..."
-                                                        autoComplete="off"
-                                                    />
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setShowUserToken(!showUserToken)}
-                                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
+                                            <div className="space-y-4">
+                                                <label className="text-sm font-semibold text-gray-900">Choose Mirror Type</label>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                    <div
+                                                        onClick={() => setSourcePlatform('DISCORD')}
+                                                        className={cn(
+                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                            sourcePlatform === 'DISCORD' ? "border-primary bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200"
+                                                        )}
                                                     >
-                                                        {showUserToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <div className="flex justify-between items-center">
-                                                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Bulk Configuration Data</label>
-                                                    <span className="text-[10px] text-zinc-600 font-mono">Format: ChannelID | WebhookURL</span>
-                                                </div>
-                                                <textarea
-                                                    value={bulkText}
-                                                    onChange={(e) => setBulkText(e.target.value)}
-                                                    className="w-full h-48 bg-zinc-950 border border-zinc-700 hover:border-zinc-500 p-4 text-zinc-300 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-xs leading-relaxed resize-none"
-                                                    placeholder={`123456789012345678 https://discord.com/api/webhooks/...\n987654321098765432 https://discord.com/api/webhooks/...`}
-                                                />
-                                                <p className="text-[10px] text-zinc-500 font-mono">
-                                                    Paste one configuration per line. The system automatically detects Channel IDs and Webhook URLs.
-                                                </p>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-
-                                            {/* DISCORD CONFIG */}
-                                            {sourcePlatform === 'DISCORD' && (
-                                                <>
-                                                    {/* Account Selection Mode (Removed) */}
-                                                    {/* Tabs removed as requested. We default to Saved Account logic. Manual tokens should be added as accounts. */}
-                                                    {false && (
-                                                        <div className="flex bg-zinc-900 p-1 rounded-md mb-4">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => { setUseSavedAccount(true); setSelectedGuild(null); }}
-                                                                className={cn("flex-1 text-[10px] font-bold uppercase py-1.5 rounded transition-all", useSavedAccount ? "bg-zinc-800 text-white shadow" : "text-zinc-500 hover:text-zinc-300")}
-                                                            >
-                                                                Saved Account
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => { setUseSavedAccount(false); setSelectedGuild(null); }}
-                                                                className={cn("flex-1 text-[10px] font-bold uppercase py-1.5 rounded transition-all", !useSavedAccount ? "bg-zinc-800 text-white shadow" : "text-zinc-500 hover:text-zinc-300")}
-                                                            >
-                                                                Manual Token
-                                                            </button>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Saved Account Select */}
-                                                    {useSavedAccount && (
-                                                        <div className="space-y-2">
-                                                            <div className="flex items-center justify-between">
-                                                                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Select Account</label>
-                                                                {!isAddingAccount && localAccounts.length < 3 && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setIsAddingAccount(true)}
-                                                                        className="text-[9px] font-bold text-primary uppercase hover:underline"
-                                                                    >
-                                                                        + Link New
-                                                                    </button>
-                                                                )}
+                                                        <div className="flex items-center gap-3 mb-3">
+                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                <Monitor className="w-5 h-5" />
                                                             </div>
-
-                                                            {/* Add Account Inline Form */}
-                                                            {isAddingAccount && (
-                                                                <div className="p-3 border border-zinc-700 bg-zinc-900/50 rounded space-y-2 mb-2">
-                                                                    <div className="flex justify-between items-center">
-                                                                        <span className="text-[10px] font-bold text-white uppercase">Link Account</span>
-                                                                        <button type="button" onClick={() => setIsAddingAccount(false)}><X className="w-3 h-3 text-zinc-500" /></button>
-                                                                    </div>
-                                                                    <input
-                                                                        type="password"
-                                                                        value={newAccountToken}
-                                                                        onChange={(e) => setNewAccountToken(e.target.value)}
-                                                                        placeholder="Paste User Token..."
-                                                                        className="w-full bg-zinc-950 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-200 outline-none focus:border-primary rounded"
-                                                                    />
-                                                                    {addAccountError && <p className="text-[9px] text-red-500 font-mono">{addAccountError}</p>}
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={handleAddNewAccount}
-                                                                        disabled={isAddingAccountLoading || !newAccountToken}
-                                                                        className="w-full py-1 bg-primary/20 hover:bg-primary/30 text-primary text-[10px] font-bold uppercase rounded border border-primary/30 flex justify-center gap-2"
-                                                                    >
-                                                                        {isAddingAccountLoading && <Loader2 className="w-3 h-3 animate-spin" />}
-                                                                        Verify & Link
-                                                                    </button>
-                                                                </div>
-                                                            )}
-
-                                                            {localAccounts && localAccounts.length > 0 ? (
-                                                                <div className="grid grid-cols-1 gap-2">
-                                                                    {localAccounts.map((acc: any) => (
-                                                                        <div
-                                                                            key={acc.id}
-                                                                            onClick={() => setSelectedAccountId(acc.id)}
-                                                                            className={cn(
-                                                                                "flex items-center gap-3 p-3 border rounded cursor-pointer transition-all",
-                                                                                selectedAccountId === acc.id ? "bg-primary/10 border-primary" : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
-                                                                            )}
-                                                                        >
-                                                                            {acc.avatar ? (
-                                                                                <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={32} height={32} alt="" className="rounded-full" unoptimized />
-                                                                            ) : (
-                                                                                <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-bold text-zinc-500">
-                                                                                    {acc.username[0]}
-                                                                                </div>
-                                                                            )}
-                                                                            <div className="flex-1">
-                                                                                <div className="text-xs font-bold text-white font-mono">{acc.username}</div>
-                                                                                <div className="text-[10px] text-zinc-500 font-mono">ID: {acc.discordId}</div>
-                                                                            </div>
-                                                                            {selectedAccountId === acc.id && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            ) : (
-                                                                !isAddingAccount && (
-                                                                    <div className="p-4 border border-dashed border-zinc-800 text-center">
-                                                                        <p className="text-xs text-zinc-500 font-mono mb-2">No linked accounts found.</p>
-                                                                        <button type="button" onClick={() => setIsAddingAccount(true)} className="text-primary text-xs font-bold hover:underline">Link an account now</button>
-                                                                    </div>
-                                                                )
-                                                            )}
+                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                <Monitor className="w-5 h-5" />
+                                                            </div>
                                                         </div>
-                                                    )}
-
-
-
-                                                    {/* Source Guild Selector */}
-                                                    <div className="space-y-2 relative">
-                                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Source Server</label>
-                                                        <div className="relative">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setIsGuildDropdownOpen(!isGuildDropdownOpen)}
-                                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 flex items-center justify-between text-left transition-colors focus:border-primary outline-none"
-                                                            >
-                                                                {selectedGuild ? (
-                                                                    <div className="flex items-center gap-2 truncate">
-                                                                        {selectedGuild.icon ? (
-                                                                            <Image src={selectedGuild.icon} width={20} height={20} alt="" className="rounded-none ring-1 ring-zinc-800" unoptimized />
-                                                                        ) : (
-                                                                            <div className="w-5 h-5 bg-zinc-800 flex items-center justify-center text-[8px] text-zinc-400 font-bold">{selectedGuild.name.substring(0, 2)}</div>
-                                                                        )}
-                                                                        <span className="text-zinc-200 truncate font-mono text-sm">{selectedGuild.name}</span>
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className="text-zinc-600 text-sm font-mono">SELECT_SOURCE_NAME...</span>
-                                                                )}
-                                                                <ChevronDown className="w-4 h-4 text-zinc-600" />
-                                                            </button>
-
-                                                            <AnimatePresence>
-                                                                {isGuildDropdownOpen && (
-                                                                    <motion.div
-                                                                        initial={{ opacity: 0, y: -5 }}
-                                                                        animate={{ opacity: 1, y: 0 }}
-                                                                        exit={{ opacity: 0, y: -5 }}
-                                                                        className="absolute z-30 top-full left-0 right-0 mt-1 bg-zinc-950 border border-zinc-700 shadow-xl max-h-60 flex flex-col"
-                                                                    >
-                                                                        {(!selectedAccountId && useSavedAccount) ? (
-                                                                            // Custom Alert Component
-                                                                            <div className="p-4 flex flex-col items-center justify-center text-center space-y-3">
-                                                                                <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
-                                                                                    <ShieldAlert className="w-5 h-5 text-amber-500" />
-                                                                                </div>
-                                                                                <div>
-                                                                                    <h4 className="text-xs font-bold text-white font-mono uppercase">Profile Required</h4>
-                                                                                    <p className="text-[10px] text-zinc-500 font-mono mt-1 px-4">
-                                                                                        Please select or link a Discord account to fetch available servers.
-                                                                                    </p>
-                                                                                </div>
-                                                                                <button
-                                                                                    type="button"
-                                                                                    onClick={() => { setIsGuildDropdownOpen(false); }}
-                                                                                    className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-bold font-mono uppercase tracking-wider rounded border border-zinc-700"
-                                                                                >
-                                                                                    Dismiss
-                                                                                </button>
-                                                                            </div>
-                                                                        ) : (
-                                                                            <>
-                                                                                <div className="p-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">
-                                                                                    <div className="relative">
-                                                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600" />
-                                                                                        <input
-                                                                                            type="text"
-                                                                                            value={searchQuery}
-                                                                                            onChange={(e) => setSearchQuery(e.target.value)}
-                                                                                            className="w-full bg-zinc-900/50 text-xs text-zinc-200 pl-9 pr-3 py-2 border border-zinc-800 outline-none focus:border-zinc-600 transition-colors font-mono"
-                                                                                            placeholder="FILTER_SERVERS..."
-                                                                                            autoFocus
-                                                                                        />
-                                                                                    </div>
-                                                                                </div>
-                                                                                <div className="overflow-y-auto p-1 flex-1">
-                                                                                    {isLoadingGuilds ? (
-                                                                                        <div className="p-4 flex justify-center">
-                                                                                            <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
-                                                                                        </div>
-                                                                                    ) : authError ? (
-                                                                                        <div className="p-4 text-center">
-                                                                                            <p className="text-[10px] text-amber-500 font-mono mb-2">AUTH REQUIRED</p>
-                                                                                            <a href="/api/auth/signin" className="inline-block px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-bold font-mono uppercase">Login</a>
-                                                                                        </div>
-                                                                                    ) : filteredGuilds.length > 0 ? (
-                                                                                        filteredGuilds.map(g => (
-                                                                                            <button
-                                                                                                key={g.id}
-                                                                                                type="button"
-                                                                                                onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
-                                                                                                className="w-full flex items-center gap-3 p-2 hover:bg-zinc-900 text-left transition-colors"
-                                                                                            >
-                                                                                                {g.icon ? (
-                                                                                                    <Image src={g.icon} width={24} height={24} alt="" className="rounded-none ring-1 ring-zinc-800" unoptimized />
-                                                                                                ) : (
-                                                                                                    <div className="w-6 h-6 bg-zinc-800 flex items-center justify-center text-[9px] text-zinc-400 font-bold">{g.name.substring(0, 2)}</div>
-                                                                                                )}
-                                                                                                <span className="text-xs text-zinc-400 hover:text-white font-mono truncate">{g.name}</span>
-                                                                                            </button>
-                                                                                        ))
-                                                                                    ) : (
-                                                                                        <div className="p-4 text-center text-[10px] text-zinc-600 font-mono">NO DATA FOUND</div>
-                                                                                    )}
-                                                                                </div>
-                                                                            </>
-                                                                        )}
-                                                                    </motion.div>
-                                                                )}
-                                                            </AnimatePresence>
-                                                        </div>
+                                                        <h3 className="font-bold text-gray-900">Discord to Discord</h3>
+                                                        <p className="text-xs text-gray-500 mt-1">Mirror messages between Discord servers instantly.</p>
+                                                        {sourcePlatform === 'DISCORD' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-primary" />}
                                                     </div>
 
-                                                    {/* Channel ID / Selector */}
-                                                    <div className="space-y-2 relative">
-                                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Channel ID</label>
+                                                    <div
+                                                        onClick={() => setSourcePlatform('TELEGRAM')}
+                                                        className={cn(
+                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                            sourcePlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200"
+                                                        )}
+                                                    >
+                                                        <div className="flex items-center gap-3 mb-3">
+                                                            <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
+                                                                <Signal className="w-5 h-5" />
+                                                            </div>
+                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                <Monitor className="w-5 h-5" />
+                                                            </div>
+                                                        </div>
+                                                        <h3 className="font-bold text-gray-900">Telegram to Discord</h3>
+                                                        <p className="text-xs text-gray-500 mt-1">Forward Telegram channel posts to Discord webhooks.</p>
+                                                        {sourcePlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                                                        {selectedGuild ? (
-                                                            <div className="relative">
+                                            <div className="space-y-2">
+                                                <label className="text-sm font-semibold text-gray-900">Mirror Title</label>
+                                                <input
+                                                    type="text"
+                                                    value={mirrorTitle}
+                                                    onChange={(e) => setMirrorTitle(e.target.value)}
+                                                    placeholder="e.g. VIP Crypto Signals"
+                                                    className={cn(
+                                                        "w-full px-4 py-3 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium",
+                                                        error && !mirrorTitle.trim() ? "border-red-300 ring-red-100" : ""
+                                                    )}
+                                                />
+                                                <p className="text-xs text-gray-500">Give this mirror a recognizable name for your dashboard.</p>
+                                            </div>
+
+                                            {error && (
+                                                <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
+                                                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                                                    {error}
+                                                </div>
+                                            )}
+                                        </motion.div>
+                                    ) : (
+                                        <motion.div
+                                            key="step2"
+                                            initial={{ opacity: 0, x: 10 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            exit={{ opacity: 0, x: 10 }}
+                                            className="space-y-6"
+                                        >
+                                            <form onSubmit={handleSubmit} className="space-y-6">
+
+                                                {/* Account Selection (Common for both, used as Source context for Discord, and Destination context for Telegram) */}
+                                                <div className="space-y-3">
+                                                    <label className="text-sm font-medium text-gray-700">
+                                                        {sourcePlatform === 'DISCORD' ? "Account Context" : "Destination Bot Context"}
+                                                    </label>
+
+                                                    {localAccounts.length > 0 ? (
+                                                        <div className="grid grid-cols-1 gap-2">
+                                                            {localAccounts.map((acc: any) => (
+                                                                <div
+                                                                    key={acc.id}
+                                                                    onClick={() => setSelectedAccountId(acc.id)}
+                                                                    className={cn(
+                                                                        "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
+                                                                        selectedAccountId === acc.id ? "bg-blue-50 border-primary ring-1 ring-primary" : "bg-white border-gray-200 hover:border-gray-300"
+                                                                    )}
+                                                                >
+                                                                    {acc.avatar ? (
+                                                                        <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={36} height={36} alt="" className="rounded-full bg-gray-200" unoptimized />
+                                                                    ) : (
+                                                                        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
+                                                                            {acc.username[0]}
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="flex-1">
+                                                                        <div className="text-sm font-semibold text-gray-900">{acc.username}</div>
+                                                                        <div className="text-xs text-gray-500">ID: {acc.discordId}</div>
+                                                                    </div>
+                                                                    {selectedAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-center p-4 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
+                                                            No accounts linked. Please add one.
+                                                        </div>
+                                                    )}
+
+                                                    {/* Add Account Button */}
+                                                    {!isAddingAccount ? (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setIsAddingAccount(true)}
+                                                            className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-400 transition-all flex items-center justify-center gap-2"
+                                                        >
+                                                            <UserPlus className="w-4 h-4" /> Link Another Account
+                                                        </button>
+                                                    ) : (
+                                                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                                                            <div className="flex justify-between items-center">
+                                                                <span className="text-sm font-medium text-gray-900">Link New Account</span>
+                                                                <button onClick={() => setIsAddingAccount(false)}><X className="w-4 h-4 text-gray-400" /></button>
+                                                            </div>
+                                                            <input
+                                                                type="password"
+                                                                value={newAccountToken}
+                                                                onChange={(e) => setNewAccountToken(e.target.value)}
+                                                                placeholder="Paste User Token Here"
+                                                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={handleAddNewAccount}
+                                                                disabled={isAddingAccountLoading || !newAccountToken}
+                                                                className="w-full py-2 bg-primary text-white text-sm font-medium rounded-md hover:bg-primary/90 transition-colors flex justify-center gap-2"
+                                                            >
+                                                                {isAddingAccountLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                                                                Verify & Link
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* DISCORD CONFIG */}
+                                                {sourcePlatform === 'DISCORD' && (
+                                                    <div className="space-y-6">
+
+                                                        {/* Guild & Channel Selection */}
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                            {/* Guild Select */}
+                                                            <div className="space-y-1.5 relative">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Source Server</label>
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setIsChannelDropdownOpen(!isChannelDropdownOpen)}
-                                                                    disabled={channels.length === 0 && !isLoadingChannels}
-                                                                    className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 flex items-center justify-between text-left transition-colors focus:border-primary outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                    onClick={() => setIsGuildDropdownOpen(!isGuildDropdownOpen)}
+                                                                    disabled={!selectedAccountId}
+                                                                    className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50 disabled:bg-gray-50"
                                                                 >
-                                                                    {channelId ? (
+                                                                    {selectedGuild ? (
                                                                         <div className="flex items-center gap-2 truncate">
-                                                                            <span className="text-zinc-500 font-mono">#</span>
-                                                                            <span className="text-zinc-200 truncate font-mono text-sm">
-                                                                                {selectedChannel ? selectedChannel.name : channelId}
-                                                                            </span>
+                                                                            {selectedGuild.icon ? (
+                                                                                <Image src={selectedGuild.icon} width={20} height={20} alt="" className="rounded-full" unoptimized />
+                                                                            ) : (
+                                                                                <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">{selectedGuild.name.substring(0, 2)}</div>
+                                                                            )}
+                                                                            <span className="text-sm text-gray-900 truncate font-medium">{selectedGuild.name}</span>
                                                                         </div>
                                                                     ) : (
-                                                                        <span className="text-zinc-600 text-sm font-mono">
-                                                                            {isLoadingChannels ? "LOADING_CHANNELS..." : "SELECT_CHANNEL..."}
-                                                                        </span>
+                                                                        <span className="text-sm text-gray-500">Select Server...</span>
                                                                     )}
-                                                                    <ChevronDown className="w-4 h-4 text-zinc-600" />
+                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
                                                                 </button>
 
+                                                                {/* Guild Dropdown */}
                                                                 <AnimatePresence>
-                                                                    {isChannelDropdownOpen && (
+                                                                    {isGuildDropdownOpen && (
                                                                         <motion.div
-                                                                            initial={{ opacity: 0, y: -5 }}
-                                                                            animate={{ opacity: 1, y: 0 }}
-                                                                            exit={{ opacity: 0, y: -5 }}
-                                                                            className="absolute z-30 top-full left-0 right-0 mt-1 bg-zinc-950 border border-zinc-700 shadow-xl max-h-60 flex flex-col"
+                                                                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                            className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
                                                                         >
-                                                                            <div className="p-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">
-                                                                                <div className="relative">
-                                                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600" />
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        value={channelSearchQuery}
-                                                                                        onChange={(e) => {
-                                                                                            setChannelSearchQuery(e.target.value);
-                                                                                            // If user is searching/typing numbers manually, maybe update channelId?
-                                                                                            // For now let's keep it strictly selection or ID paste if not found
-                                                                                        }}
-                                                                                        className="w-full bg-zinc-900/50 text-xs text-zinc-200 pl-9 pr-3 py-2 border border-zinc-800 outline-none focus:border-zinc-600 transition-colors font-mono"
-                                                                                        placeholder="FILTER_CHANNELS..."
-                                                                                        autoFocus
-                                                                                    />
-                                                                                </div>
+                                                                            <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                <Search className="absolute left-4 top-4 w-4 h-4 text-gray-400" />
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={searchQuery}
+                                                                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                                                                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                    placeholder="Search servers..."
+                                                                                    autoFocus
+                                                                                />
                                                                             </div>
-                                                                            <div className="overflow-y-auto p-1 flex-1">
-                                                                                {filteredChannels.length > 0 ? (
-                                                                                    filteredChannels.map(c => (
+                                                                            <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                {isLoadingGuilds ? (
+                                                                                    <div className="p-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
+                                                                                ) : filteredGuilds.length > 0 ? (
+                                                                                    filteredGuilds.map(g => (
                                                                                         <button
-                                                                                            key={c.id}
+                                                                                            key={g.id}
                                                                                             type="button"
-                                                                                            onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }}
-                                                                                            className="w-full flex items-center gap-2 p-2 hover:bg-zinc-900 text-left transition-colors"
+                                                                                            onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
+                                                                                            className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
                                                                                         >
-                                                                                            <span className="text-zinc-500 font-mono text-xs">#</span>
-                                                                                            <span className="text-xs text-zinc-400 hover:text-white font-mono truncate">{c.name}</span>
-                                                                                            <span className="text-[10px] text-zinc-600 font-mono ml-auto">{c.id}</span>
+                                                                                            {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{g.name.substring(0, 2)}</div>}
+                                                                                            <span className="text-sm text-gray-700 truncate">{g.name}</span>
                                                                                         </button>
                                                                                     ))
                                                                                 ) : (
-                                                                                    <div className="p-4 text-center text-[10px] text-zinc-600 font-mono">NO CHANNELS FOUND</div>
+                                                                                    <div className="p-3 text-center text-xs text-gray-500">No servers found</div>
                                                                                 )}
                                                                             </div>
                                                                         </motion.div>
                                                                     )}
                                                                 </AnimatePresence>
                                                             </div>
-                                                        ) : (
-                                                            <input
-                                                                type="text"
-                                                                value={channelId}
-                                                                onChange={(e) => setChannelId(e.target.value)}
-                                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm"
-                                                                placeholder="000000000000000000"
-                                                            />
-                                                        )}
-                                                    </div>
-                                                </>
-                                            )}
 
-                                            {/* TELEGRAM CONFIG (MTProto UserBot) */}
-                                            {sourcePlatform === 'TELEGRAM' && (
-                                                <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-
-                                                    {/* Auth Flow / Session Status */}
-                                                    <div className="bg-zinc-900/30 border border-zinc-800 p-4 space-y-4">
-                                                        <div className="flex items-center justify-between mb-2">
-                                                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">
-                                                                Telegram Session
-                                                            </label>
-                                                            {telegramSession ? (
-                                                                <span className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-500 uppercase tracking-wider bg-emerald-950/30 px-2 py-0.5 border border-emerald-900/50">
-                                                                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                                                    Connected
-                                                                </span>
-                                                            ) : (
-                                                                <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-500 uppercase tracking-wider bg-amber-950/30 px-2 py-0.5 border border-amber-900/50">
-                                                                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                                                    Disconnected
-                                                                </span>
-                                                            )}
-                                                        </div>
-
-                                                        {!telegramSession ? (
-                                                            // LOGIN FLOW
-                                                            <div className="space-y-4">
-                                                                {authStep === 'PHONE' && (
-                                                                    <div className="flex gap-2">
+                                                            {/* Channel ID */}
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Channel ID</label>
+                                                                <div className="relative">
+                                                                    {selectedGuild ? (
+                                                                        <div className="relative">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setIsChannelDropdownOpen(!isChannelDropdownOpen)}
+                                                                                disabled={channels.length === 0}
+                                                                                className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                            >
+                                                                                {channelId ? (
+                                                                                    <div className="flex items-center gap-1 overflow-hidden">
+                                                                                        <span className="text-gray-400">#</span>
+                                                                                        <span className="text-sm text-gray-900 truncate font-medium">{selectedChannel?.name || channelId}</span>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <span className="text-sm text-gray-500">{isLoadingChannels ? "Loading..." : "Select Channel..."}</span>
+                                                                                )}
+                                                                                <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                            </button>
+                                                                            <AnimatePresence>
+                                                                                {isChannelDropdownOpen && (
+                                                                                    <motion.div
+                                                                                        initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                        className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                                    >
+                                                                                        <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                            <input type="text" value={channelSearchQuery} onChange={(e) => setChannelSearchQuery(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary" placeholder="Search..." autoFocus />
+                                                                                        </div>
+                                                                                        <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                            {filteredChannels.map(c => (
+                                                                                                <button key={c.id} type="button" onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md text-left text-sm text-gray-700">
+                                                                                                    <span className="text-gray-400">#</span>
+                                                                                                    <span className="truncate flex-1">{c.name}</span>
+                                                                                                    <span className="text-xs text-gray-400 font-mono">{c.id.substring(0, 4)}...</span>
+                                                                                                </button>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </motion.div>
+                                                                                )}
+                                                                            </AnimatePresence>
+                                                                        </div>
+                                                                    ) : (
                                                                         <input
                                                                             type="text"
-                                                                            value={telegramPhone}
-                                                                            onChange={(e) => setTelegramPhone(e.target.value)}
-                                                                            className="flex-1 bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-2 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                                            placeholder="+6281234567890"
+                                                                            value={channelId}
+                                                                            onChange={(e) => setChannelId(e.target.value)}
+                                                                            className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono placeholder:text-gray-400"
+                                                                            placeholder="Channel ID..."
                                                                         />
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={handleSendCode}
-                                                                            disabled={isAuthLoading || !telegramPhone}
-                                                                            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-mono font-bold uppercase tracking-wider transition-all disabled:opacity-50 rounded-none border border-zinc-700"
-                                                                        >
-                                                                            {isAuthLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Code"}
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-
-                                                                {(authStep === 'CODE' || authStep === 'PASSWORD') && (
-                                                                    <div className="space-y-3">
-                                                                        <div className="space-y-1">
-                                                                            <label className="text-[9px] text-zinc-500 uppercase font-mono">SMS Code</label>
-                                                                            <input
-                                                                                type="text"
-                                                                                value={telegramCode}
-                                                                                onChange={(e) => setTelegramCode(e.target.value)}
-                                                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-2 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                                                placeholder="12345"
-                                                                            />
-                                                                        </div>
-
-                                                                        <div className="space-y-1">
-                                                                            <label className="text-[9px] text-zinc-500 uppercase font-mono flex items-center justify-between">
-                                                                                <span>2FA Password</span>
-                                                                                <span className="text-[8px] text-zinc-600">(Optional)</span>
-                                                                            </label>
-                                                                            <input
-                                                                                type="password"
-                                                                                value={telegramPassword}
-                                                                                onChange={(e) => setTelegramPassword(e.target.value)}
-                                                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-2 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                                                placeholder="********"
-                                                                            />
-                                                                        </div>
-
-                                                                        <div className="flex gap-2 pt-2">
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => setAuthStep('PHONE')}
-                                                                                className="px-4 py-2 bg-zinc-900 border border-zinc-800 text-zinc-500 hover:text-white text-xs font-mono font-bold uppercase tracking-wider rounded-none"
-                                                                            >
-                                                                                Back
-                                                                            </button>
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={handleLogin}
-                                                                                disabled={isAuthLoading || !telegramCode}
-                                                                                className="flex-1 px-4 py-2 bg-primary/10 border border-primary/50 text-primary hover:bg-primary/20 text-xs font-mono font-bold uppercase tracking-wider rounded-none flex items-center justify-center gap-2"
-                                                                            >
-                                                                                {isAuthLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Verify & Login"}
-                                                                            </button>
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        ) : (
-                                                            // LOGGED IN STATE
-                                                            <div className="flex items-center gap-4">
-                                                                <div className="flex-1 p-3 bg-zinc-950 border border-zinc-800 flex items-center gap-3">
-                                                                    <div className="w-8 h-8 bg-zinc-900 flex items-center justify-center rounded-none border border-zinc-800">
-                                                                        <div className="w-4 h-4 text-emerald-500">
-                                                                            <Signal className="w-full h-full" />
-                                                                        </div>
-                                                                    </div>
-                                                                    <div className="overflow-hidden">
-                                                                        <p className="text-xs text-zinc-300 font-mono truncate">Session Active</p>
-                                                                        <p className="text-[10px] text-zinc-600 font-mono truncate">ID: {telegramSession.substring(0, 12)}...</p>
-                                                                    </div>
+                                                                    )}
                                                                 </div>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        setTelegramSession("");
-                                                                        localStorage.removeItem("draft_telegram_session");
-                                                                        setAuthStep('PHONE');
-                                                                        setTelegramCode("");
-                                                                        setTelegramPassword("");
-                                                                    }}
-                                                                    className="px-4 py-3 bg-red-950/20 hover:bg-red-950/40 border border-red-900/30 text-red-500 text-xs font-mono font-bold uppercase tracking-wider rounded-none transition-colors"
-                                                                >
-                                                                    Reset
-                                                                </button>
                                                             </div>
-                                                        )}
-                                                    </div>
-
-                                                    {/* Source Name */}
-                                                    <div className="space-y-2">
-                                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Source Name</label>
-                                                        <input
-                                                            type="text"
-                                                            value={manualGuildName}
-                                                            onChange={(e) => setManualGuildName(e.target.value)}
-                                                            className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                            placeholder="My Telegram Channel"
-                                                        />
-                                                    </div>
-
-                                                    {/* Chat ID */}
-                                                    <div className="space-y-2">
-                                                        <div className="flex items-center justify-between">
-                                                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Source Chat ID</label>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setShowTelegramGuide(!showTelegramGuide)}
-                                                                className="text-[10px] text-primary hover:underline font-mono flex items-center gap-1"
-                                                            >
-                                                                <Info className="w-3 h-3" />
-                                                                {showTelegramGuide ? "Hide Guide" : "How to find?"}
-                                                            </button>
                                                         </div>
+                                                    </div>
+                                                )}
 
-                                                        {showTelegramGuide && (
-                                                            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-md space-y-2 text-[10px] text-zinc-400 font-mono">
-                                                                <p className="font-bold text-zinc-300">Detailed Steps:</p>
-                                                                <ol className="list-decimal list-inside space-y-1 ml-1">
-                                                                    <li>Forward a message from the target channel to <span className="text-primary">@JsonDumpBot</span> or <span className="text-primary">@userinfobot</span>.</li>
-                                                                    <li>Look for the <span className="text-zinc-200 font-bold">id</span> field in the forwarded data.</li>
-                                                                    <li>Alternatively, open Telegram Web (K/Z version).</li>
-                                                                    <li>Click on the chat/channel.</li>
-                                                                    <li>Look at the URL: <span className="bg-zinc-800 px-1 rounded">web.telegram.org/k/#-100123...</span></li>
-                                                                    <li>The ID usually starts with <span className="text-zinc-200 font-bold">-100</span> (mandatory for supergroups/channels).</li>
-                                                                </ol>
+                                                {/* TELEGRAM CONFIG */}
+                                                {sourcePlatform === 'TELEGRAM' && (
+                                                    <div className="space-y-6">
+                                                        {/* Telegram Auth UI */}
+                                                        <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4">
+                                                            <div className="flex items-center justify-between">
+                                                                <h3 className="text-sm font-semibold text-gray-900">Telegram Authentication</h3>
+                                                                <Image src="/telegram-logo.png" width={24} height={24} alt="Telegram" className="opacity-80" unoptimized />
                                                             </div>
-                                                        )}
-
-                                                        <div className="relative">
-                                                            <input
-                                                                type="text"
-                                                                value={telegramChatId}
-                                                                onChange={(e) => setTelegramChatId(e.target.value)}
-                                                                className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                                placeholder="-100123456789"
-                                                            />
-                                                        </div>
-                                                        <p className="text-[10px] text-zinc-500 font-mono">
-                                                            Enter the ID of the Channel/Group you want to listen to. You must be a member.
-                                                        </p>
-                                                    </div>
-
-                                                    {/* Topic ID (Optional) */}
-                                                    <div className="space-y-2">
-                                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono flex items-center justify-between">
-                                                            <span>Topic ID (Forum)</span>
-                                                            <span className="text-[8px] text-zinc-600">(Optional)</span>
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={telegramTopicId}
-                                                            onChange={(e) => setTelegramTopicId(e.target.value)}
-                                                            className="w-full bg-zinc-950 border border-zinc-700 hover:border-zinc-500 px-4 py-3 text-zinc-200 outline-none transition-all placeholder:text-zinc-700 focus:border-primary font-mono text-sm rounded-none"
-                                                            placeholder="123"
-                                                        />
-                                                        <p className="text-[10px] text-zinc-500 font-mono">
-                                                            Only mirror messages from this specific topic/thread. Leave empty to mirror all.
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Target Webhook URL */}
-                                            <div className="space-y-4 pt-4 border-t border-zinc-900">
-                                                <div className="flex items-center justify-between">
-                                                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Target Webhook</label>
-                                                </div>
-
-                                                {/* Always show Lookup Channel UI */}
-                                                <div className="space-y-3 p-3 border border-zinc-800 bg-zinc-900/20 rounded">
-                                                    {/* Target Server Selector */}
-                                                    <div className="relative">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)}
-                                                            className="w-full bg-zinc-950 border border-zinc-700 px-3 py-2 flex items-center justify-between text-left transition-colors focus:border-primary outline-none"
-                                                        >
-                                                            {targetGuild ? (
-                                                                <span className="text-zinc-200 truncate font-mono text-xs">{targetGuild.name}</span>
+                                                            {!telegramSession ? (
+                                                                <div className="space-y-3">
+                                                                    {authStep === 'PHONE' && (
+                                                                        <div className="flex gap-2">
+                                                                            <input type="text" value={telegramPhone} onChange={(e) => setTelegramPhone(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary" placeholder="Phone Number (+62...)" />
+                                                                            <button type="button" onClick={handleSendCode} disabled={isAuthLoading} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">Send Code</button>
+                                                                        </div>
+                                                                    )}
+                                                                    {(authStep === 'CODE' || authStep === 'PASSWORD') && (
+                                                                        <div className="space-y-3">
+                                                                            <input type="text" value={telegramCode} onChange={(e) => setTelegramCode(e.target.value)} placeholder="SMS Code" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
+                                                                            {authStep === 'PASSWORD' && (
+                                                                                <input type="password" value={telegramPassword} onChange={(e) => setTelegramPassword(e.target.value)} placeholder="2FA Password" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
+                                                                            )}
+                                                                            <div className="flex gap-2">
+                                                                                <button type="button" onClick={() => setAuthStep('PHONE')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">Back</button>
+                                                                                <button type="button" onClick={handleLogin} disabled={isAuthLoading} className="flex-1 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90">Verify</button>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             ) : (
-                                                                <span className="text-zinc-600 text-xs font-mono">SELECT TARGET SERVER...</span>
+                                                                <div className="flex items-center justify-between bg-green-50 p-3 rounded-lg border border-green-100">
+                                                                    <div className="flex items-center gap-2 text-green-700 text-sm font-medium"><Signal className="w-4 h-4" /> Session Active</div>
+                                                                    <button type="button" onClick={() => { setTelegramSession(""); setAuthStep('PHONE'); localStorage.removeItem("draft_telegram_session"); }} className="text-xs text-red-600 hover:underline">Disconnect</button>
+                                                                </div>
                                                             )}
-                                                            <ChevronDown className="w-3 h-3 text-zinc-600" />
-                                                        </button>
+                                                        </div>
 
-                                                        <AnimatePresence>
-                                                            {isTargetGuildDropdownOpen && (
-                                                                <motion.div
-                                                                    initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
-                                                                    className="absolute z-30 top-full left-0 right-0 mt-1 bg-zinc-950 border border-zinc-700 shadow-xl max-h-48 flex flex-col"
-                                                                >
-                                                                    <div className="p-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">
-                                                                        <input type="text" value={targetSearchQuery} onChange={(e) => setTargetSearchQuery(e.target.value)} className="w-full bg-zinc-900/50 text-xs text-zinc-200 px-2 py-1 border border-zinc-800 outline-none" placeholder="Search..." autoFocus />
-                                                                    </div>
-                                                                    <div className="overflow-y-auto p-1 flex-1">
-                                                                        {filteredTargetGuilds.map(g => (
-                                                                            <button key={g.id} type="button" onClick={() => { setTargetGuild(g); setIsTargetGuildDropdownOpen(false); }} className="w-full text-left px-2 py-1.5 hover:bg-zinc-900 text-xs text-zinc-400 hover:text-white truncate font-mono">{g.name}</button>
-                                                                        ))}
-                                                                    </div>
-                                                                </motion.div>
-                                                            )}
-                                                        </AnimatePresence>
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
+                                                            <input type="text" value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} placeholder="Source Chat ID (-100...)" className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary font-mono" />
+                                                            <p className="text-xs text-gray-500">Enter the Channel ID or User ID you want to mirror from.</p>
+                                                        </div>
                                                     </div>
+                                                )}
 
-                                                    {/* Target Channel Selector */}
-                                                    {targetGuild && (
-                                                        <div className="relative">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setIsTargetChannelDropdownOpen(!isTargetChannelDropdownOpen)}
-                                                                disabled={isLoadingTargetChannels}
-                                                                className="w-full bg-zinc-950 border border-zinc-700 px-3 py-2 flex items-center justify-between text-left transition-colors focus:border-primary outline-none disabled:opacity-50"
-                                                            >
-                                                                {targetChannelId ? (
-                                                                    <span className="text-zinc-200 truncate font-mono text-xs">#{selectedTargetChannel?.name || targetChannelId}</span>
-                                                                ) : (
-                                                                    <span className="text-zinc-600 text-xs font-mono">{isLoadingTargetChannels ? "LOADING..." : "SELECT TARGET CHANNEL..."}</span>
-                                                                )}
-                                                                <ChevronDown className="w-3 h-3 text-zinc-600" />
+                                                {/* TARGET CONFIGURATION */}
+                                                <div className="pt-6 border-t border-gray-200">
+                                                    <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                                                        <ArrowRight className="w-4 h-4 text-gray-400" /> Destination
+                                                    </h3>
+
+                                                    <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                                        {/* Target Guild Select */}
+                                                        <div className="space-y-1.5 relative">
+                                                            <label className="text-xs font-medium text-gray-500 uppercase">Target Server</label>
+                                                            <button type="button" onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary">
+                                                                <span className="text-sm text-gray-900 font-medium">{targetGuild?.name || "Select Destination Server..."}</span>
+                                                                <ChevronDown className="w-4 h-4 text-gray-400" />
                                                             </button>
                                                             <AnimatePresence>
-                                                                {isTargetChannelDropdownOpen && (
-                                                                    <motion.div
-                                                                        initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
-                                                                        className="absolute z-30 top-full left-0 right-0 mt-1 bg-zinc-950 border border-zinc-700 shadow-xl max-h-48 flex flex-col"
-                                                                    >
-                                                                        <div className="p-2 border-b border-zinc-800 sticky top-0 bg-zinc-950">
-                                                                            <input type="text" value={targetChannelSearchQuery} onChange={(e) => setTargetChannelSearchQuery(e.target.value)} className="w-full bg-zinc-900/50 text-xs text-zinc-200 px-2 py-1 border border-zinc-800 outline-none" placeholder="Search..." autoFocus />
-                                                                        </div>
-                                                                        <div className="overflow-y-auto p-1 flex-1">
-                                                                            {filteredTargetChannels.map(c => (
-                                                                                <button key={c.id} type="button" onClick={() => { setTargetChannelId(c.id); setIsTargetChannelDropdownOpen(false); }} className="w-full text-left px-2 py-1.5 hover:bg-zinc-900 text-xs text-zinc-400 hover:text-white truncate font-mono">#{c.name}</button>
-                                                                            ))}
-                                                                        </div>
+                                                                {isTargetGuildDropdownOpen && (
+                                                                    <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto p-1">
+                                                                        {filteredTargetGuilds.map(g => (
+                                                                            <button key={g.id} type="button" onClick={() => { setTargetGuild(g); setIsTargetGuildDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">{g.name}</button>
+                                                                        ))}
                                                                     </motion.div>
                                                                 )}
                                                             </AnimatePresence>
                                                         </div>
-                                                    )}
 
-                                                    {/* Webhook Selection / Creation */}
-                                                    {targetChannelId && (
-                                                        <div className="space-y-2 pt-2 border-t border-zinc-800/50">
-                                                            <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest font-mono">Available Webhooks</label>
-                                                            {isLoadingWebhooks ? (
-                                                                <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono"><Loader2 className="w-3 h-3 animate-spin" /> Check permissions...</div>
-                                                            ) : webhookError ? (
-                                                                <div className="text-[10px] text-red-500 font-mono">{webhookError}</div>
-                                                            ) : webhooks.length > 0 ? (
-                                                                <div className="grid gap-1">
-                                                                    {webhooks.map((wh: any) => (
-                                                                        <button
-                                                                            key={wh.id}
-                                                                            type="button"
-                                                                            onClick={() => handleSelectWebhook(wh)}
-                                                                            className={cn("w-full text-left px-3 py-2 border rounded flex items-center gap-2 transition-all", wh.url === webhookUrl ? "bg-primary/10 border-primary" : "bg-zinc-950 border-zinc-800 hover:bg-zinc-900")}
-                                                                        >
-                                                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
-                                                                            <span className="text-xs text-zinc-300 font-mono truncate flex-1">{wh.name}</span>
-                                                                            {wh.url === webhookUrl && <CheckCircle2 className="w-3 h-3 text-primary" />}
-                                                                        </button>
-                                                                    ))}
-                                                                </div>
-                                                            ) : (
-                                                                <div className="text-center py-2">
-                                                                    <p className="text-[10px] text-zinc-500 font-mono mb-2">No webhooks found.</p>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={handleCreateWebhook}
-                                                                        disabled={isCreatingWebhook}
-                                                                        className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-white text-[10px] font-bold uppercase rounded border border-zinc-700 flex justify-center gap-2"
-                                                                    >
-                                                                        {isCreatingWebhook && <Loader2 className="w-3 h-3 animate-spin" />}
-                                                                        Create New Webhook
-                                                                    </button>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
+                                                        {/* Target Channel & Webhook */}
+                                                        {targetGuild && (
+                                                            <div className="space-y-1.5 relative">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Target Channel</label>
+                                                                <button type="button" onClick={() => setIsTargetChannelDropdownOpen(!isTargetChannelDropdownOpen)} disabled={isLoadingTargetChannels} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary disabled:opacity-50">
+                                                                    <span className={cn("text-sm", targetChannelId ? "text-gray-900 font-medium" : "text-gray-500")}>
+                                                                        {targetChannelId ? `#${selectedTargetChannel?.name || targetChannelId}` : (isLoadingTargetChannels ? "Loading..." : "Select Channel...")}
+                                                                    </span>
+                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                </button>
+                                                                <AnimatePresence>
+                                                                    {isTargetChannelDropdownOpen && (
+                                                                        <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden">
+                                                                            <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={targetChannelSearchQuery}
+                                                                                    onChange={(e) => setTargetChannelSearchQuery(e.target.value)}
+                                                                                    className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                    placeholder="Search channels..."
+                                                                                    autoFocus
+                                                                                />
+                                                                            </div>
+                                                                            <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                {filteredTargetChannels.length > 0 ? filteredTargetChannels.map(c => (
+                                                                                    <button key={c.id} type="button" onClick={() => { setTargetChannelId(c.id); setIsTargetChannelDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">#{c.name}</button>
+                                                                                )) : (
+                                                                                    <div className="p-2 text-xs text-gray-400 text-center">No channels found</div>
+                                                                                )}
+                                                                            </div>
+                                                                        </motion.div>
+                                                                    )}
+                                                                </AnimatePresence>
+
+                                                            </div>
+                                                        )}
+
+                                                        {/* Webhooks */}
+                                                        {targetChannelId && (
+                                                            <div className="space-y-2 pt-2">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Webhook Configuration</label>
+                                                                {isLoadingWebhooks ? (
+                                                                    <div className="text-xs text-gray-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /> Loading webhooks...</div>
+                                                                ) : webhookError ? (
+                                                                    <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2 border border-red-100">
+                                                                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                                                                        {webhookError}
+                                                                    </div>
+                                                                ) : webhooks.length > 0 ? (
+                                                                    <div className="grid gap-2">
+                                                                        {webhooks.map((wh: any) => (
+                                                                            <button key={wh.id} type="button" onClick={() => handleSelectWebhook(wh)} className={cn("w-full flex items-center gap-2 px-3 py-2 border rounded-lg transition-all", wh.url === webhookUrl ? "bg-blue-50 border-primary shadow-sm" : "bg-white border-gray-200 hover:bg-gray-50")}>
+                                                                                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                                                                <span className="text-sm font-medium text-gray-700 flex-1 text-left truncate">{wh.name}</span>
+                                                                                {wh.url === webhookUrl && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                                                                            </button>
+                                                                        ))}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
+                                                                        <p className="text-xs text-gray-500 mb-2">No webhooks found.</p>
+                                                                        <button type="button" onClick={handleCreateWebhook} disabled={isCreatingWebhook} className="text-xs font-bold text-primary hover:underline disabled:opacity-50">Create New One</button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        </div>
-                                    )}
 
-                                    {error && (
-                                        <div className="p-3 bg-red-950/20 border-l-2 border-red-900 flex items-center gap-3">
-                                            <AlertTriangle className="w-4 h-4 text-red-900" />
-                                            <span className="text-xs text-red-800 font-mono">{error}</span>
-                                        </div>
-                                    )}
+                                                {error && (
+                                                    <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
+                                                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                                                        {error}
+                                                    </div>
+                                                )}
 
-                                </form>
+                                            </form>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                             </div>
 
                             {/* Footer */}
-                            <div className="p-6 border-t border-zinc-800 bg-zinc-950 flex justify-end gap-3">
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="px-6 py-2.5 text-zinc-500 hover:text-white transition-colors text-xs font-mono font-bold uppercase tracking-wider"
-                                    disabled={isSubmitting}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    form="mirror-form"
-                                    type="submit"
-                                    disabled={isSubmitting}
-                                    className="px-6 py-2.5 bg-zinc-100 hover:bg-white text-black text-xs font-mono font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    {isSubmitting ? (
-                                        <span className="flex items-center gap-2">
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                            PROCESSING...
-                                        </span>
-                                    ) : (
-                                        <span>
-                                            {isBulkMode ? "BULK IMPORT" : (isEdit ? "CONFIRM UPDATE" : "INITIALIZE")}
-                                        </span>
-                                    )}
-                                </button>
+                            <div className="p-6 border-t border-gray-100 flex justify-between gap-3 bg-gray-50 rounded-b-xl">
+                                {step === 1 ? (
+                                    <>
+                                        <button
+                                            onClick={onClose}
+                                            className="px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors text-sm font-semibold"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            onClick={nextStep}
+                                            className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2"
+                                        >
+                                            Next Step <ArrowRight className="w-4 h-4" />
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={prevStep}
+                                            className="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2"
+                                        >
+                                            <ChevronLeft className="w-4 h-4" /> Back
+                                        </button>
+
+                                        <button
+                                            onClick={handleSubmit}
+                                            disabled={isSubmitting}
+                                            className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed ml-auto"
+                                        >
+                                            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                                            {isEdit ? "Update Mirror" : "Create Mirror"}
+                                        </button>
+                                    </>
+                                )}
                             </div>
-                        </motion.div >
-                    </div >
+
+                        </motion.div>
+                    </div>
                 </>
-            )
-            }
-        </AnimatePresence >
+            )}
+        </AnimatePresence>
     );
 }

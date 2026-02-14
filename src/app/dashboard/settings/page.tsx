@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import Image from "next/image";
 import Link from "next/link";
-import { CreditCard, Shield, Zap, CheckCircle2, Terminal } from "lucide-react";
+import { CreditCard, Shield, Zap, CheckCircle2, Settings as SettingsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PLAN_LIMITS, DISCORD_ADMIN_LINK } from "@/lib/constants";
 
@@ -49,60 +49,60 @@ export default async function SettingsPage() {
     ];
 
     return (
-        <div className="max-w-5xl mx-auto space-y-8 pb-10">
-            <div className="mb-8 border-b border-zinc-800 pb-6 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto space-y-8 px-4 sm:px-6 lg:px-8 py-8">
+            <div className="mb-6 border-b border-gray-200 pb-6 flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-white mb-2 font-mono uppercase tracking-tight">System Configuration</h1>
-                    <p className="text-zinc-500 font-mono text-sm">Manage user credentials and subscription vectors.</p>
+                    <h1 className="text-3xl font-bold text-gray-900 tracking-tight mb-2">Settings</h1>
+                    <p className="text-gray-500 text-sm">Manage your profile and subscription.</p>
                 </div>
-                <div className="p-2 border border-primary/20 bg-primary/10 text-primary">
-                    <Terminal className="w-5 h-5" />
+                <div className="p-2 bg-gray-100 rounded-lg text-gray-500">
+                    <SettingsIcon className="w-6 h-6" />
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Profile Card */}
                 <div className="md:col-span-2 space-y-6">
-                    <div className="bg-zinc-950 border border-zinc-800 p-8 relative overflow-hidden group">
-                        <div className="flex flex-col md:flex-row items-start gap-8 mb-8">
+                    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 relative overflow-hidden">
+                        <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
                             <div className="relative shrink-0">
                                 {session.user.image ? (
                                     <Image
                                         src={session.user.image}
                                         alt={session.user.name || "User"}
-                                        width={100}
-                                        height={100}
-                                        className="border border-zinc-700 shadow-lg grayscale group-hover:grayscale-0 transition-all duration-500"
+                                        width={80}
+                                        height={80}
+                                        className="rounded-full border-4 border-gray-50 shadow-sm"
                                         unoptimized
                                     />
                                 ) : (
-                                    <div className="w-24 h-24 bg-zinc-900 flex items-center justify-center text-4xl font-bold text-primary border border-zinc-800 font-mono">
+                                    <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center text-3xl font-bold text-gray-400 border-4 border-gray-50">
                                         {session.user.name?.[0] || "?"}
                                     </div>
                                 )}
-                                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-zinc-950" />
+                                <div className="absolute bottom-0 right-0 w-5 h-5 bg-green-500 border-4 border-white rounded-full" />
                             </div>
 
-                            <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-3 mb-1">
-                                    <h3 className="text-2xl font-bold text-white font-mono uppercase tracking-tight">{session.user.name}</h3>
-                                    <span className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 text-[10px] font-mono uppercase tracking-wider font-bold">
+                            <div className="flex-1 text-center md:text-left space-y-2">
+                                <div className="flex flex-col md:flex-row items-center gap-2 md:gap-4">
+                                    <h3 className="text-xl font-bold text-gray-900">{session.user.name}</h3>
+                                    <span className="px-2.5 py-0.5 bg-green-50 text-green-700 border border-green-200 text-xs font-semibold rounded-full uppercase tracking-wide">
                                         Active
                                     </span>
                                 </div>
-                                <p className="text-zinc-400 font-mono text-sm mb-4">{session.user.email}</p>
+                                <p className="text-gray-500 text-sm">{session.user.email}</p>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div className="p-3 bg-zinc-900 border border-zinc-800">
-                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block font-mono">User ID</label>
-                                        <div className="text-zinc-300 font-mono text-xs truncate">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
+                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100 text-left">
+                                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">User ID</label>
+                                        <div className="text-gray-700 text-xs font-mono truncate">
                                             {session.user.id || "N/A"}
                                         </div>
                                     </div>
-                                    <div className="p-3 bg-zinc-900 border border-zinc-800">
-                                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block font-mono">Role</label>
-                                        <div className="text-zinc-300 font-mono text-xs flex items-center gap-2">
-                                            <Shield className="w-3 h-3 text-primary" />
+                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100 text-left">
+                                        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider block mb-1">Role</label>
+                                        <div className="text-gray-700 text-xs font-semibold flex items-center gap-2">
+                                            <Shield className="w-3.5 h-3.5 text-primary" />
                                             OPERATOR
                                         </div>
                                     </div>
@@ -110,38 +110,36 @@ export default async function SettingsPage() {
                             </div>
                         </div>
                     </div>
-
-
                 </div>
 
                 {/* Sub Card (Plan) */}
                 <div className="md:col-span-1">
-                    <div className="h-full bg-zinc-950 border border-zinc-800 p-6 flex flex-col relative overflow-hidden group hover:border-primary/30 transition-colors">
-                        <div className="absolute top-0 right-0 p-4 opacity-50">
-                            <Zap className="w-12 h-12 text-zinc-800 group-hover:text-primary/20 transition-colors" />
+                    <div className="h-full bg-white border border-gray-200 rounded-xl shadow-sm p-6 flex flex-col relative overflow-hidden group hover:shadow-md transition-all">
+                        <div className="absolute top-0 right-0 p-4 opacity-10">
+                            <Zap className="w-20 h-20 text-primary" />
                         </div>
 
-                        <div className="mb-8 relative z-10">
-                            <h2 className="text-xs font-bold text-zinc-500 mb-2 font-mono uppercase tracking-widest">
+                        <div className="mb-6 relative z-10">
+                            <h2 className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
                                 Current Plan
                             </h2>
-                            <div className="text-4xl font-black text-white font-mono tracking-tighter mb-1">
+                            <div className="text-3xl font-bold text-gray-900 mb-2">
                                 {userPlan}
                             </div>
-                            <div className="text-xs text-primary font-mono bg-primary/10 border border-primary/20 px-2 py-0.5 w-fit uppercase">
-                                Limit: {limit === 9999 ? "Unlimited" : limit} Paths
+                            <div className="inline-flex text-xs font-semibold text-primary bg-primary/10 px-2 py-1 rounded-md">
+                                {limit === 9999 ? "Unlimited" : limit} Mirror Paths
                             </div>
                         </div>
 
-                        <div className="space-y-6 mb-8 flex-1 relative z-10">
+                        <div className="space-y-4 flex-1 relative z-10">
                             <div className="space-y-2">
-                                <div className="flex justify-between text-[10px] text-zinc-400 font-mono uppercase">
+                                <div className="flex justify-between text-xs font-medium text-gray-500">
                                     <span>Usage Quota</span>
-                                    <span className="text-white font-bold">{usageCount} / {limit === 9999 ? "∞" : limit}</span>
+                                    <span className="text-gray-900">{usageCount} / {limit === 9999 ? "∞" : limit}</span>
                                 </div>
-                                <div className="w-full h-1 bg-zinc-900">
+                                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                                     <div
-                                        className="h-full bg-primary"
+                                        className="h-full bg-primary rounded-full transition-all duration-500"
                                         style={{ width: `${percentage}%` }}
                                     />
                                 </div>
@@ -152,37 +150,37 @@ export default async function SettingsPage() {
             </div>
 
             {/* Upgrade Options */}
-            <div className="space-y-4 pt-8 border-t border-zinc-800">
-                <h2 className="text-xl font-bold text-white font-mono uppercase tracking-tight">Available Upgrades</h2>
+            <div className="space-y-6 pt-6">
+                <h2 className="text-lg font-bold text-gray-900">Available Plans</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {plans.map((plan) => (
                         <div key={plan.name} className={cn(
-                            "bg-zinc-950 p-6 border flex flex-col relative overflow-hidden transition-all hover:-translate-y-1",
-                            userPlan === plan.name ? "border-emerald-500/50 opacity-50" : "border-zinc-800 hover:border-primary/50"
+                            "bg-white p-6 rounded-xl border flex flex-col relative overflow-hidden transition-all hover:shadow-lg",
+                            userPlan === plan.name ? "border-green-500 ring-1 ring-green-500 bg-green-50/10" : "border-gray-200 hover:border-primary/50"
                         )}>
                             {userPlan === plan.name && (
-                                <div className="absolute top-2 right-2 text-emerald-500">
-                                    <CheckCircle2 className="w-5 h-5" />
+                                <div className="absolute top-4 right-4 text-green-500">
+                                    <CheckCircle2 className="w-6 h-6" />
                                 </div>
                             )}
-                            <div className="mb-4">
-                                <div className="text-sm text-zinc-500 font-mono font-bold uppercase">{plan.name}</div>
-                                <div className="text-2xl font-bold text-white mt-1">{plan.price}</div>
-                                <div className="text-xs text-zinc-400 mt-1 font-mono">{plan.limit === 9999 ? "Unlimited" : plan.limit} Mirror Paths</div>
+                            <div className="mb-6">
+                                <div className="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">{plan.name}</div>
+                                <div className="text-2xl font-bold text-gray-900">{plan.price}</div>
+                                <div className="text-xs text-gray-400 mt-1">{plan.limit === 9999 ? "Unlimited" : plan.limit} Mirror Paths</div>
                             </div>
 
                             <div className="mt-auto">
                                 {userPlan === plan.name ? (
-                                    <button disabled className="w-full py-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 font-mono text-xs font-bold uppercase cursor-default">
-                                        Active Plan
+                                    <button disabled className="w-full py-2.5 bg-green-100 text-green-700 rounded-lg text-sm font-bold cursor-default flex items-center justify-center gap-2">
+                                        <CheckCircle2 className="w-4 h-4" /> Current Plan
                                     </button>
                                 ) : (
                                     <Link
                                         href={DISCORD_ADMIN_LINK}
                                         target="_blank"
-                                        className="flex items-center justify-center gap-2 w-full py-2 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/20 text-white font-mono text-xs font-bold uppercase transition-all"
+                                        className="flex items-center justify-center gap-2 w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-semibold transition-colors"
                                     >
-                                        <CreditCard className="w-3 h-3" />
+                                        <CreditCard className="w-4 h-4" />
                                         Upgrade
                                     </Link>
                                 )}

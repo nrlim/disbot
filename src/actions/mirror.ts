@@ -156,7 +156,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 // @ts-ignore
                 sourcePlatform: sourcePlatform as any,
                 sourceGuildName: validated.data.sourceGuildName,
-                // Universal
+                // Universal (Legacy)
                 sourceChannelId: sourcePlatform === "DISCORD"
                     ? (validated.data.sourceChannelId || "")
                     : (validated.data.telegramChatId || ""),
@@ -165,8 +165,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 discordAccountId: sourcePlatform === "DISCORD" ? discordAccountId : null,
                 telegramAccountId: sourcePlatform === "TELEGRAM" ? telegramAccountIdToLink : null,
 
-                targetWebhookUrl: validated.data.targetWebhookUrl,
-                active: true
+                targetWebhookUrl: validated.data.targetWebhookUrl, // Legacy
+                active: true,
             }
         });
 
@@ -233,43 +233,13 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
 
     // Bulk Create
     try {
-        // Bulk create uses encrypted token directly in old schema.
-        // In new schema, we removed userToken from MirrorConfig.
-        // We MUST create a new DiscordAccount for this bulk token if we want to support it,
-        // OR we just attach to an existing account if we can find one.
-        // But bulk often implies many different tokens?
-        // Wait, "Bulk Import" UI was using a single token "Applied to All".
-        // So we can create one DiscordAccount for this token, and link all mirrors to it.
-
-        // Check for existing account with this token?
-        // We can't search by encrypted token easily.
-        // Let's create a new "Bulk Import Account" or similar.
-
-        // For now, let's create a temporary DiscordAccount for this batch.
-        // But we need user info. We can't fetch it here easily without making a request.
-        // Let's assume the user has to link the account properly first.
-        // But that breaks the "Bulk" flow convenience.
-        // Since the user asked to remove "information about discord... from mirror config", 
-        // we strictly cannot store userToken in MirrorConfig.
-
-        // Hack: Create a DiscordAccount placeholder?
-        // Ideally we fetch the user info.
-        // Since we can't do network calls easily here without more logic, let's just error for now 
-        // OR tell the user "Please add the account first, then select it for bulk."
-        // But the bulk UI had a token input.
-
-        // Given the constraints and the request "remove info... just account id", 
-        // I will disable the token-based bulk creation and return an error 
-        // or just link to the FIRST active discord account of the user as a fallback?
-
-        // Let's just create a DiscordAccount with a placeholder name if we must.
         const encryptedToken = encrypt(userToken);
         const newAccount = await prisma.discordAccount.create({
             data: {
                 userId: session.user.id,
                 token: encryptedToken,
                 username: "Bulk Imported Account",
-                discordId: `bulk_${Date.now()}`, // Dummy ID
+                discordId: `bulk_${Date.now()}`,
             }
         });
 
@@ -281,7 +251,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
                 sourceGuildName: c.sourceGuildName,
                 sourceChannelId: c.sourceChannelId,
                 targetWebhookUrl: c.targetWebhookUrl,
-                discordAccountId: newAccount.id, // Link to the new account
+                discordAccountId: newAccount.id,
                 active: true,
             }))
         });
