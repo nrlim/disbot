@@ -201,30 +201,163 @@ export class DiscordMirror {
     }
 
     private async handleMessage(token: string, message: Message, configs: MirrorActiveConfig[], userPlan: string) {
+        const logContext = {
+            msgId: message.id,
+            author: message.author.tag,
+            channel: message.channelId,
+            plan: userPlan,
+            configId: configs[0]?.id
+        };
+
         // Wait briefly for embeds/attachments to popular if message relies on them
         if (message.attachments.size > 0 || message.embeds.length > 0) {
             await new Promise(r => setTimeout(r, 1000));
         }
 
-        // Parse attachments
-        const rawAttachments = parseAttachments(message.attachments, (message as any).flags);
+        // ── Detect Forwarded Messages (Robust Race Condition Handling) ──
+        let isForward = false;
 
-        // Filter out undesired ones (e.g. no attachments and no content)
-        if (!message.content && rawAttachments.length === 0 && message.embeds.length === 0) return;
+        // Loop to check for Snapshots/Forward flags (up to 3 times / 750ms)
+        for (let i = 0; i < 3; i++) {
+            const refType = (message.reference as any)?.type;
+            const hasForwardFlag = (message as any).flags?.has?.(1 << 14); // IS_FORWARD
 
-        // Validate plan eligibility
-        const { eligible, rejected } = validateMediaForwarding(rawAttachments, userPlan);
+            // Robust snapshot check (Collection or Array)
+            const snapshots = (message as any).messageSnapshots || (message as any).message_snapshots;
+            const hasSnapshots = (snapshots?.size ?? snapshots?.length ?? 0) > 0;
 
-        // Build Payload
+            const isForwardRef = refType === 'FORWARD' || refType === 1;
+
+            if (isForwardRef || hasForwardFlag || hasSnapshots) {
+                isForward = true;
+                break;
+            }
+
+            // Only wait if it *looks* like it might be a forward (has reference but no content yet?)
+            if ((message.reference || hasForwardFlag) && !message.content && !hasSnapshots) {
+                await new Promise(r => setTimeout(r, 250));
+            } else {
+                break; // Not a forward candidate
+            }
+        }
+
+        if (isForward) {
+            logger.info({ ...logContext, type: 'FORWARD' }, 'Processing Forwarded Message');
+        } else {
+            logger.info({ ...logContext, type: 'CREATE' }, 'Processing New Message');
+        }
+
+        // ── Parse Attachments & Content ──
+
         let content = message.content || '';
+        let eligibleMedia: ParsedAttachment[] = [];
+        let rejectedMedia: { attachment: ParsedAttachment, reason: string }[] = [];
 
+        // 1. Process Main Message Attachments
+        const rawAttachments = parseAttachments(message.attachments, (message as any).flags);
+        const mainResult = validateMediaForwarding(rawAttachments, userPlan);
+        eligibleMedia = [...mainResult.eligible];
+        rejectedMedia = [...mainResult.rejected];
+
+        // 2. Process Forwarded Content (Snapshots)
+        if (isForward) {
+            const snapshots = (message as any).messageSnapshots || (message as any).message_snapshots;
+            const snapshot = snapshots?.first?.() || snapshots?.[0];
+
+            let fwdContent = `-# 📨 Forwarded Message`;
+
+            if (snapshot?.content) {
+                fwdContent += `\n${snapshot.content}`;
+            }
+
+            // Handle Snapshot Media
+            if ((snapshot?.attachments?.size ?? 0) > 0 || (snapshot?.attachments?.length ?? 0) > 0) {
+                const snapParsed = parseAttachments(snapshot.attachments, (message as any).flags);
+                const snapFiltered = validateMediaForwarding(snapParsed, userPlan);
+
+                eligibleMedia = [...eligibleMedia, ...snapFiltered.eligible];
+                rejectedMedia = [...rejectedMedia, ...snapFiltered.rejected];
+            }
+
+            // If main content is empty, use forward content
+            if (!content) {
+                content = fwdContent;
+            } else {
+                // If main content exists, append forward content
+                content += `\n${fwdContent}`;
+            }
+
+            // Fallback: no snapshot but reference exists (Legacy Forward)
+            if (!snapshot && message.reference?.messageId) {
+                try {
+                    const session = this.clients.get(token) || this.botClients.get(token);
+                    if (session) {
+                        let refMsg: Message | null = null;
+                        if (message.reference.channelId === message.channelId) {
+                            refMsg = await message.channel.messages.fetch(message.reference.messageId);
+                        } else {
+                            const ch = await (session.client as any).channels.fetch(message.reference.channelId) as any;
+                            // Safe check for method existence
+                            if (ch && typeof ch.messages?.fetch === 'function') {
+                                refMsg = await ch.messages.fetch(message.reference.messageId);
+                            }
+                        }
+
+                        if (refMsg) {
+                            let fwd = `-# 📨 Forwarded Message`;
+                            if (refMsg.content) fwd += `\n${refMsg.content}`;
+                            content = content ? `${content}\n${fwd}` : fwd;
+
+                            if (refMsg.attachments.size > 0) {
+                                const refParsed = parseAttachments(refMsg.attachments, (refMsg as any).flags);
+                                const refFiltered = validateMediaForwarding(refParsed, userPlan);
+                                eligibleMedia = [...eligibleMedia, ...refFiltered.eligible];
+                                rejectedMedia = [...rejectedMedia, ...refFiltered.rejected];
+                            }
+                        }
+                    }
+                } catch (err: any) {
+                    logger.warn({ error: err.message }, 'Failed to fetch forwarded reference message');
+                }
+            }
+        }
+
+        // ── Process Replies (Non-Forward) ──
+        else if (message.reference && message.reference.messageId) {
+            // Optional: Reply handling logic if needed. 
+        }
+
+        // Detailed Media Logging
+        if (eligibleMedia.length > 0) {
+            const categories = [...new Set(eligibleMedia.map(m => m.category))];
+
+            logger.info({
+                ...logContext,
+                mediaCount: eligibleMedia.length,
+                categories,
+                files: eligibleMedia.map(f => f.name)
+            }, `Processing ${eligibleMedia.length} media item(s): ${categories.join(', ')}`);
+
+            // Specific loggers for requested types
+            if (categories.includes('image')) logger.info({ ...logContext, type: 'MEDIA_IMAGE' }, 'Mirroring Image Attachment');
+            if (categories.includes('video')) logger.info({ ...logContext, type: 'MEDIA_VIDEO' }, 'Mirroring Video Attachment');
+            if (categories.includes('audio')) logger.info({ ...logContext, type: 'MEDIA_AUDIO' }, 'Mirroring Audio Attachment');
+            if (categories.includes('document')) logger.info({ ...logContext, type: 'MEDIA_DOCUMENT' }, 'Mirroring Document Attachment');
+        }
+
+        // Filter out empty messages
+        if (!content && eligibleMedia.length === 0 && message.embeds.length === 0) {
+            logger.debug({ ...logContext }, 'Skipping empty message (No content, media, or embeds)');
+            return;
+        }
+
+        // Build Final Payload
         // Handle Rejection Notice
-        const rejectionNotice = buildRejectionNotice(rejected);
+        const rejectionNotice = buildRejectionNotice(rejectedMedia);
         if (rejectionNotice) content += rejectionNotice;
 
-        // Construct Webhook Files Payload directly with URLs
-        // NO DOWNLOAD STRATEGY: Pass the proxyUrl or url string directly.
-        const files = eligible.map(att => ({
+        // Construct Webhook Files (Direct URLs)
+        const files = eligibleMedia.map(att => ({
             attachment: att.proxyUrl || att.url,
             name: att.name
         }));
@@ -241,11 +374,10 @@ export class DiscordMirror {
             username: message.author.username,
             avatarURL: message.author.displayAvatarURL(),
             content: content,
-            files: files // Passing URLs directly is efficient
+            files: files // Passing URLs directly
         };
 
         // Forward to all webhooks
-        // Deduplicate webhooks
         const uniqueParams = new Map<string, string>();
         for (const cfg of configs) {
             if (!uniqueParams.has(cfg.targetWebhookUrl)) {
@@ -253,13 +385,25 @@ export class DiscordMirror {
             }
         }
 
+        logger.info({
+            ...logContext,
+            targets: uniqueParams.size
+        }, `Dispatching message to ${uniqueParams.size} webhook(s)`);
+
         const promises = Array.from(uniqueParams.entries()).map(([url, cfgId]) =>
             WebhookExecutor.send(url, payload, cfgId)
         );
 
-        await Promise.allSettled(promises);
-    }
+        const results = await Promise.allSettled(promises);
+        const successes = results.filter(r => r.status === 'fulfilled').length;
+        const failures = results.filter(r => r.status === 'rejected').length;
 
+        logger.info({
+            ...logContext,
+            successes,
+            failures
+        }, `Mirroring complete: ${successes} sent, ${failures} failed`);
+    }
 
     // ──────────────────────────────────────────────────────────────
     //  HELPERS
