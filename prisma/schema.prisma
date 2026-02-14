@@ -85,6 +85,7 @@ model MirrorConfig {
   targetChannelName String?
   targetGuildId     String?
   targetGuildName   String?
+  telegramTopicId   String?
   sourceGuildId     String?
   discordAccount    DiscordAccount?  @relation(fields: [discordAccountId], references: [id])
   telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])

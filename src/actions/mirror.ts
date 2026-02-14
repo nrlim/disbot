@@ -223,6 +223,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 targetWebhookName: validated.data.targetWebhookName,
                 sourceChannelName: validated.data.sourceChannelName,
                 targetGuildName: validated.data.targetGuildName,
+                telegramTopicId: validated.data.telegramTopicId,
                 groupId: finalGroupId,
                 active: true,
             }
@@ -406,6 +407,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             targetWebhookName: validated.data.targetWebhookName,
             sourceChannelName: validated.data.sourceChannelName,
             targetGuildName: validated.data.targetGuildName,
+            telegramTopicId: validated.data.telegramTopicId,
             groupId: finalGroupId,
         };
 

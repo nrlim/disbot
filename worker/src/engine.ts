@@ -94,12 +94,14 @@ export class Engine {
                     userToken: resolvedUserToken,
                     telegramSession: resolvedTgSession,
                     telegramChatId: resolvedTgChatId,
-                    telegramTopicId: undefined, // Removed from schema
+                    telegramTopicId: cfg.telegramTopicId || undefined,
                     targetWebhookUrl: cfg.targetWebhookUrl,
                     type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
                     targetChannelId: cfg.targetChannelId || undefined,
                     userPlan: cfg.user?.plan || 'FREE',
-                    userId: cfg.userId
+                    userId: cfg.userId,
+                    sourceChannelName: cfg.sourceChannelName || undefined,
+                    targetWebhookName: cfg.targetWebhookName || undefined
                 };
             });
 
