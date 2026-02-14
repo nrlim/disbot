@@ -48,26 +48,53 @@ export class Engine {
         logger.info('Starting sync cycle...');
 
         try {
-            // 1. Fetch Active Configs
+            // 1. Fetch Active Configs with Relations
             const activeConfigsRaw = await prisma.mirrorConfig.findMany({
                 where: { active: true },
-                include: { user: { select: { plan: true } } }
+                include: {
+                    user: { select: { plan: true } },
+                    discordAccount: true,
+                    telegramAccount: true
+                }
             });
 
             // Map to MirrorActiveConfig
             const activeConfigs: MirrorActiveConfig[] = activeConfigsRaw.map((cfg: any) => {
                 let platform = (cfg.sourcePlatform as 'DISCORD' | 'TELEGRAM');
-                if (!platform && cfg.telegramSession) platform = 'TELEGRAM';
                 if (!platform) platform = 'DISCORD';
+
+                // Resolve Credentials from Relations
+                let resolvedUserToken = undefined;
+                if (cfg.discordAccount && cfg.discordAccount.token) {
+                    resolvedUserToken = cfg.discordAccount.token;
+                } else if (cfg.userToken) {
+                    // Fallback for legacy configs if field typically exists on type (though removed in schema, runtime object might still have it if DB not migrated cleanly? No, prisma won't fetch it if not in schema)
+                    // Actually, if we use @ts-ignore or 'any', we might access it if the column exists in DB but not schema. 
+                    // But strictly speaking, we should rely on relation.
+                    resolvedUserToken = cfg.userToken;
+                }
+
+                let resolvedTgSession = undefined;
+                if (cfg.telegramAccount && cfg.telegramAccount.sessionString) {
+                    resolvedTgSession = cfg.telegramAccount.sessionString;
+                } else if (cfg.telegramSession) {
+                    resolvedTgSession = cfg.telegramSession; // Legacy fallback
+                }
+
+                let resolvedTgChatId = undefined;
+                if (platform === 'TELEGRAM') {
+                    // In new schema, sourceChannelId stores the chat ID for Telegram too
+                    resolvedTgChatId = cfg.sourceChannelId || cfg.telegramChatId;
+                }
 
                 return {
                     id: cfg.id,
                     sourcePlatform: platform,
                     sourceChannelId: cfg.sourceChannelId || '',
-                    userToken: cfg.userToken || undefined,
-                    telegramSession: cfg.telegramSession || undefined,
-                    telegramChatId: cfg.telegramChatId || undefined,
-                    telegramTopicId: cfg.telegramTopicId || undefined,
+                    userToken: resolvedUserToken,
+                    telegramSession: resolvedTgSession,
+                    telegramChatId: resolvedTgChatId,
+                    telegramTopicId: undefined, // Removed from schema
                     targetWebhookUrl: cfg.targetWebhookUrl,
                     type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
                     targetChannelId: cfg.targetChannelId || undefined,

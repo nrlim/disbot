@@ -5,6 +5,11 @@ generator client {
   provider = "prisma-client-js"
 }
 
+generator client_worker {
+  provider = "prisma-client-js"
+  output   = "../worker/node_modules/@prisma/client"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -46,6 +51,8 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+  discordAccounts DiscordAccount[]
+  telegramAccounts TelegramAccount[]
   
   // Custom Relation to MirrorConfig
   configs MirrorConfig[]
@@ -77,16 +84,18 @@ model MirrorConfig {
   active            Boolean      @default(true)
   status            String       @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
   
-  // Discord Source Fields
-  sourceGuildName   String?      // Dibuat optional untuk mendukung Telegram
-  sourceChannelId   String?      // Dibuat optional untuk mendukung Telegram
-  userToken         String?      // Encrypted (Untuk Discord UserBot Mode)
+
+  // Source Configuration
+  sourceGuildName   String?      // Optional: Friendly name for UI
+  sourceChannelId   String       // The ID of the channel/chat to watch (Universal)
   
-  // Telegram Source Fields (Strictly MTProto/UserBot)
-  telegramSession   String?      @db.Text // Encrypted Session String (GramJS)
-  telegramChatId    String?      // ID Channel atau Group sumber
-  telegramPhone     String?      // Disimpan untuk memudahkan re-auth jika session expire
-  telegramTopicId   String?      // Optional: Filter by specific forum topic ID
+  // Discord Source Reference
+  discordAccountId  String?      
+  discordAccount    DiscordAccount? @relation(fields: [discordAccountId], references: [id])
+  
+  // Telegram Source Reference
+  telegramAccountId String?
+  telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])
   
   // Target Configuration
   targetWebhookUrl  String?      // Digunakan jika type == CUSTOM_HOOK
@@ -102,6 +111,46 @@ model MirrorConfig {
 
   @@index([userId])
   @@index([sourcePlatform])
+  @@index([discordAccountId])
+  @@index([telegramAccountId])
+}
+
+model DiscordAccount {
+  id              String         @id @default(cuid())
+  userId          String
+  discordId       String?
+  username        String
+  discriminator   String?
+  avatar          String?
+  token           String         
+  valid           Boolean        @default(true)
+  
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mirrorConfigs   MirrorConfig[]
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId])
+}
+
+
+model TelegramAccount {
+  id              String         @id @default(cuid())
+  userId          String
+  telegramId      String?
+  username        String?
+  phone           String
+  sessionString   String         @db.Text
+  valid           Boolean        @default(true)
+  
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mirrorConfigs   MirrorConfig[]
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId])
 }
 
 enum MirrorType {

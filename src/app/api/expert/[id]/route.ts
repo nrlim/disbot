@@ -21,6 +21,10 @@ export async function GET(
             where: {
                 id: id,
                 userId: session.user.id
+            },
+            include: {
+                discordAccount: true,
+                telegramAccount: true
             }
         });
 
@@ -28,19 +32,26 @@ export async function GET(
             return new NextResponse("Not Found", { status: 404 });
         }
 
-        // Decrypt the token
+        // Decrypt the token from connected account if available
         let decryptedToken = "";
+        let decryptedSession = "";
+
         try {
-            decryptedToken = config.userToken ? decrypt(config.userToken) : "";
+            if (config.discordAccount?.token) {
+                decryptedToken = decrypt(config.discordAccount.token);
+            }
+            if (config.telegramAccount?.sessionString) {
+                decryptedSession = decrypt(config.telegramAccount.sessionString);
+            }
         } catch (e) {
             console.error("Token decryption failed", e);
-            // If decryption fails, we might return empty or error. 
-            // Return empty to allow user to overwrite it.
         }
 
         return NextResponse.json({
             ...config,
-            userToken: decryptedToken
+            userToken: decryptedToken,
+            telegramSession: decryptedSession
+            // Note: Schema removed userToken column, so we synthesized it here for backward compat
         });
     } catch (e) {
         return new NextResponse("Internal Server Error", { status: 500 });

@@ -3,9 +3,10 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import WebhookList from "@/components/WebhookList";
-import crypto from "crypto";
+import { decrypt } from "@/lib/encryption";
 import { Terminal, Shield, Cpu } from "lucide-react";
 import { PLAN_LIMITS } from "@/lib/constants";
+import { getDiscordAccounts } from "@/actions/discord-account";
 
 export default async function ExpertDashboard() {
     const session = await getServerSession(authOptions);
@@ -14,42 +15,32 @@ export default async function ExpertDashboard() {
         redirect("/");
     }
 
-    const allConfigs = await prisma.mirrorConfig.findMany({
-        where: { userId: session.user.id },
-        orderBy: { createdAt: "desc" }
-    });
+    const [allConfigs, accounts] = await Promise.all([
+        prisma.mirrorConfig.findMany({
+            where: { userId: session.user.id },
+            orderBy: { createdAt: "desc" },
+            include: {
+                discordAccount: true,
+                telegramAccount: true
+            }
+        }),
+        getDiscordAccounts()
+    ]);
 
     // Decrypt tokens for the UI (Autofill feature)
     const configs = allConfigs.map(cfg => {
-        let userToken = cfg.userToken;
-        if (userToken && userToken.includes(':')) {
-            try {
-                const parts = userToken.split(':');
-                if (parts.length === 3) {
-                    const [ivHex, tagHex, encryptedHex] = parts;
-                    const iv = Buffer.from(ivHex, 'hex');
-                    const tag = Buffer.from(tagHex, 'hex');
-                    const encrypted = Buffer.from(encryptedHex, 'hex');
+        let userToken = "";
 
-                    const masterKey = process.env.ENCRYPTION_KEY || "";
-                    let keyBuffer: Buffer;
-                    if (masterKey.length === 64) {
-                        keyBuffer = Buffer.from(masterKey, 'hex');
-                    } else {
-                        keyBuffer = Buffer.from(masterKey, 'utf8');
-                    }
-
-                    const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuffer, iv);
-                    decipher.setAuthTag(tag);
-
-                    let decrypted = decipher.update(encrypted);
-                    decrypted = Buffer.concat([decrypted, decipher.final()]);
-                    userToken = decrypted.toString('utf8');
-                }
-            } catch (e) {
-                console.error("Failed to decrypt token for config:", cfg.id);
+        try {
+            if (cfg.discordAccount?.token) {
+                userToken = decrypt(cfg.discordAccount.token);
+            } else if (cfg.telegramAccount?.sessionString) {
+                userToken = decrypt(cfg.telegramAccount.sessionString);
             }
+        } catch (e) {
+            console.error("Failed to decrypt token for config:", cfg.id);
         }
+
         return { ...cfg, userToken };
     });
 
@@ -108,6 +99,7 @@ export default async function ExpertDashboard() {
             <div className="bg-zinc-950 border border-zinc-800 p-1">
                 <WebhookList
                     initialConfigs={configs}
+                    accounts={accounts}
                     usageCount={usageCount}
                     isLimitReached={isLimitReached}
                 />

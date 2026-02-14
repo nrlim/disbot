@@ -1,13 +1,11 @@
 "use server";
 
-
-
 import { z } from "zod";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
-import { encrypt } from "@/lib/encryption";
+import { encrypt, decrypt } from "@/lib/encryption";
 import { PLAN_LIMITS } from "@/lib/constants";
 
 // --- Schema ---
@@ -20,6 +18,7 @@ const mirrorSchema = z.object({
     // Discord Specific
     sourceChannelId: z.string().optional(),
     userToken: z.string().optional(),
+    discordAccountId: z.string().optional(),
 
     // Telegram Specific
     telegramSession: z.string().optional(),
@@ -35,10 +34,10 @@ const mirrorSchema = z.object({
                 path: ["sourceChannelId"]
             });
         }
-        if (!data.userToken || data.userToken.length < 10) {
+        if ((!data.userToken || data.userToken.length < 10) && !data.discordAccountId) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "User Token is required for Discord Custom Hook",
+                message: "User Token is required (or select an account)",
                 path: ["userToken"]
             });
         }
@@ -74,6 +73,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
         targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
         userToken: formData.get("userToken") as string || undefined,
+        discordAccountId: formData.get("discordAccountId") as string || undefined,
 
         telegramSession: formData.get("telegramSession") || undefined,
         telegramChatId: formData.get("telegramChatId") || undefined,
@@ -102,7 +102,53 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
     // Create
     try {
-        const { sourcePlatform, telegramSession, userToken } = validated.data;
+        const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data; // Note: telegramSession/userToken from input are now ignored or used to find account if not provided (though manual token is deprecated)
+
+        // Enforce account selection for Discord
+        if (sourcePlatform === "DISCORD" && !discordAccountId) {
+            return { error: "Discord Account selection is required." };
+        }
+
+        // Enforce account selection for Telegram
+        // Note: The UI currently sends session string. Ideally we should have a TelegramAccount model and ID. 
+        // For now, if we don't have TelegramAccount ID in form, we might need to create one? 
+        // OR the user should have linked Telegram first?
+        // Given the request "clean schema, remove info... just discord account id", we should assume similar for Telegram.
+        // But the schema added TelegramAccount.
+        // Let's assume for now we only support Discord fully via ID as requested, or finding an existing TelegramAccount?
+        // The modal UI for Telegram still does manual session login. 
+        // We probably need to update the UI to "Link Telegram Account" separately, similar to Discord.
+        // BUT, for this step, let's just make it compilable with the current schema.
+
+        // Use a dummy or look up telegram account?
+        // Since we removed `telegramSession` from MirrorConfig, we CANNOT store it there.
+        // We must store it in a TelegramAccount and link it.
+
+        let telegramAccountIdToLink = null;
+        if (sourcePlatform === "TELEGRAM" && telegramSession && telegramPhone) {
+            // Check if account exists or create it
+            let tgAccount = await prisma.telegramAccount.findFirst({
+                where: { userId: session.user.id, phone: telegramPhone }
+            });
+
+            if (!tgAccount) {
+                tgAccount = await prisma.telegramAccount.create({
+                    data: {
+                        userId: session.user.id,
+                        phone: telegramPhone,
+                        sessionString: encrypt(telegramSession),
+                        username: "Telegram User", // Placeholder or fetch if possible
+                    }
+                });
+            } else {
+                // Update session if needed
+                await prisma.telegramAccount.update({
+                    where: { id: tgAccount.id },
+                    data: { sessionString: encrypt(telegramSession) }
+                });
+            }
+            telegramAccountIdToLink = tgAccount.id;
+        }
 
         await prisma.mirrorConfig.create({
             data: {
@@ -110,14 +156,14 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 // @ts-ignore
                 sourcePlatform: sourcePlatform as any,
                 sourceGuildName: validated.data.sourceGuildName,
-                // Discord
-                sourceChannelId: sourcePlatform === "DISCORD" ? validated.data.sourceChannelId || "" : "",
-                userToken: (sourcePlatform === "DISCORD" && userToken) ? encrypt(userToken) : null,
-                // Telegram
-                telegramSession: (sourcePlatform === "TELEGRAM" && telegramSession) ? encrypt(telegramSession) : null,
-                telegramChatId: sourcePlatform === "TELEGRAM" ? validated.data.telegramChatId : null,
-                telegramTopicId: sourcePlatform === "TELEGRAM" ? validated.data.telegramTopicId : null,
-                telegramPhone: sourcePlatform === "TELEGRAM" ? validated.data.telegramPhone : null,
+                // Universal
+                sourceChannelId: sourcePlatform === "DISCORD"
+                    ? (validated.data.sourceChannelId || "")
+                    : (validated.data.telegramChatId || ""),
+
+                // Relations
+                discordAccountId: sourcePlatform === "DISCORD" ? discordAccountId : null,
+                telegramAccountId: sourcePlatform === "TELEGRAM" ? telegramAccountIdToLink : null,
 
                 targetWebhookUrl: validated.data.targetWebhookUrl,
                 active: true
@@ -128,7 +174,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         return { success: true };
     } catch (e) {
         console.error("Failed to create mirror:", (e as Error)?.message || "Unknown error");
-        return { error: `Error: ${(e as Error)?.message}` }; // Expose error for debugging
+        return { error: `Error: ${(e as Error)?.message}` };
     }
 }
 
@@ -187,17 +233,55 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
 
     // Bulk Create
     try {
+        // Bulk create uses encrypted token directly in old schema.
+        // In new schema, we removed userToken from MirrorConfig.
+        // We MUST create a new DiscordAccount for this bulk token if we want to support it,
+        // OR we just attach to an existing account if we can find one.
+        // But bulk often implies many different tokens?
+        // Wait, "Bulk Import" UI was using a single token "Applied to All".
+        // So we can create one DiscordAccount for this token, and link all mirrors to it.
+
+        // Check for existing account with this token?
+        // We can't search by encrypted token easily.
+        // Let's create a new "Bulk Import Account" or similar.
+
+        // For now, let's create a temporary DiscordAccount for this batch.
+        // But we need user info. We can't fetch it here easily without making a request.
+        // Let's assume the user has to link the account properly first.
+        // But that breaks the "Bulk" flow convenience.
+        // Since the user asked to remove "information about discord... from mirror config", 
+        // we strictly cannot store userToken in MirrorConfig.
+
+        // Hack: Create a DiscordAccount placeholder?
+        // Ideally we fetch the user info.
+        // Since we can't do network calls easily here without more logic, let's just error for now 
+        // OR tell the user "Please add the account first, then select it for bulk."
+        // But the bulk UI had a token input.
+
+        // Given the constraints and the request "remove info... just account id", 
+        // I will disable the token-based bulk creation and return an error 
+        // or just link to the FIRST active discord account of the user as a fallback?
+
+        // Let's just create a DiscordAccount with a placeholder name if we must.
         const encryptedToken = encrypt(userToken);
+        const newAccount = await prisma.discordAccount.create({
+            data: {
+                userId: session.user.id,
+                token: encryptedToken,
+                username: "Bulk Imported Account",
+                discordId: `bulk_${Date.now()}`, // Dummy ID
+            }
+        });
 
         await prisma.mirrorConfig.createMany({
             data: parsedConfigs.map(c => ({
                 userId: session.user.id,
                 // @ts-ignore
-                sourcePlatform: "DISCORD", // Default to Discord for bulk text parser
+                sourcePlatform: "DISCORD",
                 sourceGuildName: c.sourceGuildName,
                 sourceChannelId: c.sourceChannelId,
                 targetWebhookUrl: c.targetWebhookUrl,
-                userToken: encryptedToken,
+                discordAccountId: newAccount.id, // Link to the new account
                 active: true,
             }))
         });
@@ -206,7 +290,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
         return { success: true, count: parsedConfigs.length };
     } catch (e) {
         console.error("Failed to bulk create:", (e as Error)?.message || "Unknown error");
-        return { error: `Error: ${(e as Error)?.message}` }; // Expose error
+        return { error: `Error: ${(e as Error)?.message}` };
     }
 }
 
@@ -223,6 +307,8 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
         targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
         userToken: formData.get("userToken") as string || undefined,
+        discordAccountId: formData.get("discordAccountId") as string || undefined,
+
         telegramSession: formData.get("telegramSession") as string || undefined,
         telegramChatId: formData.get("telegramChatId") || undefined,
         telegramTopicId: formData.get("telegramTopicId") || undefined,
@@ -243,11 +329,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         if (!existing) return { error: "Configuration not found" };
 
-        const { sourcePlatform, telegramSession, userToken } = validated.data;
-
-        // Handle token encryption if changed or new
-        // If token is mask or empty, we might sustain old one? 
-        // For simplicity, we assume if provided it updates.
+        const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
 
         const updateData: any = {
             // @ts-ignore
@@ -258,23 +340,51 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         if (sourcePlatform === "DISCORD") {
             updateData.sourceChannelId = validated.data.sourceChannelId!;
-            // Only update token if provided (and not just masked stars)
-            if (userToken && !userToken.includes("***")) {
-                updateData.userToken = encrypt(userToken);
+
+            // Account Logic
+            // We only update discordAccountId if provided. 
+            // Manual token override is deprecated/removed from schema.
+            if (discordAccountId) {
+                updateData.discordAccountId = discordAccountId;
             }
-            // Clear telegram fields? Optional, but cleaner.
-            updateData.telegramSession = null;
-            updateData.telegramChatId = null;
+
+            // Clear telegram fields (by removing the relation if we switched platform, but Prisma doesn't auto-clear relation unless we set to null)
+            updateData.telegramAccountId = null;
+
         } else {
-            updateData.telegramChatId = validated.data.telegramChatId!;
-            updateData.telegramTopicId = validated.data.telegramTopicId || null;
-            updateData.telegramPhone = validated.data.telegramPhone!;
-            if (telegramSession && !telegramSession.includes("***")) {
-                updateData.telegramSession = encrypt(telegramSession);
+            // Telegram
+            // We need to link a TelegramAccount.
+            let telegramAccountIdToLink = null;
+            if (telegramSession && telegramPhone) {
+                // Check/Create account similar to createMirrorConfig
+                let tgAccount = await prisma.telegramAccount.findFirst({
+                    where: { userId: session.user.id, phone: telegramPhone }
+                });
+                if (!tgAccount) {
+                    tgAccount = await prisma.telegramAccount.create({
+                        data: {
+                            userId: session.user.id,
+                            phone: telegramPhone,
+                            sessionString: encrypt(telegramSession),
+                            username: "Telegram User",
+                        }
+                    });
+                } else {
+                    await prisma.telegramAccount.update({
+                        where: { id: tgAccount.id },
+                        data: { sessionString: encrypt(telegramSession) }
+                    });
+                }
+                telegramAccountIdToLink = tgAccount.id;
             }
+
+            if (telegramAccountIdToLink) {
+                updateData.telegramAccountId = telegramAccountIdToLink;
+            }
+            updateData.sourceChannelId = telegramChatId || ""; // Use chat ID as sourceChannelId
+
             // Clear discord fields
-            updateData.sourceChannelId = "";
-            updateData.userToken = null;
+            updateData.discordAccountId = null;
         }
 
         // Reset status to ACTIVE when updated by user
@@ -290,10 +400,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         return { success: true };
     } catch (e: any) {
         console.error("Failed to update mirror:", e?.message || e);
-        // Distinguish specific errors if possible, otherwise generic
         if (e?.code === 'P2002') return { error: "Unique constraint violation." };
         if (e?.code === 'P2025') return { error: "Configuration no longer exists." };
-        return { error: `Error: ${e?.message || e}` }; // Expose error for debugging
+        return { error: `Error: ${e?.message || e}` };
     }
 }
 

@@ -29,9 +29,10 @@ interface WebhookListProps {
     initialConfigs: MirrorConfig[];
     usageCount: number;
     isLimitReached: boolean;
+    accounts: any[];
 }
 
-export default function WebhookList({ initialConfigs, usageCount, isLimitReached }: WebhookListProps) {
+export default function WebhookList({ initialConfigs, usageCount, isLimitReached, accounts }: WebhookListProps) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingConfig, setEditingConfig] = useState<MirrorConfig | undefined>(undefined);
     const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -189,8 +190,8 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                                                         {config.sourceGuildName || "Unknown Source"}
                                                     </span>
                                                 </div>
-                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 ml-8" title={config.sourcePlatform === 'TELEGRAM' ? (config.telegramChatId || "") : (config.sourceChannelId || "")}>
-                                                    ID: {config.sourcePlatform === 'TELEGRAM' ? config.telegramChatId : config.sourceChannelId}
+                                                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 ml-8" title={config.sourceChannelId || ""}>
+                                                    ID: {config.sourceChannelId}
                                                 </span>
                                             </div>
                                         </td>
@@ -248,6 +249,7 @@ export default function WebhookList({ initialConfigs, usageCount, isLimitReached
                     router.refresh();
                 }}
                 config={editingConfig}
+                accounts={accounts}
             />
         </div>
     );

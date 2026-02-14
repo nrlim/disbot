@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import Image from "next/image";
 import Link from "next/link";
-import { CreditCard, Shield, User, Zap, CheckCircle2, Terminal, ExternalLink } from "lucide-react";
+import { CreditCard, Shield, Zap, CheckCircle2, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PLAN_LIMITS, DISCORD_ADMIN_LINK } from "@/lib/constants";
 
@@ -63,8 +63,7 @@ export default async function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 {/* Profile Card */}
                 <div className="md:col-span-2 space-y-6">
-                    <div className="bg-zinc-950 border border-zinc-800 p-8 relative overflow-hidden group h-full">
-
+                    <div className="bg-zinc-950 border border-zinc-800 p-8 relative overflow-hidden group">
                         <div className="flex flex-col md:flex-row items-start gap-8 mb-8">
                             <div className="relative shrink-0">
                                 {session.user.image ? (
@@ -111,9 +110,11 @@ export default async function SettingsPage() {
                             </div>
                         </div>
                     </div>
+
+
                 </div>
 
-                {/* Sub Card */}
+                {/* Sub Card (Plan) */}
                 <div className="md:col-span-1">
                     <div className="h-full bg-zinc-950 border border-zinc-800 p-6 flex flex-col relative overflow-hidden group hover:border-primary/30 transition-colors">
                         <div className="absolute top-0 right-0 p-4 opacity-50">
@@ -179,8 +180,6 @@ export default async function SettingsPage() {
                                     <Link
                                         href={DISCORD_ADMIN_LINK}
                                         target="_blank"
-                                        // Simple clipboard copy won't work easily here without client component interaction. 
-                                        // For now, simple redirect.
                                         className="flex items-center justify-center gap-2 w-full py-2 bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/20 text-white font-mono text-xs font-bold uppercase transition-all"
                                     >
                                         <CreditCard className="w-3 h-3" />

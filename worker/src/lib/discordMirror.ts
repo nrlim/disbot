@@ -412,36 +412,21 @@ export class DiscordMirror {
     private groupConfigsByToken(configs: MirrorActiveConfig[]): Map<string, MirrorActiveConfig[]> {
         const map = new Map<string, MirrorActiveConfig[]>();
         for (const cfg of configs) {
+            // Configs from new schema (via engine.ts) will have the encrypted token populated in userToken
             if (!cfg.userToken) continue;
-            // Handle decryption if needed (assuming token might be encrypted) - but engine.ts did it before passing?
-            // Actually engine.ts decrypted BEFORE calling sync. So tokens here are plain.
-            // Wait, looking at engine.ts, it decrypts then passes to sync.
-            // But wait, the `configs` passed to `sync` might be raw from DB or processed.
-            // In engine.ts, `manager.sync()` fetches from DB, decrypts, filters, THEN calls `this.syncCustomHookClients`.
-            // So `DiscordMirror.sync` expects DECRYPTED tokens in `userToken`.
-
-            // However, `engine.ts` logic was:
-            // 1. Fetch all
-            // 2. Decrypt tokens
-            // 3. Pass to specialized syncs.
-
-            // I should assume the caller (engine.ts) handles decryption before calling me, OR I handle it.
-            // Let's handle it here to be safe if passed raw configs, or just assume plain if already processed.
-            // Since `engine.ts` will call this with `allowedConfigs`, let's assume `engine.ts` decrypts.
-
-            // Actually, `engine.ts` logic for `sync` does:
-            // `const activeConfigsRaw = await prisma...`
-            // `const activeConfigs = ... map`
-            // `enforcePathLimits`
-            // `telegramConfigs` logic decrypts.
-            // `discordHookConfigs` logic decrypts.
-
-            // So if I move logic here, I should handle decryption here if I want `engine.ts` to be simple.
-            // Let's make `DiscordMirror` handle decryption.
 
             let token = cfg.userToken;
+
+            // Decrypt if token is in encrypted format (IV:Tag:Data)
             if (token.includes(':')) {
-                token = decrypt(token, process.env.ENCRYPTION_KEY || '') || '';
+                const decrypted = decrypt(token, process.env.ENCRYPTION_KEY || '');
+                if (decrypted) {
+                    token = decrypted;
+                } else {
+                    // Decryption failed (invalid key or corrupted data)
+                    logger.warn({ configId: cfg.id }, 'Failed to decrypt Discord token for config');
+                    continue;
+                }
             }
 
             if (!token) continue;
