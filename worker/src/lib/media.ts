@@ -42,17 +42,22 @@ const DOCUMENT_MIMES = new Set([
 //  File size limits (in bytes)
 // ──────────────────────────────────────────────────────────────
 
-/** Default 25 MB limit — safe for Boost Level 2+ guilds and most webhooks */
-const DEFAULT_FILE_SIZE_LIMIT = 25 * 1024 * 1024;
+/** Default 50 MB limit - for Pro and up */
+const PRO_FILE_SIZE_LIMIT = 50 * 1024 * 1024;
+/** 100 MB Limit for Elite */
+const ELITE_FILE_SIZE_LIMIT = 100 * 1024 * 1024;
 /** Strict 8 MB limit for free-tier / unboosted guilds */
 const STRICT_FILE_SIZE_LIMIT = 8 * 1024 * 1024;
 
-// Per-plan file size limits — FREE/Starter gets 8 MB, Pro/Elite get 25 MB
+// Per-plan file size limits
+// Starter: 8MB
+// Pro: 50MB (Standard Discord Nitro Basic range)
+// Elite: 100MB (Nitro level)
 const PLAN_FILE_SIZE_LIMITS: Record<string, number> = {
     FREE: STRICT_FILE_SIZE_LIMIT,
     STARTER: STRICT_FILE_SIZE_LIMIT,
-    PRO: DEFAULT_FILE_SIZE_LIMIT,
-    ELITE: DEFAULT_FILE_SIZE_LIMIT,
+    PRO: PRO_FILE_SIZE_LIMIT,
+    ELITE: ELITE_FILE_SIZE_LIMIT,
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -67,13 +72,13 @@ export type MediaStrategy = 'SNAPSHOT' | 'REJECT';
 
 /**
  * Categories each plan tier is allowed to forward.
- * 'unknown' is never allowed for any plan — it's rejected at the category level.
+ * updated as per new pricing.
  */
 const PLAN_ALLOWED_CATEGORIES: Record<string, Set<MediaCategory>> = {
-    FREE: new Set(['image']),                                          // FREE: images only
-    STARTER: new Set(['image', 'audio']),                              // Starter: images + audio
-    PRO: new Set(['image', 'audio', 'document']),                      // Pro: images + audio + documents
-    ELITE: new Set(['image', 'audio', 'document', 'video', 'unknown']), // Elite: everything
+    FREE: new Set(['image']),                                              // FREE: images only
+    STARTER: new Set(['image', 'audio']),                                  // Starter: images + audio
+    PRO: new Set(['image', 'audio', 'document', 'video']),                 // Pro: images + audio + documents + video
+    ELITE: new Set(['image', 'audio', 'document', 'video', 'unknown']),    // Elite: everything
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -241,15 +246,16 @@ export function getFileSizeLimit(plan: string): number {
 //  The single entry point for all plan-aware attachment filtering.
 //  Replaces the old filterAttachments().
 //
-//  Decision matrix:
+//  Decision matrix (Updated):
 //  ┌─────────┬─────────┬─────────┬──────────┬──────────┐
 //  │  Plan   │ image/* │ audio/* │ video/*  │ docs/etc │
 //  ├─────────┼─────────┼─────────┼──────────┼──────────┤
 //  │ FREE    │    ✓    │    ✗    │    ✗     │    ✗     │
-//  │ STARTER │    ✓    │    ✗    │    ✗     │    ✗     │
-//  │ PRO     │    ✓    │    ✓    │    ✓     │    ✗     │
+//  │ STARTER │    ✓    │    ✓    │    ✗     │    ✗     │
+//  │ PRO     │    ✓    │    ✓    │    ✓     │    ✓     │ <--- PRO now gets Video & Doc (implied by "Dokumen" and pricing tier) -> Wait, user request for PRO: "Forward Media: Audio, Video & Dokumen". So YES to everything for PRO.
 //  │ ELITE   │    ✓    │    ✓    │    ✓     │    ✓     │
 //  └─────────┴─────────┴─────────┴──────────┴──────────┘
+// **Correction**: PRO is allowed Audio, Video, Document. Basically everything except 'unknown' types which Elite gets.
 // ──────────────────────────────────────────────────────────────
 
 /**
@@ -258,7 +264,7 @@ export function getFileSizeLimit(plan: string): number {
  * 
  *  1. **Plan-level gate** — FREE users get nothing.
  *  2. **MIME-type / category allowlist** — per plan (see matrix above).
- *  3. **File-size limit** — per plan (8 MB Starter, 25 MB Pro/Elite).
+ *  3. **File-size limit** — per plan (8 MB Starter, 50 MB Pro, 100 MB Elite).
  * 
  * When a file is blocked, the text message is still forwarded;
  * only the attachment is skipped with a descriptive log entry.
@@ -301,7 +307,7 @@ export function validateMediaForwarding(
         // Note: We already re-categorized 'unknown' to 'document' for Elite above, but strictly:
         if (userPlan !== 'ELITE') {
             if (!allowedCategories.has(att.category)) {
-                const reason = `Feature not supported in your plan: ${att.category} files blocked on ${userPlan} plan (${att.name})`;
+                const reason = `Feature not supported in your plan: ${att.category} files blocked on ${userPlan} plan (Upgrade to unlock)`;
                 rejected.push({ attachment: att, reason });
 
                 logger.info({

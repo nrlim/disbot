@@ -6,7 +6,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { encrypt, decrypt } from "@/lib/encryption";
-import { PLAN_LIMITS } from "@/lib/constants";
+import { PLAN_LIMITS, PLAN_PLATFORMS } from "@/lib/constants";
 
 // --- Schema ---
 
@@ -135,7 +135,15 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
             return { error: "Discord Account selection is required." };
         }
 
-        // Enforce account selection for Telegram
+        // Enforce Plan Platform Restrictions
+        const userPlan = (user as any).plan || "FREE";
+        const allowedPlatforms = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
+
+        if (!allowedPlatforms.includes(sourcePlatform)) {
+            return { error: `Your ${userPlan} plan does not support ${sourcePlatform} mirroring.` };
+        }
+
+        // Enforce account selection for Discord
         // Note: The UI currently sends session string. Ideally we should have a TelegramAccount model and ID. 
         // For now, if we don't have TelegramAccount ID in form, we might need to create one? 
         // OR the user should have linked Telegram first?
@@ -370,6 +378,15 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         if (!existing) return { error: "Configuration not found" };
 
         const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
+
+        // Enforce Plan Platform Restrictions
+        const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+        const userPlan = user?.plan || "FREE";
+        const allowedPlatforms = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
+
+        if (!allowedPlatforms.includes(sourcePlatform)) {
+            return { error: `Your ${userPlan} plan does not support ${sourcePlatform} mirroring.` };
+        }
 
         // Find or Create Mirror Group by Name
         let finalGroupId = validated.data.groupId || null;

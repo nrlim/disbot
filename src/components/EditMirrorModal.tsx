@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
 import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction } from "@/actions/telegramAuth";
+import { PLAN_PLATFORMS } from "@/lib/constants";
 
 // --- Types ---
 
@@ -58,13 +59,14 @@ interface EditMirrorModalProps {
     groups?: any[];
     initialTitle?: string;
     initialStep?: 1 | 2;
+    userPlan: string;
 }
 
 // --- Zod Schemas ---
 const webhookSchema = z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL");
 const channelIdSchema = z.string().min(17, "Invalid Channel ID").regex(/^\d+$/, "Channel ID must be numeric");
 
-export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, accounts, groups, initialTitle, initialStep = 1 }: EditMirrorModalProps) {
+export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, accounts, groups, initialTitle, initialStep = 1, userPlan }: EditMirrorModalProps) {
     // Flow State
     const [step, setStep] = useState<1 | 2>(1);
     const [mirrorTitle, setMirrorTitle] = useState("");
@@ -748,10 +750,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                     </div>
 
                                                     <div
-                                                        onClick={() => setSourcePlatform('TELEGRAM')}
+                                                        onClick={() => {
+                                                            if (!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
+                                                            setSourcePlatform('TELEGRAM')
+                                                        }}
                                                         className={cn(
                                                             "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
-                                                            sourcePlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200"
+                                                            sourcePlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
+                                                            !PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
                                                         )}
                                                     >
                                                         <div className="flex items-center gap-3 mb-3">
@@ -763,8 +769,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                 <Monitor className="w-5 h-5" />
                                                             </div>
                                                         </div>
-                                                        <h3 className="font-bold text-gray-900">Telegram to Discord</h3>
-                                                        <p className="text-xs text-gray-500 mt-1">Forward Telegram channel posts to Discord webhooks.</p>
+                                                        <div className="flex justify-between items-start">
+                                                            <div>
+                                                                <h3 className="font-bold text-gray-900">Telegram to Discord</h3>
+                                                                <p className="text-xs text-gray-500 mt-1">Forward Telegram channel posts to Discord webhooks.</p>
+                                                            </div>
+                                                            {!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && (
+                                                                <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Pro to unlock">
+                                                                    <ShieldAlert className="w-4 h-4" />
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                         {sourcePlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
                                                     </div>
                                                 </div>

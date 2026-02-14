@@ -99,6 +99,7 @@ export default async function ExpertDashboard() {
                     accounts={accounts}
                     usageCount={usageCount}
                     isLimitReached={isLimitReached}
+                    userPlan={userPlan}
                 />
             </div>
         </div>

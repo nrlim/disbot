@@ -19,14 +19,13 @@ import {
   Zap,
   ShieldCheck,
   Globe,
-  Check,
   Menu,
   ArrowRight,
   Server,
   Activity,
-  MessageSquare,
   Lock
 } from "lucide-react";
+import PricingSection from "@/components/PricingSection";
 import SyncPreview from "@/components/SyncPreview";
 import LoginButton from "@/components/LoginButton";
 import Logo from "@/components/Logo";
@@ -79,109 +78,7 @@ const SectionHeading = ({ children, center = true }: { children: React.ReactNode
   </h2>
 );
 
-const PricingCard = ({
-  tier,
-  price,
-  quota,
-  features,
-  recommended = false,
-  message
-}: {
-  tier: string,
-  price: string,
-  quota: string,
-  features: { text: string, included: boolean }[],
-  recommended?: boolean,
-  message: string
-}) => {
-  const [copied, setCopied] = useState(false);
 
-  const handlePayment = () => {
-    navigator.clipboard.writeText(message).then(() => {
-      setCopied(true);
-
-      const toast = document.createElement("div");
-      toast.className = "fixed bottom-5 right-5 bg-emerald-500 text-white px-6 py-3 shadow-xl z-50 font-medium animate-in slide-in-from-bottom-5 fade-in duration-300 rounded-lg";
-      toast.innerText = "Pesan pembelian disalin! Mengalihkan ke Discord...";
-      document.body.appendChild(toast);
-
-      setTimeout(() => {
-        toast.remove();
-        setCopied(false);
-      }, 3000);
-
-      setTimeout(() => {
-        window.open(DISCORD_ADMIN_LINK, '_blank');
-      }, 800);
-    });
-  };
-
-  return (
-    <motion.div
-      whileHover={{ y: -5 }}
-      className={cn(
-        "relative p-8 border flex flex-col h-full bg-white rounded-2xl transition-all duration-300 shadow-sm hover:shadow-xl",
-        recommended ? "border-emerald-500 ring-4 ring-emerald-500/10" : "border-gray-200 hover:border-gray-300"
-      )}
-    >
-      {recommended && (
-        <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-500 text-white px-4 py-1 text-xs font-bold uppercase tracking-widest rounded-full shadow-lg">
-          Paling Populer
-        </div>
-      )}
-
-      <div className="mb-8">
-        <h3 className={cn("text-lg font-bold uppercase tracking-wider mb-2", recommended ? "text-emerald-600" : "text-gray-500")}>
-          {tier}
-        </h3>
-        <div className="flex items-baseline gap-1 mb-4">
-          <span className="text-4xl font-extrabold text-gray-900 tracking-tight">{price}</span>
-          {price !== "Rp 0" && <span className="text-gray-500 text-sm font-medium">/bln</span>}
-        </div>
-        <div className="py-2 px-3 bg-gray-50 border border-gray-100 text-center rounded-lg">
-          <span className="text-sm text-gray-700 font-medium tracking-wide">{quota}</span>
-        </div>
-      </div>
-
-      <ul className="space-y-4 mb-8 flex-1">
-        {features.map((feat, i) => (
-          <li key={i} className={cn("flex items-start gap-3 text-sm font-medium", feat.included ? "text-gray-700" : "text-gray-400")}>
-            {feat.included ? (
-              <div className="p-0.5 bg-emerald-100 rounded-full mt-0.5">
-                <Check className="w-3 h-3 text-emerald-600 shrink-0" />
-              </div>
-            ) : (
-              <span className="w-4 h-4 shrink-0 mt-0.5 flex items-center justify-center text-gray-300 font-bold text-xs">✕</span>
-            )}
-            <span className={cn(feat.included ? "" : "line-through decoration-gray-300")}>{feat.text}</span>
-          </li>
-        ))}
-      </ul>
-
-      <button
-        onClick={handlePayment}
-        className={cn(
-          "w-full py-4 font-bold uppercase tracking-wider text-xs transition-all flex items-center justify-center gap-2 rounded-xl",
-          recommended
-            ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/30"
-            : "bg-gray-900 hover:bg-gray-800 text-white shadow-md"
-        )}
-      >
-        {copied ? (
-          <>
-            <Check className="w-4 h-4" />
-            Copied!
-          </>
-        ) : (
-          <>
-            {price === "Rp 0" ? "Mulai Gratis" : "Pilih Paket"}
-            <ArrowRight className="w-4 h-4" />
-          </>
-        )}
-      </button>
-    </motion.div>
-  );
-};
 
 export default function Home() {
   return (
@@ -213,9 +110,6 @@ export default function Home() {
               <Link href="/dashboard" className="w-full sm:w-auto px-8 py-4 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold text-lg shadow-xl shadow-primary/25 transition-all active:scale-95 flex items-center justify-center gap-2">
                 Mulai Sekarang <ArrowRight className="w-5 h-5" />
               </Link>
-              <button className="w-full sm:w-auto px-8 py-4 bg-white hover:bg-gray-50 text-gray-900 border border-gray-200 rounded-xl font-medium text-lg shadow-sm transition-all">
-                Lihat Demo
-              </button>
             </div>
           </motion.div>
         </div>
@@ -260,83 +154,7 @@ export default function Home() {
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-24 relative overflow-hidden bg-white">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4 text-gray-900">
-              Paket Langganan
-            </h2>
-            <p className="text-gray-500 font-medium text-lg">Pilih kapasitas mirroring yang sesuai dengan kebutuhan komunitas Anda.</p>
-          </div>
-
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
-            {/* FREE TIER */}
-            <PricingCard
-              tier="DisBot Trial"
-              price="Rp 0"
-              quota="1 Mirror Path"
-              message="Halo admin DISBOT, saya ingin mencoba Free Trial DisBot."
-              features={[
-                { text: "1 Mirror Path", included: true },
-                { text: "Teruskan Gambar Saja", included: true },
-                { text: "Filter Dasar", included: true },
-                { text: "Support Managed Bot", included: false },
-                { text: "Video & Dokumen", included: false },
-                { text: "Prioritas Support", included: false },
-              ]}
-            />
-
-            {/* STARTER TIER */}
-            <PricingCard
-              tier="DisBot Starter"
-              price="Rp 149.000"
-              quota="6 Mirror Paths"
-              message="Halo admin DISBOT, saya tertarik berlangganan Paket Starter (Rp 149.000/bln) dengan 6 Mirror Paths."
-              features={[
-                { text: "6 Mirror Paths", included: true },
-                { text: "Teruskan Gambar & Audio", included: true },
-                { text: "Support Managed Bot", included: true },
-                { text: "Video & Dokumen", included: false },
-                { text: "Multi-Akun Support", included: false },
-                { text: "Akses API", included: false },
-              ]}
-            />
-
-            {/* PRO TIER */}
-            <PricingCard
-              tier="DisBot Pro"
-              price="Rp 449.000"
-              quota="20 Mirror Paths"
-              recommended
-              message="Halo admin DISBOT, saya ingin upgrade ke Paket Pro (Rp 449.000/bln) untuk 20 paths dan full media support."
-              features={[
-                { text: "20 Mirror Paths", included: true },
-                { text: "Audio, Video & Dokumen", included: true },
-                { text: "Advanced Regex Filters", included: true },
-                { text: "3 Akun Discord", included: true },
-                { text: "Prioritas Fast Sync", included: true },
-                { text: "Dedicated Engine", included: false },
-              ]}
-            />
-
-            {/* ELITE TIER */}
-            <PricingCard
-              tier="DisBot Elite"
-              price="Rp 999.000"
-              quota="100 Mirror Paths*"
-              message="Halo admin DISBOT, saya ingin berlangganan Paket Elite (Rp 999.000/bln) untuk 100 Paths dan Dedicated Instance."
-              features={[
-                { text: "100 Paths (Soft Limit)", included: true },
-                { text: "Semua Tipe File", included: true },
-                { text: "Dedicated Engine Instance", included: true },
-                { text: "Akses Full API", included: true },
-                { text: "Prioritas Support 24/7", included: true },
-                { text: "Whitelabel Branding", included: true },
-              ]}
-            />
-          </div>
-        </div>
-      </section>
+      <PricingSection />
 
       {/* Footer */}
       <footer className="py-12 border-t border-gray-200 bg-gray-50">

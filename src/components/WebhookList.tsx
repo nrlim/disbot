@@ -9,6 +9,8 @@ import EditMirrorModal, { type MirrorConfig as ModalCurrentConfig } from "./Edit
 import { toast } from "react-hot-toast";
 import { deleteMirrorConfig, toggleMirrorConfig, deleteMirrorGroup } from "@/actions/mirror";
 import { useRouter } from "next/navigation";
+import UpgradeModal from "./UpgradeModal";
+import { PLAN_PLATFORMS } from "@/lib/constants";
 
 // --- Types ---
 
@@ -43,10 +45,14 @@ interface WebhookListProps {
     usageCount: number;
     isLimitReached: boolean;
     accounts: any[];
+    userPlan: string;
 }
 
-export default function WebhookList({ initialConfigs, groups, usageCount, isLimitReached, accounts }: WebhookListProps) {
+export default function WebhookList({ initialConfigs, groups, usageCount, isLimitReached, accounts, userPlan }: WebhookListProps) {
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+    const [upgradeReason, setUpgradeReason] = useState("");
+
     const [editingConfig, setEditingConfig] = useState<MirrorConfig | undefined>(undefined);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -77,7 +83,17 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
         router.refresh();
     };
 
-    const handleToggle = async (id: string, currentStatus: boolean) => {
+    const handleToggle = async (id: string, currentStatus: boolean, platform: string) => {
+        // If enabling, check plan restrictions
+        if (!currentStatus) {
+            const allowedPlatforms = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
+            if (!allowedPlatforms.includes(platform)) {
+                setUpgradeReason(`Your ${userPlan} plan does not support ${platform} mirroring.`);
+                setUpgradeModalOpen(true);
+                return;
+            }
+        }
+
         setTogglingId(id);
         const res = await toggleMirrorConfig(id, !currentStatus);
         if (res.error) toast.error(res.error);
@@ -321,7 +337,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                             <tr key={config.id} className="group hover:bg-blue-50/30 transition-colors">
                                                                 <td className="px-6 py-4">
                                                                     <button
-                                                                        onClick={() => handleToggle(config.id, config.active)}
+                                                                        onClick={() => handleToggle(config.id, config.active, config.sourcePlatform || 'DISCORD')}
                                                                         disabled={togglingId === config.id}
                                                                         className={cn(
                                                                             "relative flex items-center gap-2 pr-3 pl-1.5 py-1 rounded-full text-[10px] font-bold border transition-all",
@@ -429,6 +445,13 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                 groups={groups}
                 initialTitle={directedGroupId ? groups.find(g => g.id === directedGroupId)?.name : (selectedFilterGroup !== "all" ? groups.find(g => g.id === selectedFilterGroup)?.name : "")}
                 initialStep={directedGroupId || (selectedFilterGroup !== "all") ? 2 : 1}
+                userPlan={userPlan}
+            />
+
+            <UpgradeModal
+                isOpen={upgradeModalOpen}
+                onClose={() => setUpgradeModalOpen(false)}
+                reason={upgradeReason}
             />
         </div>
     );

@@ -2,7 +2,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { logger } from './lib/logger';
-import { enforcePathLimits, PLAN_PATH_LIMITS } from './lib/plan-enforcer';
+import { enforcePathLimits, validatePlanConfig, PLAN_PATH_LIMITS } from './lib/plan-enforcer';
 import { decrypt, validateEncryptionConfig } from './lib/crypto';
 import { TelegramListener } from './lib/telegramMTProto';
 import { DiscordMirror } from './lib/discordMirror';
@@ -107,8 +107,8 @@ export class Engine {
                 };
             });
 
-            // 2. Enforce Path Limits
-            const allowedConfigs = this.enforceLimits(activeConfigs);
+            // 2. Enforce Path Limits - Pass activeConfigs directly as they are already mapped
+            const allowedConfigs = await this.enforceLimits(activeConfigs);
 
             logger.info({
                 totalActive: activeConfigs.length,
@@ -180,34 +180,62 @@ export class Engine {
         }
     }
 
-    private enforceLimits(configs: MirrorActiveConfig[]): MirrorActiveConfig[] {
+    private async enforceLimits(configs: MirrorActiveConfig[]): Promise<MirrorActiveConfig[]> {
         const configsByUser = new Map<string, MirrorActiveConfig[]>();
+        const allowed: MirrorActiveConfig[] = [];
+
+        // Group configs by user
         for (const cfg of configs) {
             if (!configsByUser.has(cfg.userId)) configsByUser.set(cfg.userId, []);
             configsByUser.get(cfg.userId)!.push(cfg);
         }
 
-        const allowed: MirrorActiveConfig[] = [];
-
         for (const [userId, userConfigs] of configsByUser) {
             try {
-                const result = enforcePathLimits(userConfigs, userId);
+                // 1. Filter out feature-invalid configs (e.g. Starter trying to use Telegram)
+                const featureValidConfigs: MirrorActiveConfig[] = [];
+                const featureInvalidIds: string[] = [];
+
+                for (const cfg of userConfigs) {
+                    const validation = validatePlanConfig(cfg);
+                    if (validation.valid) {
+                        featureValidConfigs.push(cfg);
+                    } else {
+                        featureInvalidIds.push(cfg.id);
+                        logger.warn({ userId, configId: cfg.id, reason: validation.reason, plan: cfg.userPlan }, 'Config disabled: Plan feature restriction');
+                    }
+                }
+
+                // Auto-disable feature-invalid configs in DB
+                if (featureInvalidIds.length > 0) {
+                    await prisma.mirrorConfig.updateMany({
+                        where: { id: { in: featureInvalidIds } },
+                        data: { active: false, status: 'PLAN_RESTRICTION' } // This status will trigger the inactive state in UI
+                    });
+                }
+
+                // 2. Enforce Path Limits on the remaining valid configs
+                // We pass featureValidConfigs because only those are eligible to run
+                const result = enforcePathLimits(featureValidConfigs, userId);
                 allowed.push(...(result.allowed as MirrorActiveConfig[]));
 
                 // Disable over-limit configs
                 if (result.overLimit.length > 0) {
-                    const ids = result.overLimit.map((c: any) => c.id);
-                    prisma.mirrorConfig.updateMany({
-                        where: { id: { in: ids } },
+                    const overLimitIds = result.overLimit.map((c: any) => c.id);
+                    await prisma.mirrorConfig.updateMany({
+                        where: { id: { in: overLimitIds } },
                         data: { active: false, status: 'PATH_LIMIT_REACHED' }
-                    }).catch(() => { });
+                    });
+
+                    logger.warn({ userId, count: overLimitIds.length }, 'Disabled configs exceeding path limit');
                 }
-            } catch (e) {
-                logger.error({ userId }, 'Limit enforcement error');
-                // Fallback: allow all if check fails to prevent outage
+            } catch (e: any) {
+                logger.error({ userId, error: e.message }, 'Limit enforcement error');
+                // Fallback: allow all if check fails to prevent outage, but log critical error
                 allowed.push(...userConfigs);
             }
         }
+
         return allowed;
     }
 

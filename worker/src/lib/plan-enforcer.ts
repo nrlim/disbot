@@ -1,20 +1,30 @@
 import { logger } from './logger';
 
 // ──────────────────────────────────────────────────────────────
-//  Plan Path Limits (Hard Limits)
-//  Each plan tier has a strict upper bound.
-//  ELITE is soft-limited at 100 (guaranteed capacity).
+//  Plan Path Limits
+//  Updated as per new Pricing Structure
 // ──────────────────────────────────────────────────────────────
 
 export const PLAN_PATH_LIMITS: Record<string, number> = {
     FREE: 1,
     STARTER: 6,
     PRO: 20,
-    ELITE: 100, // Hard limit — 100 guaranteed paths
+    ELITE: 50, // Updated 100 -> 50 as per latest user request
 };
 
 // ──────────────────────────────────────────────────────────────
-//  Path Limit Enforcement
+//  Plan Feature Limits
+// ──────────────────────────────────────────────────────────────
+
+export const PLAN_PLATFORMS: Record<string, string[]> = {
+    FREE: ['DISCORD'],
+    STARTER: ['DISCORD'],
+    PRO: ['DISCORD', 'TELEGRAM'],
+    ELITE: ['DISCORD', 'TELEGRAM'],
+};
+
+// ──────────────────────────────────────────────────────────────
+//  Path Limit & Feature Enforcement
 // ──────────────────────────────────────────────────────────────
 
 export interface PathLimitResult {
@@ -26,6 +36,26 @@ export interface PathLimitResult {
     limit: number;
     /** The user's plan */
     plan: string;
+}
+
+/**
+ * Validates a single config against the plan's feature set.
+ * Checks:
+ * 1. Platform support (e.g., Starter cannot use Telegram)
+ */
+export function validatePlanConfig(config: any): { valid: boolean; reason?: string } {
+    const plan = config.userPlan || config.user?.plan || 'FREE';
+    const allowedPlatforms = PLAN_PLATFORMS[plan] || PLAN_PLATFORMS.FREE;
+    const platform = config.sourcePlatform || 'DISCORD';
+
+    if (!allowedPlatforms.includes(platform)) {
+        return {
+            valid: false,
+            reason: `Plan ${plan} does not support source platform: ${platform}`
+        };
+    }
+
+    return { valid: true };
 }
 
 /**
