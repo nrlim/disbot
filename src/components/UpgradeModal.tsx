@@ -72,7 +72,7 @@ export default function UpgradeModal({ isOpen, onClose, reason }: UpgradeModalPr
                                 <div className="space-y-3 pointer-events-auto">
                                     <button
                                         onClick={() => {
-                                            router.push("/");
+                                            router.push("/dashboard/settings");
                                             onClose();
                                         }}
                                         className="w-full py-3.5 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-xl transition-all shadow-lg shadow-gray-200 active:scale-95"
