@@ -41,7 +41,7 @@ export default async function ExpertDashboard() {
             console.error("Failed to decrypt token for config:", cfg.id);
         }
 
-        return { ...cfg, userToken };
+        return { ...cfg, userToken, telegramPhone: cfg.telegramAccount?.phone };
     });
 
     const user = await prisma.user.findUnique({

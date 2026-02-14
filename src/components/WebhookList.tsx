@@ -15,6 +15,7 @@ interface MirrorConfig {
     id: string;
     sourcePlatform?: 'DISCORD' | 'TELEGRAM';
     sourceGuildName: string | null;
+    sourceGuildId?: string | null;
     sourceChannelId: string | null; // Empty for Telegram
     targetWebhookUrl: string | null;
     active: boolean;
@@ -24,6 +25,12 @@ interface MirrorConfig {
     telegramChatId?: string | null;
     telegramTopicId?: string | null;
     discordAccountId?: string | null;
+    telegramAccountId?: string | null;
+    telegramPhone?: string | null;
+    targetChannelId?: string | null;
+    targetGuildId?: string | null;
+    targetChannelName?: string | null;
+    targetGuildName?: string | null;
 }
 
 interface WebhookListProps {

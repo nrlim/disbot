@@ -8,7 +8,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
-import { sendTelegramCode, loginTelegram } from "@/actions/telegramAuth";
+import { sendTelegramCode, loginTelegram, getTelegramChatsAction } from "@/actions/telegramAuth";
 
 // --- Types ---
 
@@ -31,6 +31,7 @@ export interface MirrorConfig {
     id: string;
     sourcePlatform?: 'DISCORD' | 'TELEGRAM';
     sourceGuildName: string | null;
+    sourceGuildId?: string | null;
     sourceChannelId: string | null;
     targetWebhookUrl: string | null;
     active: boolean;
@@ -39,6 +40,12 @@ export interface MirrorConfig {
     telegramChatId?: string | null;
     telegramTopicId?: string | null;
     discordAccountId?: string | null;
+    telegramAccountId?: string | null;
+    telegramPhone?: string | null;
+    targetChannelId?: string | null;
+    targetGuildId?: string | null;
+    targetChannelName?: string | null;
+    targetGuildName?: string | null;
 }
 
 interface EditMirrorModalProps {
@@ -103,6 +110,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [telegramPassword, setTelegramPassword] = useState("");
     const [authStep, setAuthStep] = useState<'PHONE' | 'CODE' | 'PASSWORD'>('PHONE');
     const [isAuthLoading, setIsAuthLoading] = useState(false);
+    const [telegramChats, setTelegramChats] = useState<any[]>([]);
+    const [isLoadingTelegramChats, setIsLoadingTelegramChats] = useState(false);
+    const [isTelegramChatDropdownOpen, setIsTelegramChatDropdownOpen] = useState(false);
+    const [telegramChatSearchQuery, setTelegramChatSearchQuery] = useState("");
 
     // Bulk State
     const [isBulkMode, setIsBulkMode] = useState(false);
@@ -127,6 +138,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             setLocalAccounts(accounts || []);
             setIsAddingAccount(false);
             setNewAccountToken("");
+            setError(null);
 
             if (config) {
                 // Edit Mode
@@ -134,11 +146,13 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setMirrorTitle(config.sourceGuildName || "");
                 setSourcePlatform(config.sourcePlatform || 'DISCORD');
                 setWebhookUrl(config.targetWebhookUrl || "");
+                setTelegramPhone(config.telegramPhone || localStorage.getItem("draft_telegram_phone") || "");
 
+                // Source Logic
                 if (config.sourcePlatform === 'TELEGRAM') {
                     setTelegramSession(config.telegramSession || config.userToken || "");
                     setTelegramChatId(config.telegramChatId || config.sourceChannelId || "");
-                    setTelegramTopicId("");
+                    setTelegramTopicId(config.telegramTopicId || "");
                 } else {
                     setChannelId(config.sourceChannelId || "");
                     if (config.discordAccountId) {
@@ -149,18 +163,20 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                         setUseSavedAccount(false);
                     }
                 }
+
+                // Destination Logic
+                if (config.targetChannelId) setTargetChannelId(config.targetChannelId);
+                // Note: targetGuild and selectedWebhook are handled by their respective load effects
+
                 setIsBulkMode(false);
             } else {
                 // Create Mode
                 setStep(1);
                 setMirrorTitle("");
                 const draftSession = localStorage.getItem("draft_telegram_session");
-                if (draftSession) {
-                    setTelegramSession(draftSession);
-                } else {
-                    setTelegramSession("");
-                }
+                setTelegramSession(draftSession || "");
                 setSourcePlatform('DISCORD');
+                setTelegramPhone(localStorage.getItem("draft_telegram_phone") || "");
 
                 setChannelId("");
                 setWebhookUrl("");
@@ -183,7 +199,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setTargetChannelSearchQuery("");
             }
         }
-    }, [isOpen, config, accounts]);
+    }, [isOpen, config]); // Removed accounts to prevent re-triggering on data load
 
     // Fetch Guilds
 
@@ -215,10 +231,6 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
                 if (data && Array.isArray(data)) {
                     setGuilds(data);
-                    if (config && (!config.sourcePlatform || config.sourcePlatform === 'DISCORD')) {
-                        const found = data.find((g: Guild) => g.name === config.sourceGuildName);
-                        if (found) setSelectedGuild(found);
-                    }
                 }
             } catch (e) {
                 // silent
@@ -234,6 +246,22 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
 
     }, [isOpen, sourcePlatform, useSavedAccount, selectedAccountId, config]);
+
+    // Sync Source/Target Guilds when list loads
+    useEffect(() => {
+        if (config && guilds.length > 0) {
+            // Source Pre-fill
+            if (!selectedGuild && (config.sourcePlatform === 'DISCORD' || !config.sourcePlatform)) {
+                const found = guilds.find(g => g.id === config.sourceGuildId || g.name === config.sourceGuildName);
+                if (found) setSelectedGuild(found);
+            }
+            // Target Pre-fill
+            if (!targetGuild && config.targetGuildId) {
+                const foundTarget = guilds.find(g => g.id === config.targetGuildId);
+                if (foundTarget) setTargetGuild(foundTarget);
+            }
+        }
+    }, [guilds, config, selectedGuild, targetGuild]);
 
     // Fetch Channels
     useEffect(() => {
@@ -302,6 +330,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             } else if (result.sessionString) {
                 setTelegramSession(result.sessionString);
                 localStorage.setItem("draft_telegram_session", result.sessionString);
+                localStorage.setItem("draft_telegram_phone", telegramPhone);
             }
         } catch (e: any) {
             console.error(e);
@@ -384,14 +413,51 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     }, [targetChannelId, targetMode, selectedAccountId]);
 
+    // Pre-fill Webhook selection when webhooks are loaded
+    useEffect(() => {
+        if (config && webhooks.length > 0 && !selectedWebhook) {
+            const found = webhooks.find(bh => bh.url === config.targetWebhookUrl);
+            if (found) {
+                setSelectedWebhook(found);
+                setWebhookUrl(found.url);
+            }
+        }
+    }, [webhooks, config, selectedWebhook]);
+
+    // Pre-fill mirror title and webhook if missing but ID/URL is present in config
+    useEffect(() => {
+        if (config) {
+            if (!mirrorTitle && config.sourceGuildName) {
+                setMirrorTitle(config.sourceGuildName);
+            }
+            if (!webhookUrl && config.targetWebhookUrl) {
+                setWebhookUrl(config.targetWebhookUrl);
+            }
+        }
+    }, [config, mirrorTitle, webhookUrl]);
+
     // Reset Target Channel when Guild changes to prevent stale state
     useEffect(() => {
-        setTargetChannelId("");
-        setWebhooks([]);
-        setWebhookError("");
-        setTargetChannelSearchQuery("");
-        setTargetSearchQuery("");
-    }, [targetGuild]);
+        // Only reset if we change guilds manually (the new guild id doesn't match the saved configuration)
+        if (targetGuild && config && targetGuild.id !== config.targetGuildId) {
+            setTargetChannelId("");
+            setWebhookUrl("");
+            setSelectedWebhook(null);
+            setWebhooks([]);
+            setWebhookError("");
+            setTargetChannelSearchQuery("");
+        }
+
+        // If we are in CREATE mode, always reset
+        if (!config && targetGuild) {
+            setTargetChannelId("");
+            setWebhookUrl("");
+            setSelectedWebhook(null);
+            setWebhooks([]);
+            setWebhookError("");
+            setTargetChannelSearchQuery("");
+        }
+    }, [targetGuild, config]);
 
     const handleCreateWebhook = async () => {
         if (!targetChannelId || !selectedAccountId) return;
@@ -413,6 +479,28 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     };
 
+    // Fetch Telegram Chats
+    useEffect(() => {
+        if (sourcePlatform === 'TELEGRAM' && telegramSession && isOpen) {
+            const fetchTgChats = async () => {
+                setIsLoadingTelegramChats(true);
+                try {
+                    const res = await getTelegramChatsAction(telegramSession);
+                    if (res.success && res.chats) {
+                        setTelegramChats(res.chats);
+                    }
+                } catch (e) {
+                    console.error("Fetch TG Chats Error:", e);
+                } finally {
+                    setIsLoadingTelegramChats(false);
+                }
+            };
+            fetchTgChats();
+        } else {
+            setTelegramChats([]);
+        }
+    }, [telegramSession, sourcePlatform, isOpen]);
+
     const handleSelectWebhook = (wh: any) => {
         setSelectedWebhook(wh);
         setWebhookUrl(wh.url);
@@ -431,6 +519,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         formData.append("sourcePlatform", sourcePlatform);
         formData.append("targetWebhookUrl", webhookUrl);
 
+        // Metadata for pre-filling UI later
+        if (targetGuild) {
+            formData.append("targetGuildId", targetGuild.id);
+            formData.append("targetGuildName", targetGuild.name);
+        }
+        if (targetChannelId) {
+            formData.append("targetChannelId", targetChannelId);
+            const ch = targetChannels.find(c => c.id === targetChannelId);
+            if (ch) formData.append("targetChannelName", ch.name);
+        }
+
         if (sourcePlatform === 'DISCORD') {
             if (!selectedGuild) { setError("Please select a source server"); setIsSubmitting(false); return; }
 
@@ -443,6 +542,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             // Use the Manual Title if provided, otherwise default to Guild Name
             const finalSourceGuildName = mirrorTitle.trim() || selectedGuild.name;
             formData.append("sourceGuildName", finalSourceGuildName);
+            formData.append("sourceGuildId", selectedGuild.id);
             formData.append("sourceChannelId", channelId);
 
             if (useSavedAccount && selectedAccountId) {
@@ -491,9 +591,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const filteredChannels = channels.filter(c => c.name.toLowerCase().includes(channelSearchQuery.toLowerCase()));
     const filteredTargetGuilds = guilds.filter(g => g.name.toLowerCase().includes(targetSearchQuery.toLowerCase()));
     const filteredTargetChannels = targetChannels.filter(c => c.name.toLowerCase().includes(targetChannelSearchQuery.toLowerCase()));
+    const filteredTelegramChats = telegramChats.filter(c => c.title.toLowerCase().includes(telegramChatSearchQuery.toLowerCase()));
 
     const selectedChannel = channels.find(c => c.id === channelId);
     const selectedTargetChannel = targetChannels.find(c => c.id === targetChannelId);
+    const selectedTelegramChat = telegramChats.find(c => c.id === telegramChatId);
     const isEdit = !!config;
 
     // Step Logic
@@ -886,10 +988,87 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                             )}
                                                         </div>
 
-                                                        <div className="space-y-1.5">
+                                                        <div className="space-y-1.5 relative">
                                                             <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
-                                                            <input type="text" value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} placeholder="Source Chat ID (-100...)" className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary font-mono" />
-                                                            <p className="text-xs text-gray-500">Enter the Channel ID or User ID you want to mirror from.</p>
+                                                            {telegramSession && (telegramChats.length > 0 || isLoadingTelegramChats) ? (
+                                                                <div className="relative">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setIsTelegramChatDropdownOpen(!isTelegramChatDropdownOpen)}
+                                                                        disabled={isLoadingTelegramChats}
+                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                    >
+                                                                        {telegramChatId ? (
+                                                                            <div className="flex items-center gap-2 truncate">
+                                                                                <span className="text-sm text-gray-900 truncate font-medium">{selectedTelegramChat?.title || telegramChatId}</span>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span className="text-sm text-gray-500">{isLoadingTelegramChats ? "Loading..." : "Select Telegram Chat..."}</span>
+                                                                        )}
+                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                    </button>
+
+                                                                    <AnimatePresence>
+                                                                        {isTelegramChatDropdownOpen && (
+                                                                            <motion.div
+                                                                                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                            >
+                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                    <div className="relative">
+                                                                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                                                                        <input
+                                                                                            type="text"
+                                                                                            value={telegramChatSearchQuery}
+                                                                                            onChange={(e) => setTelegramChatSearchQuery(e.target.value)}
+                                                                                            className="w-full pl-9 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                            placeholder="Search chats..."
+                                                                                            autoFocus
+                                                                                        />
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                    {filteredTelegramChats.length > 0 ? (
+                                                                                        filteredTelegramChats.map(c => (
+                                                                                            <button
+                                                                                                key={c.id}
+                                                                                                type="button"
+                                                                                                onClick={() => {
+                                                                                                    setTelegramChatId(c.id);
+                                                                                                    setIsTelegramChatDropdownOpen(false);
+                                                                                                    if (!mirrorTitle.trim()) setMirrorTitle(c.title);
+                                                                                                }}
+                                                                                                className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                            >
+                                                                                                <div className="flex-1 min-w-0">
+                                                                                                    <div className="text-sm text-gray-700 truncate font-medium">{c.title}</div>
+                                                                                                    <div className="text-[10px] text-gray-400 font-mono">ID: {c.id}</div>
+                                                                                                </div>
+                                                                                                {telegramChatId === c.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                                                                                            </button>
+                                                                                        ))
+                                                                                    ) : (
+                                                                                        <div className="p-4 text-center text-xs text-gray-500">No chats found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </motion.div>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </div>
+                                                            ) : (
+                                                                <input
+                                                                    type="text"
+                                                                    value={telegramChatId}
+                                                                    onChange={(e) => setTelegramChatId(e.target.value)}
+                                                                    placeholder="Source Chat ID (-100...)"
+                                                                    className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary font-mono"
+                                                                />
+                                                            )}
+                                                            <p className="text-xs text-gray-500">
+                                                                {telegramSession && (telegramChats.length > 0 || isLoadingTelegramChats)
+                                                                    ? "Select from your active channels/groups."
+                                                                    : "Enter the Channel ID or User ID you want to mirror from."}
+                                                            </p>
                                                         </div>
                                                     </div>
                                                 )}

@@ -17,6 +17,7 @@ const mirrorSchema = z.object({
 
     // Discord Specific
     sourceChannelId: z.string().optional(),
+    sourceGuildId: z.string().optional(),
     userToken: z.string().optional(),
     discordAccountId: z.string().optional(),
 
@@ -25,6 +26,12 @@ const mirrorSchema = z.object({
     telegramChatId: z.string().optional(),
     telegramTopicId: z.string().optional(),
     telegramPhone: z.string().optional(),
+
+    // Destination Metadata (for UI pre-fill)
+    targetChannelId: z.string().optional(),
+    targetGuildId: z.string().optional(),
+    targetGuildName: z.string().optional(),
+    targetChannelName: z.string().optional(),
 }).superRefine((data, ctx) => {
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
@@ -70,15 +77,21 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
     const rawData = {
         sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
         sourceGuildName: formData.get("sourceGuildName") as string || undefined,
+        sourceGuildId: formData.get("sourceGuildId") as string || undefined,
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
         targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
-        userToken: formData.get("userToken") as string || undefined,
-        discordAccountId: formData.get("discordAccountId") as string || undefined,
+        userToken: (formData.get("userToken") as string) || undefined,
+        discordAccountId: (formData.get("discordAccountId") as string) || undefined,
 
         telegramSession: formData.get("telegramSession") || undefined,
         telegramChatId: formData.get("telegramChatId") || undefined,
         telegramTopicId: formData.get("telegramTopicId") || undefined,
         telegramPhone: formData.get("telegramPhone") || undefined,
+
+        targetChannelId: (formData.get("targetChannelId") as string) || undefined,
+        targetGuildId: (formData.get("targetGuildId") as string) || undefined,
+        targetChannelName: (formData.get("targetChannelName") as string) || undefined,
+        targetGuildName: (formData.get("targetGuildName") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -153,19 +166,23 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         await prisma.mirrorConfig.create({
             data: {
                 userId: session.user.id,
-                // @ts-ignore
                 sourcePlatform: sourcePlatform as any,
                 sourceGuildName: validated.data.sourceGuildName,
                 // Universal (Legacy)
                 sourceChannelId: sourcePlatform === "DISCORD"
                     ? (validated.data.sourceChannelId || "")
                     : (validated.data.telegramChatId || ""),
+                sourceGuildId: validated.data.sourceGuildId,
 
                 // Relations
                 discordAccountId: sourcePlatform === "DISCORD" ? discordAccountId : null,
                 telegramAccountId: sourcePlatform === "TELEGRAM" ? telegramAccountIdToLink : null,
 
                 targetWebhookUrl: validated.data.targetWebhookUrl, // Legacy
+                targetChannelId: validated.data.targetChannelId,
+                targetGuildId: validated.data.targetGuildId,
+                targetChannelName: validated.data.targetChannelName,
+                targetGuildName: validated.data.targetGuildName,
                 active: true,
             }
         });
@@ -274,15 +291,21 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
     const rawData = {
         sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
         sourceGuildName: formData.get("sourceGuildName") as string || undefined,
+        sourceGuildId: formData.get("sourceGuildId") as string || undefined,
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
         targetWebhookUrl: formData.get("targetWebhookUrl") as string || undefined,
-        userToken: formData.get("userToken") as string || undefined,
-        discordAccountId: formData.get("discordAccountId") as string || undefined,
+        userToken: (formData.get("userToken") as string) || undefined,
+        discordAccountId: (formData.get("discordAccountId") as string) || undefined,
 
-        telegramSession: formData.get("telegramSession") as string || undefined,
+        telegramSession: formData.get("telegramSession") || undefined,
         telegramChatId: formData.get("telegramChatId") || undefined,
         telegramTopicId: formData.get("telegramTopicId") || undefined,
         telegramPhone: formData.get("telegramPhone") || undefined,
+
+        targetChannelId: (formData.get("targetChannelId") as string) || undefined,
+        targetGuildId: (formData.get("targetGuildId") as string) || undefined,
+        targetChannelName: (formData.get("targetChannelName") as string) || undefined,
+        targetGuildName: (formData.get("targetGuildName") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -302,10 +325,15 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
 
         const updateData: any = {
-            // @ts-ignore
             sourcePlatform: sourcePlatform as any,
             sourceGuildName: validated.data.sourceGuildName,
+            sourceGuildId: validated.data.sourceGuildId,
             targetWebhookUrl: validated.data.targetWebhookUrl,
+            // Metadata for pre-filling UI
+            targetChannelId: validated.data.targetChannelId,
+            targetGuildId: validated.data.targetGuildId,
+            targetChannelName: validated.data.targetChannelName,
+            targetGuildName: validated.data.targetGuildName,
         };
 
         if (sourcePlatform === "DISCORD") {

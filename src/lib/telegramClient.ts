@@ -92,3 +92,43 @@ export async function completeAuth(params: {
 
     return sessionString;
 }
+
+export async function getTelegramChats(sessionString: string): Promise<any[]> {
+    const apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
+    const apiHash = process.env.TELEGRAM_API_HASH || '';
+
+    if (!sessionString) return [];
+
+    const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
+        connectionRetries: 1, // Fail fast for UI feedback
+        useWSS: false,
+        timeout: 10000, // 10s timeout for individual requests
+    });
+
+    try {
+        // Wrap connect and fetch in a global timeout to prevent server action hang
+        const result = await Promise.race([
+            (async () => {
+                await client.connect();
+                const dialogs = await client.getDialogs({ limit: 40 }); // Only fetch recent 40 dialogs
+                return dialogs.map(d => ({
+                    id: d.id?.toString() || '',
+                    title: d.title || 'Untitled',
+                    isChannel: d.isChannel,
+                    isGroup: d.isGroup,
+                    unreadCount: d.unreadCount
+                }));
+            })(),
+            new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error("Telegram Connection Timeout")), 15000))
+        ]);
+        return result;
+    } catch (e) {
+        console.error("Get Telegram Dialogs Error:", e);
+        return [];
+    } finally {
+        try {
+            await client.disconnect();
+            await client.destroy();
+        } catch (e) { /* ignore */ }
+    }
+}

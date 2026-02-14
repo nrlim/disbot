@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,26 +8,25 @@ generator client_worker {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String? @db.Text
-  access_token       String? @db.Text
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String? @db.Text
-  session_state      String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId], name: "provider_providerAccountId")
 }
@@ -44,20 +40,17 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
-  discordAccounts DiscordAccount[]
+  id               String            @id @default(cuid())
+  name             String?
+  email            String?           @unique
+  emailVerified    DateTime?
+  image            String?
+  plan             Plan              @default(FREE)
+  accounts         Account[]
+  discordAccounts  DiscordAccount[]
+  configs          MirrorConfig[]
+  sessions         Session[]
   telegramAccounts TelegramAccount[]
-  
-  // Custom Relation to MirrorConfig
-  configs MirrorConfig[]
-  
-  plan    Plan     @default(FREE)
 }
 
 model VerificationToken {
@@ -68,47 +61,30 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
-enum Plan {
-  FREE
-  STARTER
-  PRO
-  ELITE
-}
-
-
 model MirrorConfig {
-  id                String       @id @default(cuid())
-  
-  // General Configuration
-  name              String?
-  sourcePlatform    PlatformType @default(DISCORD)
-  type              MirrorType   @default(CUSTOM_HOOK)
-  active            Boolean      @default(true)
-  status            String       @default("ACTIVE") // ACTIVE, TOKEN_INVALID, RATE_LIMITED
-  
-  // Source Configuration (Legacy / Group Level)
-  sourceGuildName   String?      // Optional: Friendly name for UI (Group Name?)
-  sourceChannelId   String?      // The ID of the channel/chat to watch (Legacy)
-  
-  // Discord Source Reference
-  discordAccountId  String?      
-  discordAccount    DiscordAccount? @relation(fields: [discordAccountId], references: [id])
-  
-  // Telegram Source Reference
+  id                String           @id @default(cuid())
+  sourcePlatform    PlatformType     @default(DISCORD)
+  type              MirrorType       @default(CUSTOM_HOOK)
+  active            Boolean          @default(true)
+  status            String           @default("ACTIVE")
+  sourceGuildName   String?
+  sourceChannelId   String?
+  discordAccountId  String?
   telegramAccountId String?
-  telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])
-  
-  // Target Configuration
-  targetWebhookUrl  String?      // Digunakan jika type == CUSTOM_HOOK
-  targetChannelId   String?      // Digunakan jika type == MANAGED_BOT
-  
-  // Ownership & Timestamps
+  targetWebhookUrl  String?
+  targetChannelId   String?
   userId            String
-  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
   lastActiveAt      DateTime?
+  name              String?
+  targetChannelName String?
+  targetGuildId     String?
+  targetGuildName   String?
+  sourceGuildId     String?
+  discordAccount    DiscordAccount?  @relation(fields: [discordAccountId], references: [id])
+  telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([sourcePlatform])
@@ -116,43 +92,44 @@ model MirrorConfig {
   @@index([telegramAccountId])
 }
 
-
 model DiscordAccount {
-  id              String         @id @default(cuid())
-  userId          String
-  discordId       String?
-  username        String
-  discriminator   String?
-  avatar          String?
-  token           String         
-  valid           Boolean        @default(true)
-  
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mirrorConfigs   MirrorConfig[]
-  
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id            String         @id @default(cuid())
+  userId        String
+  discordId     String?
+  username      String
+  discriminator String?
+  avatar        String?
+  token         String
+  valid         Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mirrorConfigs MirrorConfig[]
 
   @@index([userId])
 }
 
-
 model TelegramAccount {
-  id              String         @id @default(cuid())
-  userId          String
-  telegramId      String?
-  username        String?
-  phone           String
-  sessionString   String         @db.Text
-  valid           Boolean        @default(true)
-  
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mirrorConfigs   MirrorConfig[]
-  
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id            String         @id @default(cuid())
+  userId        String
+  telegramId    String?
+  username      String?
+  phone         String
+  sessionString String
+  valid         Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  mirrorConfigs MirrorConfig[]
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+  ELITE
 }
 
 enum MirrorType {

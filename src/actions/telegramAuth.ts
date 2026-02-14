@@ -1,6 +1,6 @@
 "use server";
 
-import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth } from "@/lib/telegramClient";
+import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTelegramChats } from "@/lib/telegramClient";
 
 // ──────────────────────────────────────────────────────────────
 //  Server Actions for Telegram Auth (MTProto)
@@ -50,5 +50,15 @@ export async function loginTelegram(params: {
             return { error: "2FA Password Required" };
         }
         return { error: e.message || "Failed to login" };
+    }
+}
+
+export async function getTelegramChatsAction(sessionString: string) {
+    if (!sessionString) return { error: "Session required" };
+    try {
+        const chats = await getTelegramChats(sessionString);
+        return { success: true, chats };
+    } catch (e: any) {
+        return { error: e.message || "Failed to fetch chats" };
     }
 }

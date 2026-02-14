@@ -134,10 +134,17 @@ export class TelegramListener {
                         }
                     );
 
-                    await client.connect();
+                    const connectResult = await Promise.race([
+                        (async () => {
+                            await client.connect();
+                            return await client.checkAuthorization();
+                        })(),
+                        new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 15000))
+                    ]);
 
-                    if (!await client.checkAuthorization()) {
+                    if (!connectResult) {
                         logger.warn({ configCount: sessionConfigs.length }, 'Telegram session invalid or expired — skipping');
+                        await client.disconnect();
                         continue;
                     }
 
