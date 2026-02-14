@@ -23,6 +23,7 @@ const backgroundTasks = BackgroundTaskManager.getInstance();
 
 export class Engine {
     private isShuttingDown = false;
+    private isSyncing = false;
     private syncInterval: NodeJS.Timeout | null = null;
 
     public async start() {
@@ -44,7 +45,8 @@ export class Engine {
     }
 
     private async sync() {
-        if (this.isShuttingDown) return;
+        if (this.isShuttingDown || this.isSyncing) return;
+        this.isSyncing = true;
         logger.info('Starting sync cycle...');
 
         try {
@@ -173,6 +175,8 @@ export class Engine {
 
         } catch (err: any) {
             logger.error({ error: err.message }, 'Error during sync cycle');
+        } finally {
+            this.isSyncing = false;
         }
     }
 

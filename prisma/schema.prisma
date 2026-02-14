@@ -87,6 +87,10 @@ model MirrorConfig {
   targetGuildName   String?
   telegramTopicId   String?
   sourceGuildId     String?
+  // Legacy fields (for backward compatibility / migration)
+  telegramSession   String?
+  telegramChatId    String?
+  userToken         String?
   discordAccount    DiscordAccount?  @relation(fields: [discordAccountId], references: [id])
   telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)

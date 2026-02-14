@@ -101,6 +101,10 @@ export class TelegramListener {
 
     public async sync(configs: TelegramConfig[]) {
         if (this.isShuttingDown) return;
+        if (!this.apiId || !this.apiHash) {
+            logger.warn('Skipping Telegram sync: Missing API credentials');
+            return;
+        }
 
         logger.info({ count: configs.length }, 'Syncing Telegram MTProto listeners');
 
@@ -109,7 +113,10 @@ export class TelegramListener {
 
         for (const config of configs) {
             if (!config.telegramSession) continue;
-            const token = config.telegramSession;
+            // Trim just in case of weird whitespace during decryption/storage
+            const token = config.telegramSession.trim();
+            if (!token) continue;
+
             if (!configsByToken.has(token)) {
                 configsByToken.set(token, []);
             }
@@ -131,10 +138,18 @@ export class TelegramListener {
             let session = this.sessions.get(token);
 
             if (session) {
-                // Update existing session configs
+                // 1. Update existing session configs
                 session.configs = sessionConfigs;
                 session.lastActive = Date.now();
                 logger.debug({ configCount: sessionConfigs.length }, 'Updated existing Telegram session configs');
+
+                // 2. Ensure client is still connected
+                if (!session.client.connected) {
+                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Telegram client disconnected — attempting auto-reconnect');
+                    session.client.connect().catch(e => {
+                        logger.error({ error: e.message }, 'Failed to reconnect Telegram client during sync');
+                    });
+                }
             } else {
                 logger.info({ configCount: sessionConfigs.length }, 'Starting new Telegram MTProto session');
                 try {
@@ -143,22 +158,37 @@ export class TelegramListener {
                         this.apiId,
                         this.apiHash,
                         {
-                            connectionRetries: 5,
+                            connectionRetries: 10,
                             useWSS: false,
+                            autoReconnect: true,
+                            floodSleepThreshold: 60,
+                            deviceModel: 'DisBot Mirror Worker',
+                            systemVersion: 'Linux/Windows',
+                            appVersion: '2.1.0'
                         }
                     );
 
-                    const connectResult = await Promise.race([
-                        (async () => {
-                            await client.connect();
-                            return await client.checkAuthorization();
-                        })(),
-                        new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 15000))
-                    ]);
+                    let connectResult = false;
+                    try {
+                        connectResult = await Promise.race([
+                            (async () => {
+                                await client.connect();
+                                return await client.checkAuthorization();
+                            })(),
+                            new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 30000))
+                        ]);
+                    } catch (err: any) {
+                        logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
+                        // Ensure we cleanup the client if it timed out or errored
+                        try { await client.disconnect(); } catch { }
+                        try { await client.destroy(); } catch { }
+                        continue;
+                    }
 
                     if (!connectResult) {
                         logger.warn({ configCount: sessionConfigs.length }, 'Telegram session invalid or expired — skipping');
-                        await client.disconnect();
+                        try { await client.disconnect(); } catch { }
+                        try { await client.destroy(); } catch { }
                         continue;
                     }
 
@@ -351,11 +381,25 @@ export class TelegramListener {
                 reject(new Error(`Download timed out after ${timeoutMs}ms`));
             }, timeoutMs);
 
-            message.downloadMedia()
+            logger.debug({ msgId: message.id }, '[Telegram] Starting media download stream');
+
+            message.downloadMedia({
+                progressCallback: (progress: number) => {
+                    // Log progress every 25% to avoid spamming
+                    if (Math.round(progress * 100) % 25 === 0 && progress > 0) {
+                        logger.debug({ msgId: message.id, progress: Math.round(progress * 100) + '%' }, '[Telegram] Download progress');
+                    }
+                }
+            })
                 .then((result: any) => {
                     clearTimeout(timer);
-                    if (result && Buffer.isBuffer(result)) resolve(result);
-                    else resolve(null);
+                    if (result && Buffer.isBuffer(result)) {
+                        logger.debug({ msgId: message.id, size: result.length }, '[Telegram] Download component successful');
+                        resolve(result);
+                    } else {
+                        logger.warn({ msgId: message.id }, '[Telegram] Download returned non-buffer result');
+                        resolve(null);
+                    }
                 })
                 .catch((err: any) => {
                     clearTimeout(timer);
