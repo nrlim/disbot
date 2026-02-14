@@ -240,17 +240,34 @@ export class TelegramListener {
 
         if (matchedConfigs.length === 0) return;
 
-        logger.info({ chatId, matchCount: matchedConfigs.length }, '[Telegram] Processing message for matched targets');
+        // Resolve Topic ID (Forum thread ID)
+        const replyHeader = message.replyTo as any;
+        let messageTopicId: string | null = null;
+        if (replyHeader) {
+            // In Telegram Forums:
+            // - If replying to a specific message: replyToTopId is the Topic ID.
+            // - If sending a new message to a topic: replyToMsgId is the Topic ID (and topId is null).
+            messageTopicId = (replyHeader.replyToTopId || replyHeader.replyToMsgId)?.toString() || null;
+        }
 
+        logger.info({
+            chatId,
+            messageTopicId,
+            matchedCount: matchedConfigs.length
+        }, '[Telegram] Checking topic filters');
 
-        // Filter by Topic ID
-        const messageTopicId = (message.replyTo as any)?.replyToTopId?.toString() || null;
         const targetConfigs = matchedConfigs.filter(c => {
-            if (!c.telegramTopicId) return true;
+            if (!c.telegramTopicId) return true; // Matches everything if no filter set
             return c.telegramTopicId === messageTopicId;
         });
 
-        if (targetConfigs.length === 0) return;
+        if (targetConfigs.length === 0) {
+            logger.debug({ messageTopicId }, '[Telegram] No configs matched the topic ID');
+            return;
+        }
+
+        logger.info({ targetCount: targetConfigs.length }, '[Telegram] Matches found, proceeding with forward');
+
 
         // ── 1. Resolve Global Metadata (Replies & Forwards) ──
         let replyContext = '';
