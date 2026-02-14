@@ -10,6 +10,7 @@ export interface MirrorActiveConfig {
     // Telegram fields
     telegramSession?: string;
     telegramChatId?: string;
+    telegramTopicId?: string;
 
     targetWebhookUrl: string;
     /** Mirror type determines forwarding strategy (Discord only currently) */
