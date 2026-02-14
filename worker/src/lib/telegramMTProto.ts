@@ -116,12 +116,26 @@ export class TelegramListener {
             configsByToken.get(token)!.push(config);
         }
 
+        // 1. Cleanup stale sessions (not in active configs)
+        for (const [token, session] of this.sessions) {
+            if (!configsByToken.has(token)) {
+                logger.info('Stopping stale Telegram session');
+                await this.destroySession(token, session);
+            }
+        }
+
+        // 2. Add or Update sessions
         for (const [token, sessionConfigs] of configsByToken) {
             activeSessionKeys.add(token);
 
             let session = this.sessions.get(token);
 
-            if (!session) {
+            if (session) {
+                // Update existing session configs
+                session.configs = sessionConfigs;
+                session.lastActive = Date.now();
+                logger.debug({ configCount: sessionConfigs.length }, 'Updated existing Telegram session configs');
+            } else {
                 logger.info({ configCount: sessionConfigs.length }, 'Starting new Telegram MTProto session');
                 try {
                     const client = new TelegramClient(
@@ -167,8 +181,6 @@ export class TelegramListener {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
                     continue;
                 }
-                logger.info('Stopping stale Telegram session');
-                await this.destroySession(token, session);
             }
         }
     }
