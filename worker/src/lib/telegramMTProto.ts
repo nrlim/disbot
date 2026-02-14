@@ -381,7 +381,13 @@ export class TelegramListener {
             }
         }
 
-        const messageContent = `${content}\n\n-# via Telegram • [Source](${sourceLink})`.substring(0, 2000);
+        // Professional formatting - Prepend sender profile info
+        // Using bold for name and -# for metadata
+        const header = `👤 **${username}**`;
+        const bodyContent = content ? `\n${content}` : '';
+        const footer = `\n\n-# via Telegram • [Source](${sourceLink})`;
+
+        const messageContent = `${header}${bodyContent}${footer}`.substring(0, 2000);
 
         // Send in parallel
         await Promise.allSettled(
@@ -414,10 +420,29 @@ export class TelegramListener {
 
     private extractUsername(sender: any): string {
         if (!sender) return 'Unknown Telegram User';
-        if (sender.username) return sender.username;
-        if (sender.title) return sender.title; // Channels
-        if (sender.firstName) return sender.lastName ? `${sender.firstName} ${sender.lastName}` : sender.firstName;
-        return 'Telegram User';
+
+        // 1. Handle Channels/Groups (they have 'title')
+        if (sender.title) {
+            return sender.title;
+        }
+
+        // 2. Handle Users (they have 'firstName', 'lastName', 'username')
+        let name = '';
+        if (sender.firstName) {
+            name = sender.firstName;
+            if (sender.lastName) name += ` ${sender.lastName}`;
+        } else if (sender.username) {
+            name = sender.username;
+        } else {
+            name = 'Telegram User';
+        }
+
+        // Add handle if available for more clarity, unless it's already the name
+        if (sender.username && name.toLowerCase() !== sender.username.toLowerCase()) {
+            return `${name} (@${sender.username})`;
+        }
+
+        return name;
     }
 
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
