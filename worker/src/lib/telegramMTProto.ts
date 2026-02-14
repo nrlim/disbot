@@ -81,6 +81,7 @@ export class TelegramListener {
     private apiId: number;
     private apiHash: string;
     private isShuttingDown = false;
+    private avatarCache: Map<string, string> = new Map();
 
     private constructor() {
         this.apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
@@ -292,6 +293,7 @@ export class TelegramListener {
         // Build sender info
         const sender = await message.getSender().catch(() => null);
         const username = this.extractUsername(sender);
+        const avatarURL = await this.getAvatarUrl(session.client, sender);
 
         const content = (message.text || '').trim();
         const finalContent = `${replyContext}${forwardContext}${content}`.trim();
@@ -315,6 +317,7 @@ export class TelegramListener {
                 message,
                 targetConfigs,
                 username,
+                avatarURL,
                 webhookContent,
                 sourceLink,
                 mediaInfo.fileName
@@ -326,6 +329,7 @@ export class TelegramListener {
             this.forwardToWebhooks(
                 targetConfigs,
                 username,
+                avatarURL,
                 webhookContent,
                 sourceLink,
                 [] // No files
@@ -381,6 +385,7 @@ export class TelegramListener {
         message: any,
         configs: TelegramConfig[],
         username: string,
+        avatarURL: string | undefined,
         content: string,
         sourceLink: string,
         fileName: string
@@ -408,7 +413,7 @@ export class TelegramListener {
             }
         }
 
-        await this.forwardToWebhooks(configs, username, content, sourceLink, files);
+        await this.forwardToWebhooks(configs, username, avatarURL, content, sourceLink, files);
 
         // Explicit cleanup
         if (buffer) buffer = null;
@@ -452,6 +457,7 @@ export class TelegramListener {
     private async forwardToWebhooks(
         configs: TelegramConfig[],
         username: string,
+        avatarURL: string | undefined,
         content: string,
         sourceLink: string,
         files: { attachment: Buffer; name: string }[]
@@ -477,6 +483,7 @@ export class TelegramListener {
             Array.from(uniqueWebhooks.entries()).map(([url, configId]) =>
                 WebhookExecutor.send(url, {
                     username: username || 'Telegram Mirror',
+                    avatarURL: avatarURL,
                     content: messageContent,
                     files: files // WebhookExecutor will handle buffering/streaming
                 }, configId)
@@ -526,6 +533,34 @@ export class TelegramListener {
         }
 
         return name;
+    }
+
+    private async getAvatarUrl(client: TelegramClient, sender: any): Promise<string | undefined> {
+        if (!sender || !sender.photo) return undefined;
+
+        const senderId = sender.id?.toString();
+        if (!senderId) return undefined;
+
+        if (this.avatarCache.has(senderId)) {
+            return this.avatarCache.get(senderId);
+        }
+
+        try {
+            // Download thumbnail only (small data URI)
+            const buffer = await client.downloadProfilePhoto(sender, { isBig: false }).catch(() => null);
+            if (buffer && buffer.length > 0) {
+                const dataUri = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+
+                // Overflow protection
+                if (this.avatarCache.size > 500) this.avatarCache.clear();
+
+                this.avatarCache.set(senderId, dataUri);
+                return dataUri;
+            }
+        } catch (err) {
+            logger.debug({ senderId }, 'Failed to download Telegram profile photo');
+        }
+        return undefined;
     }
 
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
