@@ -132,3 +132,48 @@ export async function getTelegramChats(sessionString: string): Promise<any[]> {
         } catch (e) { /* ignore */ }
     }
 }
+
+export async function getTelegramTopics(sessionString: string, chatId: string): Promise<any[]> {
+    const apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
+    const apiHash = process.env.TELEGRAM_API_HASH || '';
+
+    if (!sessionString || !chatId) return [];
+
+    const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
+        connectionRetries: 1,
+        useWSS: false,
+    });
+
+    try {
+        await client.connect();
+
+        // Resolve entity (handle -100 prefix if present in string, though getEntity usually handles it if int)
+        // If chatId is string "-10012345", gramjs might need BigInt or just the string.
+        const entity = await client.getEntity(chatId);
+
+        const result: any = await client.invoke(new Api.channels.GetForumTopics({
+            channel: entity,
+            offsetDate: 0,
+            offsetId: 0,
+            offsetTopic: 0,
+            limit: 50,
+        }));
+
+        if (result && result.topics) {
+            return result.topics.map((t: any) => ({
+                id: t.id.toString(),
+                title: t.title,
+                color: t.iconColor,
+                iconEmojiId: t.iconEmojiId?.toString()
+            }));
+        }
+        return [];
+
+    } catch (e: any) {
+        console.error("Get Telegram Topics Error:", e?.message || e);
+        return [];
+    } finally {
+        await client.disconnect();
+        await client.destroy();
+    }
+}

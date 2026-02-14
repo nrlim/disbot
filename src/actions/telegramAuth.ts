@@ -1,6 +1,20 @@
 "use server";
 
-import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTelegramChats } from "@/lib/telegramClient";
+// ... (imports)
+import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTelegramChats, getTelegramTopics } from "@/lib/telegramClient";
+
+// ... (existing code)
+
+export async function getTelegramTopicsAction(sessionString: string, chatId: string) {
+    if (!sessionString || !chatId) return { error: "Session and Chat ID required" };
+    try {
+        const topics = await getTelegramTopics(sessionString, chatId);
+        return { success: true, topics };
+    } catch (e: any) {
+        return { error: e.message || "Failed to fetch topics" };
+    }
+}
+
 
 // ──────────────────────────────────────────────────────────────
 //  Server Actions for Telegram Auth (MTProto)

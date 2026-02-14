@@ -8,7 +8,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
-import { sendTelegramCode, loginTelegram, getTelegramChatsAction } from "@/actions/telegramAuth";
+import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction } from "@/actions/telegramAuth";
 
 // --- Types ---
 
@@ -114,6 +114,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [isLoadingTelegramChats, setIsLoadingTelegramChats] = useState(false);
     const [isTelegramChatDropdownOpen, setIsTelegramChatDropdownOpen] = useState(false);
     const [telegramChatSearchQuery, setTelegramChatSearchQuery] = useState("");
+    const [telegramTopics, setTelegramTopics] = useState<any[]>([]);
+    const [isLoadingTopics, setIsLoadingTopics] = useState(false);
+    const [isTopicDropdownOpen, setIsTopicDropdownOpen] = useState(false);
+    const [topicSearchQuery, setTopicSearchQuery] = useState("");
 
     // Bulk State
     const [isBulkMode, setIsBulkMode] = useState(false);
@@ -500,6 +504,31 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             setTelegramChats([]);
         }
     }, [telegramSession, sourcePlatform, isOpen]);
+
+    // Fetch Telegram Topics
+    useEffect(() => {
+        if (sourcePlatform === 'TELEGRAM' && telegramSession && telegramChatId) {
+            const fetchTopics = async () => {
+                setIsLoadingTopics(true);
+                try {
+                    const res = await getTelegramTopicsAction(telegramSession, telegramChatId);
+                    if (res.success && res.topics) {
+                        setTelegramTopics(res.topics);
+                    } else {
+                        setTelegramTopics([]);
+                    }
+                } catch (e) {
+                    console.error("Fetch Topics Error:", e);
+                    setTelegramTopics([]);
+                } finally {
+                    setIsLoadingTopics(false);
+                }
+            };
+            fetchTopics();
+        } else {
+            setTelegramTopics([]);
+        }
+    }, [telegramChatId, telegramSession, sourcePlatform]);
 
     const handleSelectWebhook = (wh: any) => {
         setSelectedWebhook(wh);
@@ -1070,6 +1099,77 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                     : "Enter the Channel ID or User ID you want to mirror from."}
                                                             </p>
                                                         </div>
+
+                                                        {/* Topic Selection (Optional) */}
+                                                        {telegramTopics.length > 0 && (
+                                                            <div className="space-y-1.5 relative">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase flex items-center gap-2">
+                                                                    Topic / Forum Thread <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Optional</span>
+                                                                </label>
+                                                                <div className="relative">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setIsTopicDropdownOpen(!isTopicDropdownOpen)}
+                                                                        disabled={isLoadingTopics}
+                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                    >
+                                                                        {telegramTopicId ? (
+                                                                            <div className="flex items-center gap-2 truncate">
+                                                                                <span className="text-sm text-gray-900 truncate font-medium">
+                                                                                    {telegramTopics.find(t => t.id === telegramTopicId)?.title || telegramTopicId}
+                                                                                </span>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span className="text-sm text-gray-500">All Topics / General</span>
+                                                                        )}
+                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                    </button>
+                                                                    <AnimatePresence>
+                                                                        {isTopicDropdownOpen && (
+                                                                            <motion.div
+                                                                                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                            >
+                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        value={topicSearchQuery}
+                                                                                        onChange={(e) => setTopicSearchQuery(e.target.value)}
+                                                                                        className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                        placeholder="Search topics..."
+                                                                                        autoFocus
+                                                                                    />
+                                                                                </div>
+                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => { setTelegramTopicId(""); setIsTopicDropdownOpen(false); }}
+                                                                                        className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                    >
+                                                                                        <div className="w-1 h-4 bg-gray-300 rounded-full"></div>
+                                                                                        <span className="text-sm text-gray-700 font-medium">All Topics / General</span>
+                                                                                        {!telegramTopicId && <CheckCircle2 className="w-4 h-4 text-primary ml-auto" />}
+                                                                                    </button>
+                                                                                    {telegramTopics.filter(t => t.title.toLowerCase().includes(topicSearchQuery.toLowerCase())).map(t => (
+                                                                                        <button
+                                                                                            key={t.id}
+                                                                                            type="button"
+                                                                                            onClick={() => { setTelegramTopicId(t.id); setIsTopicDropdownOpen(false); }}
+                                                                                            className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                        >
+                                                                                            <div className="w-1 h-4 rounded-full" style={{ backgroundColor: t.color ? `#${t.color.toString(16)}` : '#ccc' }}></div>
+                                                                                            <span className="text-sm text-gray-700 truncate font-medium flex-1">{t.title}</span>
+                                                                                            <span className="text-[10px] text-gray-400 font-mono">ID: {t.id}</span>
+                                                                                            {telegramTopicId === t.id && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                                                                                        </button>
+                                                                                    ))}
+                                                                                </div>
+                                                                            </motion.div>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
 

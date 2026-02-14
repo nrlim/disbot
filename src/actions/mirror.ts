@@ -63,6 +63,13 @@ const mirrorSchema = z.object({
                 path: ["telegramChatId"]
             });
         }
+        if (!data.telegramPhone || data.telegramPhone.length < 5) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Telegram Phone Number is required for account linking",
+                path: ["telegramPhone"]
+            });
+        }
     }
 });
 

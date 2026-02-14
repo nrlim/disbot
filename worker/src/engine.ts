@@ -126,6 +126,23 @@ export class Engine {
                             telegramTopicId: cfg.telegramTopicId,
                             targetWebhookUrl: cfg.targetWebhookUrl,
                         });
+                    } else {
+                        logger.warn({
+                            configId: cfg.id,
+                            userId: cfg.userId,
+                            hasSession: !!decryptedSession,
+                            hasChatId: !!cfg.telegramChatId,
+                            platform: cfg.sourcePlatform
+                        }, '[Sync] Skipping invalid Telegram config - Auto-disabling');
+
+                        // Auto-disable broken config to free up path limit for other valid configs
+                        prisma.mirrorConfig.update({
+                            where: { id: cfg.id },
+                            data: {
+                                active: false,
+                                status: 'CONFIGURATION_ERROR'
+                            }
+                        }).catch((e: any) => logger.error({ configId: cfg.id, error: e.message }, "Failed to auto-disable broken config"));
                     }
                 } else {
                     // Discord (Decryption happens inside DiscordMirror to verify tokens)
