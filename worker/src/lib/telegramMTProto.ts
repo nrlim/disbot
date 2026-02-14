@@ -256,20 +256,55 @@ export class TelegramListener {
 
         if (targetConfigs.length === 0) return;
 
+        // ── 1. Resolve Global Metadata (Replies & Forwards) ──
+        let replyContext = '';
+        let forwardContext = '';
+
+        try {
+            // Handle Replies
+            if (message.replyTo) {
+                const replyMsg = await message.getReplyMessage().catch(() => null);
+                if (replyMsg) {
+                    const replySender = await replyMsg.getSender().catch(() => null);
+                    const replyUser = this.extractUsername(replySender);
+                    const snippet = replyMsg.text
+                        ? (replyMsg.text.substring(0, 60).replace(/\n/g, ' ') + (replyMsg.text.length > 60 ? '...' : ''))
+                        : '[Media]';
+                    replyContext = `-# 💬 Replying to **${replyUser}**: _${snippet}_\n`;
+                }
+            }
+
+            // Handle Forwards
+            if (message.fwdFrom) {
+                let fwdName = 'Unknown Source';
+                if (message.fwdFrom.fromName) {
+                    fwdName = message.fwdFrom.fromName;
+                } else if (message.fwdFrom.fromId) {
+                    const entity = await session.client.getEntity(message.fwdFrom.fromId).catch(() => null);
+                    if (entity) fwdName = this.extractUsername(entity);
+                }
+                forwardContext = `-# 📨 Forwarded from **${fwdName}**\n`;
+            }
+        } catch (err) {
+            logger.debug({ err }, 'Metadata resolution failed/timed out - skipping headers');
+        }
+
         // Build sender info
         const sender = await message.getSender().catch(() => null);
         const username = this.extractUsername(sender);
 
-        const content = message.text || '';
+        const content = (message.text || '').trim();
+        const finalContent = `${replyContext}${forwardContext}${content}`.trim();
+
         const normalizedChatId = chatId.replace(/^-100/, '');
         const sourceLink = `https://t.me/c/${normalizedChatId}/${message.id}`;
 
         // Determine strategy
         const mediaInfo = this.analyzeMedia(message);
-        let finalContent = content;
+        let webhookContent = finalContent;
 
         if (mediaInfo.skippedReason) {
-            finalContent += `\n\n**⚠️ Media Skipped:** ${mediaInfo.skippedReason}`;
+            webhookContent += `\n\n**⚠️ Media Skipped:** ${mediaInfo.skippedReason}`;
         }
 
         if (mediaInfo.shouldDownload && mediaInfo.fileName) {
@@ -280,7 +315,7 @@ export class TelegramListener {
                 message,
                 targetConfigs,
                 username,
-                finalContent,
+                webhookContent,
                 sourceLink,
                 mediaInfo.fileName
             ).catch((err: any) => {
@@ -291,7 +326,7 @@ export class TelegramListener {
             this.forwardToWebhooks(
                 targetConfigs,
                 username,
-                finalContent,
+                webhookContent,
                 sourceLink,
                 [] // No files
             ).catch((err: any) => {
