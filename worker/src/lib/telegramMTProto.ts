@@ -131,8 +131,8 @@ export class TelegramListener {
             }
         }
 
-        // 2. Add or Update sessions
-        for (const [token, sessionConfigs] of configsByToken) {
+        // 2. Add or Update sessions (In parallel to speed up initial connection)
+        const syncPromises = Array.from(configsByToken.entries()).map(async ([token, sessionConfigs]) => {
             activeSessionKeys.add(token);
 
             let session = this.sessions.get(token);
@@ -159,7 +159,7 @@ export class TelegramListener {
                         this.apiHash,
                         {
                             connectionRetries: 10,
-                            useWSS: false,
+                            useWSS: true, // Switched to WSS for better stability on VPS firewalls
                             autoReconnect: true,
                             floodSleepThreshold: 60,
                             deviceModel: 'DisBot Mirror Worker',
@@ -168,6 +168,9 @@ export class TelegramListener {
                         }
                     );
 
+                    // Listen for updates (existing handler covers messages)
+                    // We rely on the sync loop for connection health checks instead of faulty event listeners
+
                     let connectResult = false;
                     try {
                         connectResult = await Promise.race([
@@ -175,21 +178,21 @@ export class TelegramListener {
                                 await client.connect();
                                 return await client.checkAuthorization();
                             })(),
-                            new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 30000))
+                            new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 60000))
                         ]);
                     } catch (err: any) {
                         logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
                         // Ensure we cleanup the client if it timed out or errored
                         try { await client.disconnect(); } catch { }
                         try { await client.destroy(); } catch { }
-                        continue;
+                        return;
                     }
 
                     if (!connectResult) {
                         logger.warn({ configCount: sessionConfigs.length }, 'Telegram session invalid or expired — skipping');
                         try { await client.disconnect(); } catch { }
                         try { await client.destroy(); } catch { }
-                        continue;
+                        return;
                     }
 
                     client.addEventHandler((event: NewMessageEvent) => {
@@ -209,10 +212,11 @@ export class TelegramListener {
 
                 } catch (error: any) {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
-                    continue;
                 }
             }
-        }
+        });
+
+        await Promise.allSettled(syncPromises);
     }
 
     // ────────────── MESSAGE HANDLER ──────────────
