@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import DashboardOverview from "@/components/DashboardOverview";
 import { PLAN_LIMITS } from "@/lib/constants";
+import { getMirrorConfigs } from "@/actions/mirror";
 
 export default async function DashboardPage() {
     const session = await getServerSession(authOptions);
@@ -25,11 +26,7 @@ export default async function DashboardPage() {
     if (!user) redirect("/");
 
     // 2. Fetch Recent Configs
-    const recentConfigs = await prisma.mirrorConfig.findMany({
-        where: { userId: session.user.id },
-        orderBy: { createdAt: "desc" },
-        take: 5
-    });
+    const recentConfigs = await getMirrorConfigs(5);
 
     const typedUser = user as any;
     const typedConfigs = recentConfigs as any;

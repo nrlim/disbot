@@ -35,6 +35,7 @@ export interface MirrorConfig {
     sourceChannelId: string | null;
     targetWebhookUrl: string | null;
     active: boolean;
+    groupId?: string | null;
     userToken?: string | null;
     telegramSession?: string | null;
     telegramChatId?: string | null;
@@ -54,13 +55,16 @@ interface EditMirrorModalProps {
     onSuccess: () => void;
     config?: MirrorConfig;
     accounts?: any[];
+    groups?: any[];
+    initialTitle?: string;
+    initialStep?: 1 | 2;
 }
 
 // --- Zod Schemas ---
 const webhookSchema = z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL");
 const channelIdSchema = z.string().min(17, "Invalid Channel ID").regex(/^\d+$/, "Channel ID must be numeric");
 
-export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, accounts }: EditMirrorModalProps) {
+export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, accounts, groups, initialTitle, initialStep = 1 }: EditMirrorModalProps) {
     // Flow State
     const [step, setStep] = useState<1 | 2>(1);
     const [mirrorTitle, setMirrorTitle] = useState("");
@@ -175,11 +179,24 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setIsBulkMode(false);
             } else {
                 // Create Mode
-                setStep(1);
-                setMirrorTitle("");
+                setStep(initialStep);
+                const title = initialTitle || "";
+                setMirrorTitle(title);
+
+                // Smart platform detection based on existing group type
+                if (title && groups) {
+                    const matchedGroup = groups.find(g => g.name === title);
+                    if (matchedGroup) {
+                        setSourcePlatform(matchedGroup.type === "TELEGRAM_TO_DISCORD" ? 'TELEGRAM' : 'DISCORD');
+                    } else {
+                        setSourcePlatform('DISCORD');
+                    }
+                } else {
+                    setSourcePlatform('DISCORD');
+                }
+
                 const draftSession = localStorage.getItem("draft_telegram_session");
                 setTelegramSession(draftSession || "");
-                setSourcePlatform('DISCORD');
                 setTelegramPhone(localStorage.getItem("draft_telegram_phone") || "");
 
                 setChannelId("");
@@ -203,7 +220,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setTargetChannelSearchQuery("");
             }
         }
-    }, [isOpen, config]); // Removed accounts to prevent re-triggering on data load
+    }, [isOpen, config, groups, initialTitle]); // Added groups and initialTitle for smart pre-fill
 
     // Fetch Guilds
 
@@ -547,6 +564,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
         formData.append("sourcePlatform", sourcePlatform);
         formData.append("targetWebhookUrl", webhookUrl);
+        if (selectedWebhook) {
+            formData.append("targetWebhookName", selectedWebhook.name);
+        }
 
         // Metadata for pre-filling UI later
         if (targetGuild) {
@@ -574,6 +594,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             formData.append("sourceGuildId", selectedGuild.id);
             formData.append("sourceChannelId", channelId);
 
+            const srcCh = channels.find(c => c.id === channelId);
+            if (srcCh) formData.append("sourceChannelName", srcCh.name);
+
             if (useSavedAccount && selectedAccountId) {
                 formData.append("discordAccountId", selectedAccountId);
             } else {
@@ -589,6 +612,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             formData.append("sourceGuildName", finalSourceName);
             formData.append("telegramSession", telegramSession);
             formData.append("telegramChatId", telegramChatId);
+
+            const srcChat = telegramChats.find(c => c.id === telegramChatId);
+            if (srcChat) formData.append("sourceChannelName", srcChat.title);
+
             if (telegramTopicId) formData.append("telegramTopicId", telegramTopicId);
             formData.append("telegramPhone", telegramPhone);
         }
@@ -755,7 +782,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                         error && !mirrorTitle.trim() ? "border-red-300 ring-red-100" : ""
                                                     )}
                                                 />
-                                                <p className="text-xs text-gray-500">Give this mirror a recognizable name for your dashboard.</p>
+                                                <p className="text-xs text-gray-500 mt-1">Give this mirror a recognizable name for your dashboard.</p>
                                             </div>
 
                                             {error && (

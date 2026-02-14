@@ -32,6 +32,9 @@ const mirrorSchema = z.object({
     targetGuildId: z.string().optional(),
     targetGuildName: z.string().optional(),
     targetChannelName: z.string().optional(),
+    targetWebhookName: z.string().optional(),
+    sourceChannelName: z.string().optional(),
+    groupId: z.string().optional(),
 }).superRefine((data, ctx) => {
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
@@ -99,6 +102,9 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         targetGuildId: (formData.get("targetGuildId") as string) || undefined,
         targetChannelName: (formData.get("targetChannelName") as string) || undefined,
         targetGuildName: (formData.get("targetGuildName") as string) || undefined,
+        targetWebhookName: (formData.get("targetWebhookName") as string) || undefined,
+        sourceChannelName: (formData.get("sourceChannelName") as string) || undefined,
+        groupId: (formData.get("groupId") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -170,6 +176,31 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
             telegramAccountIdToLink = tgAccount.id;
         }
 
+        // Find or Create Mirror Group by Name
+        // We use sourceGuildName as the Group Name
+        let finalGroupId = validated.data.groupId || null;
+        if (validated.data.sourceGuildName) {
+            let existingGroup = await prisma.mirrorGroup.findFirst({
+                where: {
+                    userId: session.user.id,
+                    name: validated.data.sourceGuildName,
+                    type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD"
+                }
+            });
+
+            if (!existingGroup) {
+                existingGroup = await prisma.mirrorGroup.create({
+                    data: {
+                        name: validated.data.sourceGuildName,
+                        userId: session.user.id,
+                        type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD",
+                        active: true
+                    }
+                });
+            }
+            finalGroupId = existingGroup.id;
+        }
+
         await prisma.mirrorConfig.create({
             data: {
                 userId: session.user.id,
@@ -189,7 +220,10 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 targetChannelId: validated.data.targetChannelId,
                 targetGuildId: validated.data.targetGuildId,
                 targetChannelName: validated.data.targetChannelName,
+                targetWebhookName: validated.data.targetWebhookName,
+                sourceChannelName: validated.data.sourceChannelName,
                 targetGuildName: validated.data.targetGuildName,
+                groupId: finalGroupId,
                 active: true,
             }
         });
@@ -209,6 +243,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
     const bulkData = formData.get("bulkData") as string;
     const userToken = formData.get("userToken") as string;
     const defaultGuildName = (formData.get("defaultGuildName") as string) || "Bulk Import";
+    const groupId = (formData.get("groupId") as string) || undefined;
 
     // Bulk create generally assumes Discord for now as per text format heuristic
     if (!bulkData || !userToken) return { error: "Missing required data" };
@@ -276,6 +311,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
                 sourceChannelId: c.sourceChannelId,
                 targetWebhookUrl: c.targetWebhookUrl,
                 discordAccountId: newAccount.id,
+                groupId: groupId,
                 active: true,
             }))
         });
@@ -313,6 +349,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         targetGuildId: (formData.get("targetGuildId") as string) || undefined,
         targetChannelName: (formData.get("targetChannelName") as string) || undefined,
         targetGuildName: (formData.get("targetGuildName") as string) || undefined,
+        targetWebhookName: (formData.get("targetWebhookName") as string) || undefined,
+        sourceChannelName: (formData.get("sourceChannelName") as string) || undefined,
+        groupId: (formData.get("groupId") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -331,6 +370,30 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
 
+        // Find or Create Mirror Group by Name
+        let finalGroupId = validated.data.groupId || null;
+        if (validated.data.sourceGuildName) {
+            let existingGroup = await prisma.mirrorGroup.findFirst({
+                where: {
+                    userId: session.user.id,
+                    name: validated.data.sourceGuildName,
+                    type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD"
+                }
+            });
+
+            if (!existingGroup) {
+                existingGroup = await prisma.mirrorGroup.create({
+                    data: {
+                        name: validated.data.sourceGuildName,
+                        userId: session.user.id,
+                        type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD",
+                        active: true
+                    }
+                });
+            }
+            finalGroupId = existingGroup.id;
+        }
+
         const updateData: any = {
             sourcePlatform: sourcePlatform as any,
             sourceGuildName: validated.data.sourceGuildName,
@@ -340,7 +403,10 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             targetChannelId: validated.data.targetChannelId,
             targetGuildId: validated.data.targetGuildId,
             targetChannelName: validated.data.targetChannelName,
+            targetWebhookName: validated.data.targetWebhookName,
+            sourceChannelName: validated.data.sourceChannelName,
             targetGuildName: validated.data.targetGuildName,
+            groupId: finalGroupId,
         };
 
         if (sourcePlatform === "DISCORD") {
@@ -442,5 +508,89 @@ export async function toggleMirrorConfig(id: string, active: boolean) {
         return { success: true };
     } catch (e) {
         return { error: "Failed to update" };
+    }
+}
+
+// --- Mirror Group Actions ---
+
+export async function getMirrorConfig(id: string) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return null;
+
+    return prisma.mirrorConfig.findFirst({
+        where: {
+            id,
+            userId: session.user.id
+        },
+        include: {
+            discordAccount: true,
+            telegramAccount: true,
+            group: true
+        }
+    });
+}
+
+export async function getMirrorConfigs(limit?: number) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return [];
+
+    return prisma.mirrorConfig.findMany({
+        where: { userId: session.user.id },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        include: {
+            discordAccount: true,
+            telegramAccount: true,
+            group: true
+        }
+    });
+}
+
+export async function getMirrorGroups() {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return [];
+
+    return prisma.mirrorGroup.findMany({
+        where: { userId: session.user.id },
+        orderBy: { name: "asc" },
+        include: {
+            _count: {
+                select: { configs: true }
+            }
+        }
+    });
+}
+
+export async function createMirrorGroup(name: string, type: any) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return { error: "Unauthorized" };
+
+    try {
+        const group = await prisma.mirrorGroup.create({
+            data: {
+                name,
+                type,
+                userId: session.user.id
+            }
+        });
+        revalidatePath("/dashboard/expert");
+        return { success: true, group };
+    } catch (e) {
+        return { error: "Failed to create group" };
+    }
+}
+
+export async function deleteMirrorGroup(id: string) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return { error: "Unauthorized" };
+
+    try {
+        await prisma.mirrorGroup.delete({
+            where: { id, userId: session.user.id }
+        });
+        revalidatePath("/dashboard/expert");
+        return { success: true };
+    } catch (e) {
+        return { error: "Failed to delete group" };
     }
 }

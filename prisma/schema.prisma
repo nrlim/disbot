@@ -51,6 +51,7 @@ model User {
   configs          MirrorConfig[]
   sessions         Session[]
   telegramAccounts TelegramAccount[]
+  mirrorGroups     MirrorGroup[]
 }
 
 model VerificationToken {
@@ -72,12 +73,15 @@ model MirrorConfig {
   discordAccountId  String?
   telegramAccountId String?
   targetWebhookUrl  String?
+  targetWebhookName String?
   targetChannelId   String?
   userId            String
+  groupId           String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   lastActiveAt      DateTime?
   name              String?
+  sourceChannelName String?
   targetChannelName String?
   targetGuildId     String?
   targetGuildName   String?
@@ -85,11 +89,25 @@ model MirrorConfig {
   discordAccount    DiscordAccount?  @relation(fields: [discordAccountId], references: [id])
   telegramAccount   TelegramAccount? @relation(fields: [telegramAccountId], references: [id])
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group             MirrorGroup?     @relation(fields: [groupId], references: [id])
 
   @@index([userId])
   @@index([sourcePlatform])
   @@index([discordAccountId])
   @@index([telegramAccountId])
+  @@index([groupId])
+}
+
+model MirrorGroup {
+  id      String          @id @default(cuid())
+  name    String
+  type    MirrorGroupType @default(DISCORD_TO_DISCORD)
+  active  Boolean         @default(true)
+  userId  String
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  configs MirrorConfig[]
+
+  @@index([userId])
 }
 
 model DiscordAccount {
@@ -140,4 +158,9 @@ enum MirrorType {
 enum PlatformType {
   DISCORD
   TELEGRAM
+}
+
+enum MirrorGroupType {
+  DISCORD_TO_DISCORD
+  TELEGRAM_TO_DISCORD
 }

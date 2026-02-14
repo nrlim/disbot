@@ -7,6 +7,7 @@ import { decrypt } from "@/lib/encryption";
 import { Terminal, Shield, Cpu, Activity } from "lucide-react";
 import { PLAN_LIMITS } from "@/lib/constants";
 import { getDiscordAccounts } from "@/actions/discord-account";
+import { getMirrorConfigs, getMirrorGroups } from "@/actions/mirror";
 
 export default async function ExpertDashboard() {
     const session = await getServerSession(authOptions);
@@ -15,15 +16,9 @@ export default async function ExpertDashboard() {
         redirect("/");
     }
 
-    const [allConfigs, accounts] = await Promise.all([
-        prisma.mirrorConfig.findMany({
-            where: { userId: session.user.id },
-            orderBy: { createdAt: "desc" },
-            include: {
-                discordAccount: true,
-                telegramAccount: true
-            }
-        }),
+    const [allConfigs, groups, accounts] = await Promise.all([
+        getMirrorConfigs(),
+        getMirrorGroups(),
         getDiscordAccounts()
     ]);
 
@@ -100,6 +95,7 @@ export default async function ExpertDashboard() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-1 overflow-hidden">
                 <WebhookList
                     initialConfigs={configs}
+                    groups={groups}
                     accounts={accounts}
                     usageCount={usageCount}
                     isLimitReached={isLimitReached}
