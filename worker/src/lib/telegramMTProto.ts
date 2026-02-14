@@ -167,14 +167,6 @@ export class TelegramListener {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
                     continue;
                 }
-            } else {
-                session.configs = sessionConfigs;
-                session.lastActive = Date.now();
-            }
-        }
-
-        for (const [token, session] of this.sessions) {
-            if (!activeSessionKeys.has(token)) {
                 logger.info('Stopping stale Telegram session');
                 await this.destroySession(token, session);
             }

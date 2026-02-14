@@ -44,7 +44,9 @@ export function enforcePathLimits(userConfigs: any[], userId: string): PathLimit
         return { allowed: [], overLimit: [], limit: 0, plan: 'FREE' };
     }
 
-    const plan = userConfigs[0]?.user?.plan || 'FREE';
+    // Check for flattened userPlan (from Engine) or nested user.plan (legacy/direct prisma)
+    const firstConfig = userConfigs[0];
+    const plan = firstConfig?.userPlan || firstConfig?.user?.plan || 'FREE';
     const limit = PLAN_PATH_LIMITS[plan] ?? PLAN_PATH_LIMITS.FREE;
 
     if (userConfigs.length <= limit) {

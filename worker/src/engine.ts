@@ -106,6 +106,11 @@ export class Engine {
             // 2. Enforce Path Limits
             const allowedConfigs = this.enforceLimits(activeConfigs);
 
+            logger.info({
+                totalActive: activeConfigs.length,
+                allowed: allowedConfigs.length
+            }, '[Sync] Configs loaded after limit enforcement');
+
             // 3. Split & Prepare
             const telegramConfigs: TelegramConfig[] = [];
             const discordConfigs: MirrorActiveConfig[] = [];
@@ -119,6 +124,8 @@ export class Engine {
                     }
 
                     if (decryptedSession && cfg.telegramChatId) {
+                        logger.debug({ id: cfg.id, sessionLength: decryptedSession.length }, '[Sync] Telegram config valid');
+
                         telegramConfigs.push({
                             id: cfg.id,
                             telegramSession: decryptedSession,
@@ -127,11 +134,14 @@ export class Engine {
                             targetWebhookUrl: cfg.targetWebhookUrl,
                         });
                     } else {
+                        const reason = !decryptedSession ? 'NO_SESSION' : (!cfg.telegramChatId ? 'NO_CHAT_ID' : 'UNKNOWN');
+
                         logger.warn({
                             configId: cfg.id,
                             userId: cfg.userId,
                             hasSession: !!decryptedSession,
                             hasChatId: !!cfg.telegramChatId,
+                            reason,
                             platform: cfg.sourcePlatform
                         }, '[Sync] Skipping invalid Telegram config - Auto-disabling');
 
