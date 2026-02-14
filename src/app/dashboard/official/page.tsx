@@ -62,11 +62,11 @@ export default function OfficialBotDashboard() {
                                     <Bot className="w-5 h-5" />
                                     Initiate Auth Sequence
                                     <ExternalLink className="w-4 h-4 ml-1 opacity-70" />
-                                a>
-                                    <button disabled className="px-6 py-3 bg-gray-50 border border-gray-200 text-gray-400 text-sm font-semibold rounded-lg cursor-not-allowed flex items-center justify-center gap-2">
-                                        <Terminal className="w-4 h-4" />
-                                        Read Documentation
-                                    </button>
+                                </a>
+                                <button disabled className="px-6 py-3 bg-gray-50 border border-gray-200 text-gray-400 text-sm font-semibold rounded-lg cursor-not-allowed flex items-center justify-center gap-2">
+                                    <Terminal className="w-4 h-4" />
+                                    Read Documentation
+                                </button>
                             </div>
                         </div>
                     </div>
