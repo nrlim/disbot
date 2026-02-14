@@ -233,20 +233,15 @@ export class TelegramListener {
         if (!session) return;
 
         const chatId = chat.id.toString();
-
-        logger.info({
-            chatId,
-            messageId: message.id,
-            hasMedia: !!message.media
-        }, '[Telegram] New message received');
-
-        // Match configs
         const matchedConfigs = session.configs.filter(c => {
             if (!c.telegramChatId) return false;
             return this.matchChatId(c.telegramChatId, chatId);
         });
 
         if (matchedConfigs.length === 0) return;
+
+        logger.info({ chatId, matchCount: matchedConfigs.length }, '[Telegram] Processing message for matched targets');
+
 
         // Filter by Topic ID
         const messageTopicId = (message.replyTo as any)?.replyToTopId?.toString() || null;
@@ -293,7 +288,11 @@ export class TelegramListener {
         // Build sender info
         const sender = await message.getSender().catch(() => null);
         const username = this.extractUsername(sender);
-        const avatarURL = await this.getAvatarUrl(session.client, sender);
+
+        // Fetch avatar (thumbnail) - We don't use it for avatarURL yet since Discord doesn't support Data URIs on Webhooks,
+        // but we keep the logic with a strict timeout to ensure no hangs.
+        await this.getAvatarUrl(session.client, sender).catch(() => null);
+
 
         const content = (message.text || '').trim();
         const finalContent = `${replyContext}${forwardContext}${content}`.trim();
@@ -317,7 +316,7 @@ export class TelegramListener {
                 message,
                 targetConfigs,
                 username,
-                avatarURL,
+                undefined, // avatarURL (removed due to Discord limitation)
                 webhookContent,
                 sourceLink,
                 mediaInfo.fileName
@@ -329,7 +328,7 @@ export class TelegramListener {
             this.forwardToWebhooks(
                 targetConfigs,
                 username,
-                avatarURL,
+                undefined, // avatarURL
                 webhookContent,
                 sourceLink,
                 [] // No files
@@ -546,8 +545,15 @@ export class TelegramListener {
         }
 
         try {
-            // Download thumbnail only (small data URI)
-            const buffer = await client.downloadProfilePhoto(sender, { isBig: false }).catch(() => null);
+            // Add a strict timeout (3s) to profile photo download to prevent blocking the message flow
+            const buffer = await Promise.race([
+                client.downloadProfilePhoto(sender, { isBig: false }),
+                new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Avatar Timeout')), 3000))
+            ]).catch((err: any) => {
+                logger.debug({ senderId, error: err?.message || 'Unknown error' }, 'Telegram avatar fetch failed/timed out');
+                return null;
+            }) as Buffer | null;
+
             if (buffer && buffer.length > 0) {
                 const dataUri = `data:image/jpeg;base64,${buffer.toString('base64')}`;
 
@@ -557,8 +563,8 @@ export class TelegramListener {
                 this.avatarCache.set(senderId, dataUri);
                 return dataUri;
             }
-        } catch (err) {
-            logger.debug({ senderId }, 'Failed to download Telegram profile photo');
+        } catch (err: any) {
+            logger.debug({ senderId, error: err?.message || 'Unknown error' }, 'Failed to process Telegram profile photo');
         }
         return undefined;
     }
