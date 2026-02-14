@@ -71,9 +71,9 @@ export type MediaStrategy = 'SNAPSHOT' | 'REJECT';
  */
 const PLAN_ALLOWED_CATEGORIES: Record<string, Set<MediaCategory>> = {
     FREE: new Set(['image']),                                          // FREE: images only
-    STARTER: new Set(['image']),                                       // Starter: images only (Audio removed as per strategy)
-    PRO: new Set(['image', 'audio', 'video']),                         // Pro: images+audio+video (Docs removed as per strategy)
-    ELITE: new Set(['image', 'audio', 'video', 'document', 'unknown']), // Elite: everything
+    STARTER: new Set(['image', 'audio']),                              // Starter: images + audio
+    PRO: new Set(['image', 'audio', 'document']),                      // Pro: images + audio + documents
+    ELITE: new Set(['image', 'audio', 'document', 'video', 'unknown']), // Elite: everything
 };
 
 // ──────────────────────────────────────────────────────────────
