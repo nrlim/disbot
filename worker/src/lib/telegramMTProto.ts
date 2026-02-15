@@ -5,6 +5,7 @@ import { NewMessage, NewMessageEvent } from 'telegram/events';
 import { logger } from './logger';
 import { WebhookExecutor, WebhookPayload } from './webhook';
 import { TelegramConfig } from './types';
+import { MessageFormatter } from './messageFormatter';
 
 // ──────────────────────────────────────────────────────────────
 //  Constants
@@ -492,24 +493,31 @@ export class TelegramListener {
             }
         }
 
-        // Professional formatting - Prepend sender profile info
-        // Using bold for name and -# for metadata
-        const header = `👤 **${username}**`;
-        const bodyContent = content ? `\n${content}` : '';
-        const footer = `\n\n-# via Telegram • [Source](${sourceLink})`;
-
-        const messageContent = `${header}${bodyContent}${footer}`.substring(0, 2000);
-
         // Send in parallel
+        // We must format the message individually for each target because branding might differ
         await Promise.allSettled(
-            Array.from(uniqueWebhooks.entries()).map(([url, configId]) =>
-                WebhookExecutor.send(url, {
-                    username: username || 'Telegram Mirror',
-                    avatarURL: avatarURL,
-                    content: messageContent,
+            Array.from(uniqueWebhooks.entries()).map(([url, configId]) => {
+                const targetConfig = configs.find(c => c.id === configId);
+
+                // Use Formatter
+                const formatted = MessageFormatter.formatTelegramMessage(
+                    content,
+                    sourceLink,
+                    { name: username, avatarUrl: avatarURL },
+                    {
+                        customWatermark: targetConfig?.customWatermark,
+                        brandColor: targetConfig?.brandColor
+                    }
+                );
+
+                return WebhookExecutor.send(url, {
+                    username: formatted.username,
+                    avatarURL: formatted.avatarURL,
+                    content: formatted.content,
+                    embeds: formatted.embeds,
                     files: files // WebhookExecutor will handle buffering/streaming
-                }, configId)
-            )
+                }, configId);
+            })
         );
 
         // Note: 'files' buffer references are cleared inside WebhookExecutor? 

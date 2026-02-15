@@ -35,4 +35,6 @@ export interface TelegramConfig {
     telegramChatId?: string;
     telegramTopicId?: string;
     targetWebhookUrl: string;
+    customWatermark?: string;
+    brandColor?: string;
 }

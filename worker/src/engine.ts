@@ -138,6 +138,8 @@ export class Engine {
                             telegramChatId: cfg.telegramChatId,
                             telegramTopicId: cfg.telegramTopicId,
                             targetWebhookUrl: cfg.targetWebhookUrl,
+                            customWatermark: cfg.customWatermark,
+                            brandColor: cfg.brandColor
                         });
                     } else {
                         const reason = !decryptedSession ? 'NO_SESSION' : (!cfg.telegramChatId ? 'NO_CHAT_ID' : 'UNKNOWN');
