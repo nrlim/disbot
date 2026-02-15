@@ -228,12 +228,27 @@ export class TelegramListener {
                 // robust-keep-alive
                 if (session.keepAliveInterval) clearInterval(session.keepAliveInterval);
                 session.keepAliveInterval = setInterval(async () => {
-                    if (!session.client.connected) {
-                        logger.warn({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Client disconnected, reconnecting...');
-                        try {
+                    try {
+                        if (!session.client.connected) {
+                            logger.warn({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Client disconnected, reconnecting...');
                             await session.client.connect();
-                        } catch (err: any) {
-                            logger.error({ error: err.message }, 'Active Keep-Alive: Reconnect failed');
+                        } else {
+                            // Active Ping to ensure socket is responsive
+                            // We use getMe() as a reliable test of session validity + connectivity
+                            // A timeout here means the socket is hung
+                            const pingPromise = session.client.getMe();
+                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 10000));
+
+                            await Promise.race([pingPromise, timeoutPromise]);
+                            // logger.debug({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Ping successful');
+                        }
+                    } catch (err: any) {
+                        logger.error({ error: err.message }, 'Active Keep-Alive: Ping failed, forcing reconnect');
+                        try {
+                            await session.client.disconnect();
+                            await session.client.connect();
+                        } catch (e: any) {
+                            logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect failed');
                         }
                     }
                 }, 30_000); // Check every 30s
@@ -617,6 +632,10 @@ export class TelegramListener {
     }
 
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
+        if (session.keepAliveInterval) {
+            clearInterval(session.keepAliveInterval);
+            session.keepAliveInterval = undefined;
+        }
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
         this.sessions.delete(token);
