@@ -18,6 +18,7 @@ const plans = [
             path: { label: "Mirror Path", value: "6 Paths", sub: "Hanya Rp 12.500/path", highlightSub: true },
             source: { label: "Source Platform", value: "Discord Only" },
             media: { label: "Forward Media", value: "Gambar & Audio", sub: "Snapshot Mode" },
+            branding: { label: "Branding", value: "Via DisBot", sub: "Default Brand" },
             tech: { label: "Teknologi", value: "Non-Blocking Engine v2" },
         },
     },
@@ -32,6 +33,7 @@ const plans = [
             path: { label: "Mirror Path", value: "20 Paths" },
             source: { label: "Source Platform", value: "Discord & Telegram", sub: "Standard Mode" },
             media: { label: "Forward Media", value: "Audio, Video & Dokumen" },
+            branding: { label: "Branding", value: "Custom Watermark", sub: "White-label & Colors" },
             tech: { label: "Teknologi", value: "Hybrid Snapshot & Streaming" },
         },
     },
@@ -45,6 +47,7 @@ const plans = [
             path: { label: "Mirror Path", value: "50 Paths", sub: "Soft Limit" },
             source: { label: "Source Platform", value: "All Platform", sub: "Inc. Telegram Ghost/MTProto" },
             media: { label: "Forward Media", value: "Semua Tipe File", sub: "No Limit" },
+            branding: { label: "Branding", value: "Custom Watermark", sub: "White-label & Colors" },
             tech: { label: "Teknologi", value: "Dedicated Instance & Priority Support" },
         },
     },
@@ -142,6 +145,15 @@ export default function PricingSection() {
                                     <span className="text-base font-semibold text-slate-200">{plan.features.media.value}</span>
                                     {plan.features.media.sub && <span className="text-xs text-slate-500 mt-1">{plan.features.media.sub}</span>}
                                 </div>
+
+                                {/* Custom Watermark (New Feature) */}
+                                {plan.features.branding && (
+                                    <div className="p-6 min-h-[140px] flex flex-col items-center justify-center text-center bg-slate-900/30">
+                                        <span className="text-slate-500 text-xs uppercase tracking-widest font-semibold mb-2">{plan.features.branding.label}</span>
+                                        <span className="text-base font-semibold text-emerald-200">{plan.features.branding.value}</span>
+                                        {plan.features.branding.sub && <span className="text-xs text-slate-500 mt-1">{plan.features.branding.sub}</span>}
+                                    </div>
+                                )}
 
                                 {/* Teknologi */}
                                 <div className="p-6 min-h-[140px] flex flex-col items-center justify-center text-center bg-slate-900/30">

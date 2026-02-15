@@ -31,15 +31,15 @@ export const PLAN_DETAILS = [
         limit: PLAN_LIMITS.PRO,
         message: "Halo admin DISBOT, saya ingin upgrade ke Paket Pro seharga Rp 199.000/bulan untuk 20 mirror paths.",
         weight: 2,
-        features: ["20 Mirror Paths", "Discord + Telegram"]
+        features: ["20 Mirror Paths", "Discord + Telegram", "Custom Watermark"]
     },
     {
         name: "ELITE",
         price: 499000,
         priceLabel: "Rp 499.000",
         limit: PLAN_LIMITS.ELITE,
-        message: "Halo admin DISBOT, saya ingin berlangganan Paket Elite seharga Rp 499.000/bulan. Saya butuh Dedicated Instance.",
+        message: "Halo admin DISBOT, saya ingin berlangganan Paket Elite seharga Rp 499.000/bulan. Saya butuh Dedicated Instance dan Custom Watermark.",
         weight: 3,
-        features: ["50 Mirror Paths", "Dedicated Instance", "Discord + Telegram", "Priority Support"]
+        features: ["50 Mirror Paths", "Dedicated Instance", "Discord + Telegram", "Custom Watermark"]
     }
 ];

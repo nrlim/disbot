@@ -10,6 +10,7 @@ import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
 import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction } from "@/actions/telegramAuth";
 import { PLAN_PLATFORMS } from "@/lib/constants";
+import { BrandingCustomizer } from "@/components/BrandingCustomizer";
 
 // --- Types ---
 
@@ -48,6 +49,9 @@ export interface MirrorConfig {
     targetGuildId?: string | null;
     targetChannelName?: string | null;
     targetGuildName?: string | null;
+    // Branding
+    customWatermark?: string | null;
+    brandColor?: string | null;
 }
 
 interface EditMirrorModalProps {
@@ -141,6 +145,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [isBulkMode, setIsBulkMode] = useState(false);
     const [bulkText, setBulkText] = useState("");
 
+    // Branding State
+    const [customWatermark, setCustomWatermark] = useState("");
+    const [brandColor, setBrandColor] = useState("#5865F2");
+
+
     // UI State
     const [guilds, setGuilds] = useState<Guild[]>([]);
     const [channels, setChannels] = useState<Channel[]>([]);
@@ -190,6 +199,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 if (config.targetChannelId) setTargetChannelId(config.targetChannelId);
                 // Note: targetGuild and selectedWebhook are handled by their respective load effects
 
+                // Branding
+                setCustomWatermark(config.customWatermark || "");
+                setBrandColor(config.brandColor || "#5865F2");
+
                 setIsBulkMode(false);
             } else {
                 // Create Mode
@@ -232,7 +245,20 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setWebhookError("");
                 setTargetSearchQuery("");
                 setTargetChannelSearchQuery("");
+
+                // Branding
+                setCustomWatermark("");
+                setBrandColor("#5865F2");
             }
+        } else {
+            // Reset when closing
+            setStep(1);
+            setMirrorTitle("");
+            setError(null);
+
+            // Branding
+            setCustomWatermark("");
+            setBrandColor("#5865F2");
         }
     }, [isOpen, config, groups, initialTitle]); // Added groups and initialTitle for smart pre-fill
 
@@ -592,6 +618,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             const ch = targetChannels.find(c => c.id === targetChannelId);
             if (ch) formData.append("targetChannelName", ch.name);
         }
+
+        // Branding
+        if (customWatermark) formData.append("customWatermark", customWatermark);
+        if (brandColor) formData.append("brandColor", brandColor);
 
         if (sourcePlatform === 'DISCORD') {
             if (!selectedGuild) { setError("Please select a source server"); setIsSubmitting(false); return; }
@@ -1321,6 +1351,21 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                     </div>
                                                 </div>
 
+                                                {/* BRANDING CONFIGURATION */}
+                                                <div className="pt-6 border-t border-gray-200">
+                                                    <BrandingCustomizer
+                                                        userPlan={userPlan}
+                                                        initialWatermark={customWatermark}
+                                                        initialBrandColor={brandColor}
+                                                        initialPosition="bottom"
+                                                        onChange={(data) => {
+                                                            setCustomWatermark(data.watermark);
+                                                            setBrandColor(data.brandColor);
+                                                        }}
+                                                    />
+                                                </div>
+
+
                                                 {error && (
                                                     <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
                                                         <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -1375,7 +1420,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                         </motion.div>
                     </div>
                 </>
-            )}
-        </AnimatePresence>
+            )
+            }
+        </AnimatePresence >
     );
 }

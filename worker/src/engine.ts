@@ -103,7 +103,9 @@ export class Engine {
                     userPlan: cfg.user?.plan || 'FREE',
                     userId: cfg.userId,
                     sourceChannelName: cfg.sourceChannelName || undefined,
-                    targetWebhookName: cfg.targetWebhookName || undefined
+                    targetWebhookName: cfg.targetWebhookName || undefined,
+                    customWatermark: cfg.customWatermark || undefined,
+                    brandColor: cfg.brandColor || undefined
                 };
             });
 

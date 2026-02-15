@@ -24,6 +24,9 @@ export interface MirrorActiveConfig {
     // Display names
     sourceChannelName?: string;
     targetWebhookName?: string;
+    // Branding
+    customWatermark?: string;
+    brandColor?: string;
 }
 
 export interface TelegramConfig {

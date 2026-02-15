@@ -215,6 +215,12 @@ export class TelegramListener {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
                 }
             }
+
+            // Re-check session after setup
+            if (session && !session.client.connected) {
+                logger.warn('Client disconnected immediately after setup? Reconnecting...');
+                session.client.connect().catch(() => { });
+            }
         });
 
         await Promise.allSettled(syncPromises);

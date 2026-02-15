@@ -35,6 +35,10 @@ const mirrorSchema = z.object({
     targetWebhookName: z.string().optional(),
     sourceChannelName: z.string().optional(),
     groupId: z.string().optional(),
+
+    // Branding
+    customWatermark: z.string().optional(),
+    brandColor: z.string().optional(),
 }).superRefine((data, ctx) => {
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
@@ -105,6 +109,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         targetWebhookName: (formData.get("targetWebhookName") as string) || undefined,
         sourceChannelName: (formData.get("sourceChannelName") as string) || undefined,
         groupId: (formData.get("groupId") as string) || undefined,
+        customWatermark: (formData.get("customWatermark") as string) || undefined,
+        brandColor: (formData.get("brandColor") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -234,6 +240,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 telegramTopicId: validated.data.telegramTopicId,
                 groupId: finalGroupId,
                 active: true,
+                customWatermark: validated.data.customWatermark,
+                brandColor: validated.data.brandColor,
             }
         });
 
@@ -361,6 +369,8 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         targetWebhookName: (formData.get("targetWebhookName") as string) || undefined,
         sourceChannelName: (formData.get("sourceChannelName") as string) || undefined,
         groupId: (formData.get("groupId") as string) || undefined,
+        customWatermark: (formData.get("customWatermark") as string) || undefined,
+        brandColor: (formData.get("brandColor") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -426,6 +436,8 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             targetGuildName: validated.data.targetGuildName,
             telegramTopicId: validated.data.telegramTopicId,
             groupId: finalGroupId,
+            customWatermark: validated.data.customWatermark,
+            brandColor: validated.data.brandColor,
         };
 
         if (sourcePlatform === "DISCORD") {

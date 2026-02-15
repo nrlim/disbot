@@ -101,7 +101,9 @@ export async function getTelegramChats(sessionString: string): Promise<any[]> {
 
     const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
         connectionRetries: 1, // Fail fast for UI feedback
-        useWSS: false,
+        useWSS: true, // Match Worker to reduce protocol-switch conflicts
+        deviceModel: 'DisBot Dashboard', // Distinct device ID
+        appVersion: '2.1.0',
         timeout: 10000, // 10s timeout for individual requests
     });
 
@@ -141,7 +143,9 @@ export async function getTelegramTopics(sessionString: string, chatId: string): 
 
     const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
         connectionRetries: 1,
-        useWSS: false,
+        useWSS: true, // Match Worker to reduce protocol-switch conflicts
+        deviceModel: 'DisBot Dashboard', // Distinct device ID
+        appVersion: '2.1.0',
     });
 
     try {

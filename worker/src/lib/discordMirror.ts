@@ -363,9 +363,27 @@ export class DiscordMirror {
         }));
 
         // Add Watermark
-        const hasMedia = files.length > 0;
-        if (content || hasMedia || message.embeds.length > 0) {
-            content += `\n-# 📡 via DisBot Engine`;
+        // 5. Construct Embeds & Apply Branding
+        const finalEmbeds = this.constructEmbed(message.embeds, configs[0], userPlan);
+
+        // 6. Fallback: Add Watermark to Content if No Embeds
+        // Only if not already added to an embed
+        if (finalEmbeds.length === 0) {
+            const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase()); // Safe verify
+            const customWatermark = configs[0].customWatermark;
+
+            let footerText = '';
+            if (isPremium && customWatermark) {
+                footerText = `\n${customWatermark}`;
+            } else {
+                // Default Branding (STARTER/FREE or No Custom Set)
+                footerText = `\n-# 📡 via DisBot Engine`;
+            }
+
+            // Only append if there is content or media
+            if ((content || files.length > 0) && !content.includes(footerText.trim())) {
+                content += footerText;
+            }
         }
 
         if (content.length > 2000) content = content.substring(0, 1997) + '...';
@@ -374,7 +392,8 @@ export class DiscordMirror {
             username: message.author.username,
             avatarURL: message.author.displayAvatarURL(),
             content: content,
-            files: files // Passing URLs directly
+            files: files,
+            embeds: finalEmbeds
         };
 
         // Forward to all webhooks
@@ -458,6 +477,81 @@ export class DiscordMirror {
                 data: { active: false, status: reason }
             });
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  EMBED CONSTRUCTION
+    // ──────────────────────────────────────────────────────────────
+
+    private constructEmbed(
+        originalEmbeds: any[],
+        config: MirrorActiveConfig,
+        userPlan: string
+    ): any[] {
+        if (!originalEmbeds || originalEmbeds.length === 0) return [];
+
+        const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase());
+        const { customWatermark, brandColor } = config;
+
+        // Default Branding Constants
+        const DEFAULT_FOOTER = 'Via DisBot Engine';
+        // const DEFAULT_COLOR = '#5865F2'; // Optional: Enforce default color if needed, currently leaving original if not branded
+
+        // Map to API Embed Objects
+        const newEmbeds = originalEmbeds.map(e => {
+            // Convert to plain object if it has toJSON (MessageEmbed)
+            return typeof e.toJSON === 'function' ? e.toJSON() : { ...e };
+        });
+
+        // Determine Branding Values
+        // Plan Guard: Only PRO/ELITE can use custom values
+        const targetText = (isPremium && customWatermark) ? customWatermark : DEFAULT_FOOTER;
+        const targetColor = (isPremium && brandColor) ? brandColor : null;
+
+        // Resolve Color Integer
+        let colorInt: number | null = null;
+        if (targetColor) {
+            // Remove # if present and parse
+            const hex = targetColor.replace(/^#/, '');
+            colorInt = parseInt(hex, 16);
+        }
+
+        // Apply modifications
+        for (let i = 0; i < newEmbeds.length; i++) {
+            const embed = newEmbeds[i];
+
+            // 1. Apply Brand Color (to Sidebar)
+            if (colorInt !== null && !isNaN(colorInt)) {
+                embed.color = colorInt;
+            }
+
+            // 2. Append Watermark (Only to the LAST embed)
+            if (i === newEmbeds.length - 1) {
+                const currentFooter = embed.footer?.text;
+                let newFooterText = targetText;
+
+                if (currentFooter) {
+                    // Avoid double appending if already present (unlikely in fresh mirror but good safety)
+                    if (!currentFooter.includes(targetText)) {
+                        newFooterText = `${currentFooter} • ${targetText}`;
+                    } else {
+                        newFooterText = currentFooter;
+                    }
+                }
+
+                embed.footer = {
+                    text: newFooterText,
+                    icon_url: embed.footer?.icon_url
+                };
+
+                // Ensure timestamp is valid string if present
+                if (embed.timestamp) {
+                    embed.timestamp = new Date(embed.timestamp).toISOString();
+                }
+            }
+        }
+
+        return newEmbeds;
     }
 
     public async shutdown() {

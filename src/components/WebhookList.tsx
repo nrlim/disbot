@@ -37,6 +37,8 @@ interface MirrorConfig {
     targetWebhookName?: string | null;
     sourceChannelName?: string | null;
     targetGuildName?: string | null;
+    customWatermark?: string | null;
+    brandColor?: string | null;
 }
 
 interface WebhookListProps {

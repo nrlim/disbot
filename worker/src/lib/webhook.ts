@@ -16,6 +16,7 @@ export interface WebhookPayload {
     avatarURL?: string;
     content: string;
     files?: WebhookFile[];
+    embeds?: any[];
 }
 
 const MAX_WEBHOOK_RETRIES = 2;
@@ -48,6 +49,7 @@ export class WebhookExecutor {
                     avatarURL: payload.avatarURL,
                     content: payload.content,
                     allowedMentions: { parse: [] },
+                    embeds: payload.embeds,
                 };
 
                 // Add files if present
