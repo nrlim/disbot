@@ -68,8 +68,9 @@ export class MessageFormatter {
             });
         }
 
-        // Add Source Link to description to keep it accessible but subtle
-        embed.setDescription(`[Open Original Message](${sourceStartLink})`);
+        // Use a clickable Title for the source link (Cleaner UI)
+        embed.setTitle('Jump to Original Message ↗');
+        embed.setURL(sourceStartLink);
 
         embeds.push(embed.toJSON());
 
@@ -82,7 +83,8 @@ export class MessageFormatter {
         return {
             username: user.name,
             avatarURL: user.avatarUrl,
-            content: content, // The actual message text
+            // Add a trailing newline to separate text from the embed watermark
+            content: content ? content + "\n" : content,
             embeds: embeds    // The branding & link
         };
     }
