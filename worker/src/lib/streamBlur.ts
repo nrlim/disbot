@@ -140,16 +140,49 @@ export async function streamBlurImage(
             return { buffer: null, filename, applied: false, reason: 'Unknown image dimensions' };
         }
 
-        logger.debug({ ...logCtx, imgWidth, imgHeight }, 'Image loaded — applying blur regions');
+        // ── 4. Delegate to buffer processor ──
+        return applyBlurToBuffer(imageBuffer, regions, filename);
 
-        // ── 5. Build composite overlays for each region ──
-        //
-        // Strategy: For each blur region:
-        //   a) Extract the sub-region from the original image
-        //   b) Apply a Gaussian blur to that sub-region
-        //   c) Composite (paste) the blurred sub-region back at the same position
-        //
-        // This is faster than full-image blur + mask, and uses minimal extra memory.
+    } catch (err: any) {
+        // ── Graceful fallback: Never crash the worker ──
+        const errorMsg = err.message || 'Unknown error';
+
+        if (errorMsg === 'BLUR_SIZE_EXCEEDED') {
+            logger.info({ ...logCtx }, 'Image exceeded 5MB during stream — falling back to original URL');
+            return { buffer: null, filename, applied: false, reason: 'Stream exceeded 5MB limit' };
+        }
+
+        logger.warn({ ...logCtx, error: errorMsg }, 'Blur processing failed — falling back to original URL');
+        return { buffer: null, filename, applied: false, reason: errorMsg };
+    }
+}
+
+/**
+ * Applies blur regions to an existing image buffer.
+ * Separated logic for reuse (e.g., Telegram buffering).
+ */
+export async function applyBlurToBuffer(
+    imageBuffer: Buffer,
+    regions: BlurRegion[],
+    filename: string
+): Promise<BlurResult> {
+    const logCtx = { fn: 'applyBlurToBuffer', filename, regionCount: regions.length };
+
+    try {
+        if (!regions || regions.length === 0) {
+            return { buffer: imageBuffer, filename, applied: false, reason: 'No regions defined' };
+        }
+
+        const metadata = await sharp(imageBuffer).metadata();
+        const imgWidth = metadata.width;
+        const imgHeight = metadata.height;
+
+        if (!imgWidth || !imgHeight) {
+            logger.warn({ ...logCtx }, 'Cannot determine image dimensions — skipping blur');
+            return { buffer: imageBuffer, filename, applied: false, reason: 'Unknown image dimensions' };
+        }
+
+        // logger.debug({ ...logCtx, imgWidth, imgHeight }, 'Image buffer loaded — applying blur regions');
 
         const compositeInputs: sharp.OverlayOptions[] = [];
 
@@ -168,7 +201,7 @@ export async function streamBlurImage(
 
             // Skip degenerate regions
             if (width < 2 || height < 2) {
-                logger.debug({ ...logCtx, regionId: region.id, width, height }, 'Skipping degenerate blur region');
+                // logger.debug({ ...logCtx, regionId: region.id, width, height }, 'Skipping degenerate blur region');
                 continue;
             }
 
@@ -186,39 +219,26 @@ export async function streamBlurImage(
         }
 
         if (compositeInputs.length === 0) {
-            logger.debug({ ...logCtx }, 'No valid blur regions to apply — returning original');
-            return { buffer: null, filename, applied: false, reason: 'All regions were degenerate' };
+            return { buffer: imageBuffer, filename, applied: false, reason: 'All regions were degenerate' };
         }
 
-        // ── 6. Composite blurred regions onto the original image ──
+        // Composite blurred regions onto the original image
         const resultBuffer = await sharp(imageBuffer)
             .composite(compositeInputs)
             .toBuffer();
-
-        // ── 7. Explicit cleanup ──
-        // Null out intermediate references for faster GC
-        chunks.length = 0;
 
         logger.info({
             ...logCtx,
             appliedRegions: compositeInputs.length,
             inputSize: (imageBuffer.length / 1024).toFixed(1) + 'KB',
             outputSize: (resultBuffer.length / 1024).toFixed(1) + 'KB'
-        }, 'Blur applied successfully');
+        }, 'Blur applied to buffer successfully');
 
         return { buffer: resultBuffer, filename, applied: true };
 
     } catch (err: any) {
-        // ── Graceful fallback: Never crash the worker ──
-        const errorMsg = err.message || 'Unknown error';
-
-        if (errorMsg === 'BLUR_SIZE_EXCEEDED') {
-            logger.info({ ...logCtx }, 'Image exceeded 5MB during stream — falling back to original URL');
-            return { buffer: null, filename, applied: false, reason: 'Stream exceeded 5MB limit' };
-        }
-
-        logger.warn({ ...logCtx, error: errorMsg }, 'Blur processing failed — falling back to original URL');
-        return { buffer: null, filename, applied: false, reason: errorMsg };
+        logger.warn({ ...logCtx, error: err.message }, 'Blur buffer processing failed — returning original');
+        return { buffer: imageBuffer, filename, applied: false, reason: err.message };
     }
 }
 

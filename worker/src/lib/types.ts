@@ -47,4 +47,5 @@ export interface TelegramConfig {
     watermarkPosition?: string;
     watermarkOpacity?: number; // 0-100
     brandColor?: string;
+    blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
 }

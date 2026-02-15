@@ -21,7 +21,7 @@ export class MessageFormatter {
     public static formatTelegramMessage(
         content: string,
         sourceStartLink: string,
-        user: { name: string; avatarUrl?: string },
+        user: { name: string; avatarUrl?: string; avatarAttachmentName?: string },
         config: { customWatermark?: string; brandColor?: string; cleanMode?: boolean } // cleanMode logic TBD
     ): FormattedMessage {
 
@@ -59,6 +59,21 @@ export class MessageFormatter {
         const embed = new EmbedBuilder()
             .setColor(embedColor)
             .setTimestamp();
+
+        // ─── NEW: Set Author using Avatar Attachment ───
+        // This ensures the Telegram User's profile is visible even if Webhook Avatar checks fail
+        if (user.avatarAttachmentName) {
+            embed.setAuthor({
+                name: user.name,
+                iconURL: `attachment://${user.avatarAttachmentName}`
+            });
+        } else {
+            // Fallback to text name or standard URL if available
+            embed.setAuthor({
+                name: user.name,
+                iconURL: user.avatarUrl
+            });
+        }
 
         if (footerText) {
             embed.setFooter({

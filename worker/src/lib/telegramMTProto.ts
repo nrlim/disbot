@@ -7,6 +7,7 @@ import { WebhookExecutor, WebhookPayload } from './webhook';
 import { TelegramConfig } from './types';
 import { MessageFormatter } from './messageFormatter';
 import { processAttachmentsWithWatermark, WatermarkConfig, TextOverlayConfig } from './streamWatermark';
+import { applyBlurToBuffer, BlurRegion } from './streamBlur';
 
 // ──────────────────────────────────────────────────────────────
 //  Constants
@@ -31,6 +32,7 @@ interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
     lastActive: number;
+    keepAliveInterval?: NodeJS.Timeout;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -80,12 +82,13 @@ const downloadLimiter = new ConcurrencyLimiter(MAX_CONCURRENT_DOWNLOADS);
 export class TelegramListener {
     private static instance: TelegramListener;
     private sessions: Map<string, ActiveSession> = new Map();
+    private static readonly AVATAR_CACHE_MAX_SIZE = 500;
+    private static readonly AVATAR_CACHE_TTL_MS = 1000 * 60 * 60; // 1 hour
+
     private apiId: number;
     private apiHash: string;
     private isShuttingDown = false;
-    private avatarCache: Map<string, { url: string; expiresAt: number }> = new Map();
-    private static readonly AVATAR_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-    private static readonly AVATAR_CACHE_MAX_SIZE = 200;
+    private avatarCache: Map<string, { buffer: Buffer; expiresAt: number }> = new Map();
 
     private constructor() {
         this.apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
@@ -118,6 +121,7 @@ export class TelegramListener {
 
         for (const config of configs) {
             if (!config.telegramSession) continue;
+            // Trim just in case of weird whitespace during decryption/storage
             const token = config.telegramSession.trim();
             if (!token) continue;
 
@@ -142,20 +146,17 @@ export class TelegramListener {
             let session = this.sessions.get(token);
 
             if (session) {
-                // Update existing session configs
+                // 1. Update existing session configs
                 session.configs = sessionConfigs;
                 session.lastActive = Date.now();
                 logger.debug({ configCount: sessionConfigs.length }, 'Updated existing Telegram session configs');
 
-                // Ensure client is still connected — await to prevent fire-and-forget races
+                // 2. Ensure client is still connected
                 if (!session.client.connected) {
-                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Telegram client disconnected — attempting reconnect in sync');
-                    try {
-                        await session.client.connect();
-                        logger.info({ token: token.substring(0, 10) + '...' }, 'Telegram client reconnected in sync');
-                    } catch (e: any) {
+                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Telegram client disconnected — attempting auto-reconnect');
+                    session.client.connect().catch(e => {
                         logger.error({ error: e.message }, 'Failed to reconnect Telegram client during sync');
-                    }
+                    });
                 }
             } else {
                 logger.info({ configCount: sessionConfigs.length }, 'Starting new Telegram MTProto session');
@@ -166,7 +167,7 @@ export class TelegramListener {
                         this.apiHash,
                         {
                             connectionRetries: 10,
-                            useWSS: true,
+                            useWSS: true, // Switched to WSS for better stability on VPS firewalls
                             autoReconnect: true,
                             floodSleepThreshold: 60,
                             deviceModel: 'DisBot Mirror Worker',
@@ -174,6 +175,9 @@ export class TelegramListener {
                             appVersion: '2.1.0'
                         }
                     );
+
+                    // Listen for updates (existing handler covers messages)
+                    // We rely on the sync loop for connection health checks instead of faulty event listeners
 
                     let connectResult = false;
                     try {
@@ -186,6 +190,7 @@ export class TelegramListener {
                         ]);
                     } catch (err: any) {
                         logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
+                        // Ensure we cleanup the client if it timed out or errored
                         try { await client.disconnect(); } catch { }
                         try { await client.destroy(); } catch { }
                         return;
@@ -218,12 +223,41 @@ export class TelegramListener {
                 }
             }
 
-            // ── Production-grade Keep-Alive (REMOVED) ──
-            //
-            // Reverted to rely on internal auto-reconnect to avoid conflicts with Dashboard sessions.
-            // When Dashboard uses the same session string (AuthKey), it may cause temporary disconnects
-            // which the aggressive Keep-Alive logic misidentified as dead sessions and destroyed them.
-            // By relying on autoReconnect: true, the client will silently recover.
+            // Re-check session after setup
+            if (session) {
+                if (!session.client.connected) {
+                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected immediately? Triggering fierce reconnect.');
+                    await session.client.connect(); // Await this time
+                }
+
+                // robust-keep-alive
+                if (session.keepAliveInterval) clearInterval(session.keepAliveInterval);
+                session.keepAliveInterval = setInterval(async () => {
+                    try {
+                        if (!session.client.connected) {
+                            logger.warn({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Client disconnected, reconnecting...');
+                            await session.client.connect();
+                        } else {
+                            // Active Ping to ensure socket is responsive
+                            // We use getMe() as a reliable test of session validity + connectivity
+                            // A timeout here means the socket is hung
+                            const pingPromise = session.client.getMe();
+                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 10000));
+
+                            await Promise.race([pingPromise, timeoutPromise]);
+                            // logger.debug({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Ping successful');
+                        }
+                    } catch (err: any) {
+                        logger.error({ error: err.message }, 'Active Keep-Alive: Ping failed, forcing reconnect');
+                        try {
+                            await session.client.disconnect();
+                            await session.client.connect();
+                        } catch (e: any) {
+                            logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect failed');
+                        }
+                    }
+                }, 30_000); // Check every 30s
+            }
         });
 
         await Promise.allSettled(syncPromises);
@@ -315,9 +349,8 @@ export class TelegramListener {
         const sender = await message.getSender().catch(() => null);
         const username = this.extractUsername(sender);
 
-        // Fetch avatar (thumbnail) - We don't use it for avatarURL yet since Discord doesn't support Data URIs on Webhooks,
-        // but we keep the logic with a strict timeout to ensure no hangs.
-        await this.getAvatarUrl(session.client, sender).catch(() => null);
+        // Fetch avatar buffer - used for Embed Author Icon via attachment
+        const avatarBuffer = await this.getAvatarBuffer(session.client, sender).catch(() => null);
 
 
         const content = (message.text || '').trim();
@@ -342,7 +375,7 @@ export class TelegramListener {
                 message,
                 targetConfigs,
                 username,
-                undefined, // avatarURL (removed due to Discord limitation)
+                avatarBuffer || undefined,
                 webhookContent,
                 sourceLink,
                 mediaInfo.fileName
@@ -354,7 +387,7 @@ export class TelegramListener {
             this.forwardToWebhooks(
                 targetConfigs,
                 username,
-                undefined, // avatarURL
+                avatarBuffer || undefined,
                 webhookContent,
                 sourceLink,
                 [] // No files
@@ -410,7 +443,7 @@ export class TelegramListener {
         message: any,
         configs: TelegramConfig[],
         username: string,
-        avatarURL: string | undefined,
+        avatarBuffer: Buffer | undefined,
         content: string,
         sourceLink: string,
         fileName: string
@@ -438,7 +471,7 @@ export class TelegramListener {
             }
         }
 
-        await this.forwardToWebhooks(configs, username, avatarURL, content, sourceLink, files);
+        await this.forwardToWebhooks(configs, username, avatarBuffer, content, sourceLink, files);
 
         // Explicit cleanup
         if (buffer) buffer = null;
@@ -482,7 +515,7 @@ export class TelegramListener {
     private async forwardToWebhooks(
         configs: TelegramConfig[],
         username: string,
-        avatarURL: string | undefined,
+        avatarBuffer: Buffer | undefined,
         content: string,
         sourceLink: string,
         files: { attachment: Buffer; name: string }[]
@@ -500,19 +533,42 @@ export class TelegramListener {
         await Promise.allSettled(
             Array.from(uniqueWebhooks.entries()).map(async ([url, configId]) => {
                 const targetConfig = configs.find(c => c.id === configId);
+                let processedFiles: Array<{ attachment: Buffer | string; name: string }> = [...files];
 
-                // ── Apply Watermark (VISUAL or TEXT overlay) ──
-                let processedFiles: Array<{ attachment: Buffer | string; name: string }> = files;
+                // ── 1. Apply Image Blur (Privacy) ──
+                if (targetConfig?.blurRegions && targetConfig.blurRegions.length > 0 && processedFiles.length > 0) {
+                    const blurredFiles: Array<{ attachment: Buffer | string; name: string }> = [];
+                    for (const file of processedFiles) {
+                        // Only blur if it's a buffer (Telegram always sends buffers) and is an image
+                        if (Buffer.isBuffer(file.attachment) && /\.(jpg|jpeg|png|webp)$/i.test(file.name)) {
+                            const blurRes = await applyBlurToBuffer(
+                                file.attachment,
+                                targetConfig.blurRegions,
+                                file.name
+                            );
+                            if (blurRes.applied && blurRes.buffer) {
+                                blurredFiles.push({ attachment: blurRes.buffer, name: file.name });
+                            } else {
+                                blurredFiles.push(file);
+                            }
+                        } else {
+                            blurredFiles.push(file);
+                        }
+                    }
+                    processedFiles = blurredFiles;
+                }
+
+                // ── 2. Apply Watermark (VISUAL or TEXT overlay) ──
                 let watermarkCfg: WatermarkConfig | undefined;
 
-                if (targetConfig?.watermarkType === 'VISUAL' && targetConfig.watermarkImageUrl && files.length > 0) {
+                if (targetConfig?.watermarkType === 'VISUAL' && targetConfig.watermarkImageUrl && processedFiles.length > 0) {
                     // VISUAL mode: overlay logo image
                     watermarkCfg = {
                         imageUrl: targetConfig.watermarkImageUrl,
                         position: targetConfig.watermarkPosition || 'southeast',
                         opacity: targetConfig.watermarkOpacity ?? 100
                     };
-                } else if (targetConfig?.watermarkType === 'TEXT' && targetConfig.customWatermark?.trim() && files.length > 0) {
+                } else if (targetConfig?.watermarkType === 'TEXT' && targetConfig.customWatermark?.trim() && processedFiles.length > 0) {
                     // TEXT mode: burn branding text directly onto image pixels via SVG
                     const wmText = targetConfig.customWatermark;
                     const textOverlay: TextOverlayConfig = {
@@ -531,14 +587,25 @@ export class TelegramListener {
                 }
 
                 if (watermarkCfg) {
-                    processedFiles = await processAttachmentsWithWatermark(files, watermarkCfg);
+                    processedFiles = await processAttachmentsWithWatermark(processedFiles, watermarkCfg);
+                }
+
+                // ── 3. Attach Avatar (as separate attachment, no watermark/blur) ──
+                const finalFiles = [...processedFiles];
+                const avatarAttachmentName = avatarBuffer ? `profile_avatar_${Date.now()}.jpg` : undefined;
+
+                if (avatarBuffer && avatarAttachmentName) {
+                    finalFiles.push({
+                        attachment: avatarBuffer,
+                        name: avatarAttachmentName
+                    });
                 }
 
                 // Use Formatter
                 const formatted = MessageFormatter.formatTelegramMessage(
                     content,
                     sourceLink,
-                    { name: username, avatarUrl: avatarURL },
+                    { name: username, avatarAttachmentName },
                     {
                         customWatermark: targetConfig?.watermarkType === 'VISUAL'
                             ? '' // VISUAL mode: suppress text watermark (logo is on the image)
@@ -552,7 +619,7 @@ export class TelegramListener {
                     avatarURL: formatted.avatarURL,
                     content: formatted.content,
                     embeds: formatted.embeds,
-                    files: processedFiles as any // WebhookExecutor handles Buffer | string
+                    files: finalFiles as any // WebhookExecutor handles Buffer | string
                 }, configId);
             })
         );
@@ -602,7 +669,7 @@ export class TelegramListener {
         return name;
     }
 
-    private async getAvatarUrl(client: TelegramClient, sender: any): Promise<string | undefined> {
+    private async getAvatarBuffer(client: TelegramClient, sender: any): Promise<Buffer | undefined> {
         if (!sender || !sender.photo) return undefined;
 
         const senderId = sender.id?.toString();
@@ -612,7 +679,7 @@ export class TelegramListener {
         const cached = this.avatarCache.get(senderId);
         if (cached) {
             if (Date.now() < cached.expiresAt) {
-                return cached.url;
+                return cached.buffer;
             }
             this.avatarCache.delete(senderId); // Expired
         }
@@ -627,8 +694,6 @@ export class TelegramListener {
             }) as Buffer | null;
 
             if (buffer && buffer.length > 0) {
-                const dataUri = `data:image/jpeg;base64,${buffer.toString('base64')}`;
-
                 // Evict oldest entries if cache is full
                 if (this.avatarCache.size >= TelegramListener.AVATAR_CACHE_MAX_SIZE) {
                     const firstKey = this.avatarCache.keys().next().value;
@@ -636,10 +701,10 @@ export class TelegramListener {
                 }
 
                 this.avatarCache.set(senderId, {
-                    url: dataUri,
+                    buffer: buffer,
                     expiresAt: Date.now() + TelegramListener.AVATAR_CACHE_TTL_MS
                 });
-                return dataUri;
+                return buffer;
             }
         } catch (err: any) {
             logger.debug({ senderId, error: err?.message || 'Unknown error' }, 'Failed to process Telegram profile photo');
@@ -648,7 +713,10 @@ export class TelegramListener {
     }
 
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
-
+        if (session.keepAliveInterval) {
+            clearInterval(session.keepAliveInterval);
+            session.keepAliveInterval = undefined;
+        }
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
         this.sessions.delete(token);
