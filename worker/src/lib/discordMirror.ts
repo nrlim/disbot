@@ -366,23 +366,44 @@ export class DiscordMirror {
         // 5. Construct Embeds & Apply Branding
         const finalEmbeds = this.constructEmbed(message.embeds, configs[0], userPlan);
 
-        // 6. Fallback: Add Watermark to Content if No Embeds
-        // Only if not already added to an embed
+        // 6. Fallback: Add Watermark as Embed if No Embeds (Discord Hierarchy Fix)
         if (finalEmbeds.length === 0) {
-            const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase()); // Safe verify
-            const customWatermark = configs[0].customWatermark;
+            const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase());
+            const { customWatermark, brandColor } = configs[0];
 
-            let footerText = '';
-            if (isPremium && customWatermark) {
-                footerText = `\n${customWatermark}`;
-            } else {
-                // Default Branding (STARTER/FREE or No Custom Set)
-                footerText = `\n-# 📡 via DisBot Engine`;
+            let footerText = 'via DisBot Engine'; // Default
+            let showEmbed = true;
+
+            if (isPremium && customWatermark !== undefined && customWatermark !== null) {
+                if (customWatermark.trim() === "") {
+                    showEmbed = false; // Clean Mode
+                } else {
+                    footerText = customWatermark.startsWith("via ") ? customWatermark : `via ${customWatermark}`;
+                }
+            } else if (isPremium === false) {
+                // Force default for non-premium
+                footerText = 'via DisBot Engine';
             }
 
-            // Only append if there is content or media
-            if ((content || files.length > 0) && !content.includes(footerText.trim())) {
-                content += footerText;
+            if (showEmbed) {
+                // Resolve Color
+                let colorInt = 0x5865F2; // Discord Blurple
+                if (isPremium && brandColor && /^#[0-9A-F]{6}$/i.test(brandColor)) {
+                    colorInt = parseInt(brandColor.replace('#', ''), 16);
+                }
+
+                // Create Branding Embed
+                // We use a manual object to avoid dependency on discord.js Builders if not already imported, 
+                // but we can just push a raw object which WebhookClient accepts.
+                finalEmbeds.push({
+                    description: `[Open Original Message](https://discord.com/channels/${message.guildId}/${message.channelId}/${message.id})`,
+                    color: colorInt,
+                    footer: {
+                        text: footerText,
+                        icon_url: 'https://cdn.discordapp.com/embed/avatars/0.png' // Generic icon or configurable
+                    },
+                    timestamp: new Date().toISOString()
+                });
             }
         }
 

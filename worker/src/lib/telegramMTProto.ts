@@ -30,6 +30,7 @@ interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
     lastActive: number;
+    keepAliveInterval?: NodeJS.Timeout;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -218,9 +219,24 @@ export class TelegramListener {
             }
 
             // Re-check session after setup
-            if (session && !session.client.connected) {
-                logger.warn('Client disconnected immediately after setup? Reconnecting...');
-                session.client.connect().catch(() => { });
+            if (session) {
+                if (!session.client.connected) {
+                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected immediately? Triggering fierce reconnect.');
+                    await session.client.connect(); // Await this time
+                }
+
+                // robust-keep-alive
+                if (session.keepAliveInterval) clearInterval(session.keepAliveInterval);
+                session.keepAliveInterval = setInterval(async () => {
+                    if (!session.client.connected) {
+                        logger.warn({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Client disconnected, reconnecting...');
+                        try {
+                            await session.client.connect();
+                        } catch (err: any) {
+                            logger.error({ error: err.message }, 'Active Keep-Alive: Reconnect failed');
+                        }
+                    }
+                }, 30_000); // Check every 30s
             }
         });
 
