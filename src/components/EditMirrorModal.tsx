@@ -51,10 +51,13 @@ export interface MirrorConfig {
     targetGuildId?: string | null;
     targetChannelName?: string | null;
     targetGuildName?: string | null;
-    // Branding
     customWatermark?: string | null;
     brandColor?: string | null;
     blurRegions?: any; // JSON
+    watermarkType?: 'TEXT' | 'VISUAL';
+    watermarkImageUrl?: string | null;
+    watermarkPosition?: string | null;
+    watermarkOpacity?: number | null;
 }
 
 interface EditMirrorModalProps {
@@ -151,6 +154,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     // Branding State
     const [customWatermark, setCustomWatermark] = useState("");
     const [brandColor, setBrandColor] = useState("#5865F2");
+    const [watermarkType, setWatermarkType] = useState<'TEXT' | 'VISUAL'>('TEXT');
+    const [watermarkImageUrl, setWatermarkImageUrl] = useState("");
+    const [watermarkPosition, setWatermarkPosition] = useState("southeast");
+    const [watermarkOpacity, setWatermarkOpacity] = useState(100);
     const [blurRegions, setBlurRegions] = useState<Region[]>([]);
 
 
@@ -206,6 +213,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 // Branding
                 setCustomWatermark(config.customWatermark || "");
                 setBrandColor(config.brandColor || "#5865F2");
+                setWatermarkType(config.watermarkType || 'TEXT');
+                setWatermarkImageUrl(config.watermarkImageUrl || "");
+                setWatermarkPosition(config.watermarkPosition || "southeast");
+                setWatermarkOpacity(config.watermarkOpacity ?? 100);
+
                 if (config.blurRegions) {
                     try {
                         setBlurRegions(typeof config.blurRegions === 'string' ? JSON.parse(config.blurRegions) : config.blurRegions);
@@ -262,6 +274,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 // Branding
                 setCustomWatermark("");
                 setBrandColor("#5865F2");
+                setWatermarkType('TEXT');
+                setWatermarkImageUrl("");
+                setWatermarkPosition("southeast");
+                setWatermarkOpacity(100);
                 setBlurRegions([]);
             }
         } else {
@@ -273,6 +289,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             // Branding
             setCustomWatermark("");
             setBrandColor("#5865F2");
+            setWatermarkType('TEXT');
+            setWatermarkImageUrl("");
+            setWatermarkPosition("southeast");
+            setWatermarkOpacity(100);
             setBlurRegions([]);
         }
     }, [isOpen, config, groups, initialTitle]); // Added groups and initialTitle for smart pre-fill
@@ -639,6 +659,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         if (brandColor) formData.append("brandColor", brandColor);
         if (blurRegions.length > 0) formData.append("blurRegions", JSON.stringify(blurRegions));
 
+        formData.append("watermarkType", watermarkType);
+        if (watermarkImageUrl) formData.append("watermarkImageUrl", watermarkImageUrl);
+        if (watermarkPosition) formData.append("watermarkPosition", watermarkPosition);
+        formData.append("watermarkOpacity", watermarkOpacity.toString());
+
         if (sourcePlatform === 'DISCORD') {
             if (!selectedGuild) { setError("Please select a source server"); setIsSubmitting(false); return; }
 
@@ -745,7 +770,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                             animate={{ opacity: 1, scale: 1, y: 0 }}
                             exit={{ opacity: 0, scale: 0.98, y: 10 }}
                             transition={{ duration: 0.2, ease: "easeOut" }}
-                            className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-2xl pointer-events-auto flex flex-col max-h-[90vh]"
+                            className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-5xl pointer-events-auto flex flex-col max-h-[90vh]"
+                            onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header */}
                             <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
@@ -1410,12 +1436,21 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                 <div className="pt-6 border-t border-gray-200">
                                                     <BrandingCustomizer
                                                         userPlan={userPlan}
-                                                        initialWatermark={customWatermark}
-                                                        initialBrandColor={brandColor}
-                                                        initialPosition="bottom"
-                                                        onChange={(data) => {
-                                                            setCustomWatermark(data.watermark);
-                                                            setBrandColor(data.brandColor);
+                                                        config={{
+                                                            watermarkType,
+                                                            customWatermark,
+                                                            watermarkImageUrl,
+                                                            watermarkPosition,
+                                                            watermarkOpacity,
+                                                            brandColor
+                                                        }}
+                                                        onChange={(updates) => {
+                                                            if (updates.watermarkType !== undefined) setWatermarkType(updates.watermarkType);
+                                                            if (updates.customWatermark !== undefined) setCustomWatermark(updates.customWatermark);
+                                                            if (updates.watermarkImageUrl !== undefined) setWatermarkImageUrl(updates.watermarkImageUrl);
+                                                            if (updates.watermarkPosition !== undefined) setWatermarkPosition(updates.watermarkPosition);
+                                                            if (updates.watermarkOpacity !== undefined) setWatermarkOpacity(updates.watermarkOpacity);
+                                                            if (updates.brandColor !== undefined) setBrandColor(updates.brandColor);
                                                         }}
                                                     />
                                                 </div>

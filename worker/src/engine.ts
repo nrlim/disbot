@@ -105,6 +105,15 @@ export class Engine {
                     sourceChannelName: cfg.sourceChannelName || undefined,
                     targetWebhookName: cfg.targetWebhookName || undefined,
                     customWatermark: cfg.customWatermark || undefined,
+                    // Visual Watermark fields (PRO/ELITE only)
+                    watermarkType: (['PRO', 'ELITE'].includes(cfg.user?.plan))
+                        ? (cfg.watermarkType as 'TEXT' | 'VISUAL' || 'TEXT')
+                        : 'TEXT',
+                    watermarkImageUrl: (['PRO', 'ELITE'].includes(cfg.user?.plan) && cfg.watermarkImageUrl)
+                        ? cfg.watermarkImageUrl
+                        : undefined,
+                    watermarkPosition: cfg.watermarkPosition || 'southeast',
+                    watermarkOpacity: (['PRO', 'ELITE'].includes(cfg.user?.plan)) ? (cfg.watermarkOpacity ?? 100) : 100,
                     brandColor: cfg.brandColor || undefined,
                     // Only pass blur regions for Elite users (plan-gated feature)
                     blurRegions: (cfg.user?.plan === 'ELITE' && cfg.blurRegions)
@@ -143,6 +152,10 @@ export class Engine {
                             telegramTopicId: cfg.telegramTopicId,
                             targetWebhookUrl: cfg.targetWebhookUrl,
                             customWatermark: cfg.customWatermark,
+                            watermarkType: cfg.watermarkType,
+                            watermarkImageUrl: cfg.watermarkImageUrl,
+                            watermarkPosition: cfg.watermarkPosition,
+                            watermarkOpacity: cfg.watermarkOpacity ?? 100,
                             brandColor: cfg.brandColor
                         });
                     } else {

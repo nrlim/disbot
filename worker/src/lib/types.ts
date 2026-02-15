@@ -26,6 +26,10 @@ export interface MirrorActiveConfig {
     targetWebhookName?: string;
     // Branding
     customWatermark?: string;
+    watermarkType?: 'TEXT' | 'VISUAL';
+    watermarkImageUrl?: string;
+    watermarkPosition?: string;
+    watermarkOpacity?: number;
     brandColor?: string;
     // Privacy — Blur regions (Elite only)
     blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
@@ -38,5 +42,9 @@ export interface TelegramConfig {
     telegramTopicId?: string;
     targetWebhookUrl: string;
     customWatermark?: string;
+    watermarkType?: 'TEXT' | 'VISUAL';
+    watermarkImageUrl?: string;
+    watermarkPosition?: string;
+    watermarkOpacity?: number; // 0-100
     brandColor?: string;
 }

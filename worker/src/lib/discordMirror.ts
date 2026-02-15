@@ -16,6 +16,7 @@ import { MirrorActiveConfig } from './types';
 import { WebhookExecutor, WebhookPayload } from './webhook';
 import { decrypt, maskToken } from './crypto';
 import { processAttachmentsWithBlur } from './streamBlur';
+import { processAttachmentsWithWatermark, WatermarkConfig, TextOverlayConfig } from './streamWatermark';
 
 const messageQueue = PriorityMessageQueue.getInstance();
 
@@ -79,6 +80,15 @@ export class DiscordMirror {
                 const session = this.clients.get(token)!;
                 session.configs = configMap;
                 session.lastActive = Date.now();
+
+                // Health check: detect zombie sessions where the WebSocket died silently
+                const wsStatus = (session.client as any)?.ws?.status;
+                if (wsStatus !== undefined && wsStatus !== 0) {
+                    logger.warn({ token: maskToken(token), wsStatus }, 'Custom Hook client WebSocket is not READY — respawning');
+                    try { session.client.destroy(); } catch { }
+                    this.clients.delete(token);
+                    await this.spawnSelfbotClient(token, configMap);
+                }
             } else {
                 logger.info({ token: maskToken(token) }, 'Starting Custom Hook client session');
                 await this.spawnSelfbotClient(token, configMap);
@@ -104,6 +114,15 @@ export class DiscordMirror {
                 const session = this.botClients.get(token)!;
                 session.configs = configMap;
                 session.lastActive = Date.now();
+
+                // Health check: detect zombie sessions where the WebSocket died silently
+                const wsStatus = (session.client as any)?.ws?.status;
+                if (wsStatus !== undefined && wsStatus !== 0) {
+                    logger.warn({ token: maskToken(token), wsStatus }, 'Managed Bot client WebSocket is not READY — respawning');
+                    try { session.client.destroy(); } catch { }
+                    this.botClients.delete(token);
+                    await this.spawnBotClient(token, configMap);
+                }
             } else {
                 logger.info({ token: maskToken(token) }, 'Starting Managed Bot client session');
                 await this.spawnBotClient(token, configMap);
@@ -118,7 +137,6 @@ export class DiscordMirror {
     private async spawnSelfbotClient(token: string, initialConfigs: Map<string, MirrorActiveConfig[]>) {
         const client = new Client({ checkUpdate: false } as any);
         const session: ClientSession = { client, configs: initialConfigs, lastActive: Date.now() };
-        this.clients.set(token, session);
 
         client.on('ready', () => logger.info({ user: client.user?.tag }, 'Custom Hook Client ready'));
 
@@ -135,16 +153,72 @@ export class DiscordMirror {
             this.dispatchMessage(token, newMessage as Message, 'CUSTOM_HOOK');
         });
 
-        client.on('error', (err) => logger.error({ msg: err.message }, 'Selfbot client error'));
+        client.on('error', (err) => logger.error({ msg: err.message, token: maskToken(token) }, 'Selfbot client error'));
 
+        // ── Reconnect on disconnect (critical for production reliability) ──
+        // discord.js-selfbot-v13 emits 'close' when the WebSocket connection drops.
+        // Without this, the session dies silently until the next engine sync (5 min).
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        const handleDisconnect = async (reason?: string) => {
+            if (!this.clients.has(token)) return; // Already cleaned up
+            reconnectAttempts++;
+            const backoffMs = Math.min(5_000 * Math.pow(2, reconnectAttempts - 1), 120_000);
+
+            logger.warn({
+                token: maskToken(token),
+                attempt: reconnectAttempts,
+                maxAttempts: MAX_RECONNECT_ATTEMPTS,
+                backoffMs,
+                reason
+            }, 'Selfbot client disconnected — scheduling reconnect');
+
+            if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+                logger.error({ token: maskToken(token) }, 'Selfbot max reconnect attempts reached — giving up (will retry on next sync)');
+                try { client.destroy(); } catch { }
+                this.clients.delete(token);
+                return;
+            }
+
+            await new Promise(r => setTimeout(r, backoffMs));
+            if (!this.clients.has(token)) return; // Cleaned up during backoff wait
+
+            try {
+                await client.login(token);
+                reconnectAttempts = 0; // Reset on success
+                logger.info({ token: maskToken(token) }, 'Selfbot client reconnected successfully');
+            } catch (err: any) {
+                logger.error({ msg: err.message, token: maskToken(token) }, 'Selfbot reconnect failed');
+                if (err.message?.includes('TOKEN_INVALID') || err.code === 401) {
+                    await this.invalidateAllConfigsForToken(token, 'TOKEN_INVALID', 'CUSTOM_HOOK');
+                    try { client.destroy(); } catch { }
+                    this.clients.delete(token);
+                }
+            }
+        };
+
+        client.on('close', (event: any) => handleDisconnect(event?.reason || 'close'));
+        (client as any).on?.('shardDisconnect', (_: any, id: number) => handleDisconnect(`shard ${id} disconnect`));
+        (client as any).on?.('invalidated', () => {
+            logger.error({ token: maskToken(token) }, 'Selfbot session invalidated by Discord');
+            this.invalidateAllConfigsForToken(token, 'SESSION_INVALIDATED', 'CUSTOM_HOOK');
+            try { client.destroy(); } catch { }
+            this.clients.delete(token);
+        });
+
+        // ── Login (store session only on success) ──
         try {
             await client.login(token);
+            this.clients.set(token, session); // Only store after successful login
+            reconnectAttempts = 0;
         } catch (error: any) {
             logger.error({ msg: error.message, token: maskToken(token) }, 'Selfbot login failed');
             if (error.message?.includes('Token') || error.code === 401) {
                 await this.invalidateAllConfigsForToken(token, 'TOKEN_INVALID', 'CUSTOM_HOOK');
-                this.clients.delete(token);
             }
+            // Don't store dead session in the map
+            try { client.destroy(); } catch { }
         }
     }
 
@@ -153,7 +227,6 @@ export class DiscordMirror {
             intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
         });
         const session: ClientSession = { client, configs: initialConfigs, lastActive: Date.now() };
-        this.botClients.set(token, session);
 
         client.on('ready', () => logger.info({ user: client.user?.tag }, 'Managed Bot Client ready'));
 
@@ -162,16 +235,69 @@ export class DiscordMirror {
             this.dispatchMessage(token, message as any, 'MANAGED_BOT');
         });
 
-        client.on('error', (err) => logger.error({ msg: err.message }, 'Bot client error'));
+        client.on('error', (err) => logger.error({ msg: err.message, token: maskToken(token) }, 'Bot client error'));
 
+        // ── Reconnect on disconnect (critical for production reliability) ──
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+
+        const handleDisconnect = async (reason?: string) => {
+            if (!this.botClients.has(token)) return; // Already cleaned up
+            reconnectAttempts++;
+            const backoffMs = Math.min(5_000 * Math.pow(2, reconnectAttempts - 1), 120_000);
+
+            logger.warn({
+                token: maskToken(token),
+                attempt: reconnectAttempts,
+                maxAttempts: MAX_RECONNECT_ATTEMPTS,
+                backoffMs,
+                reason
+            }, 'Bot client disconnected — scheduling reconnect');
+
+            if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+                logger.error({ token: maskToken(token) }, 'Bot max reconnect attempts reached — giving up (will retry on next sync)');
+                try { client.destroy(); } catch { }
+                this.botClients.delete(token);
+                return;
+            }
+
+            await new Promise(r => setTimeout(r, backoffMs));
+            if (!this.botClients.has(token)) return; // Cleaned up during backoff wait
+
+            try {
+                await client.login(token);
+                reconnectAttempts = 0;
+                logger.info({ token: maskToken(token) }, 'Bot client reconnected successfully');
+            } catch (err: any) {
+                logger.error({ msg: err.message, token: maskToken(token) }, 'Bot reconnect failed');
+                if (err.message?.includes('TOKEN_INVALID') || err.code === 401) {
+                    await this.invalidateAllConfigsForToken(token, 'TOKEN_INVALID', 'MANAGED_BOT');
+                    try { client.destroy(); } catch { }
+                    this.botClients.delete(token);
+                }
+            }
+        };
+
+        client.on('shardDisconnect', (_: any, id: number) => handleDisconnect(`shard ${id} disconnect`));
+        client.on('invalidated', () => {
+            logger.error({ token: maskToken(token) }, 'Bot session invalidated by Discord');
+            this.invalidateAllConfigsForToken(token, 'SESSION_INVALIDATED', 'MANAGED_BOT');
+            try { client.destroy(); } catch { }
+            this.botClients.delete(token);
+        });
+
+        // ── Login (store session only on success) ──
         try {
             await client.login(token);
+            this.botClients.set(token, session); // Only store after successful login
+            reconnectAttempts = 0;
         } catch (error: any) {
             logger.error({ msg: error.message, token: maskToken(token) }, 'Bot login failed');
             if (error.message?.includes('Token') || error.code === 401) {
                 await this.invalidateAllConfigsForToken(token, 'TOKEN_INVALID', 'MANAGED_BOT');
-                this.botClients.delete(token);
             }
+            // Don't store dead session in the map
+            try { client.destroy(); } catch { }
         }
     }
 
@@ -360,8 +486,53 @@ export class DiscordMirror {
         // Construct Webhook Files
         // If blur regions exist on the config (Elite only), process images through blur pipeline.
         // Non-image attachments and failed blurs fall back to direct URL (zero data loss).
-        const blurRegions = configs[0]?.blurRegions;
-        const files = await processAttachmentsWithBlur(eligibleMedia, blurRegions);
+        // SAFEGUARD: Explicit plan check — if user downgraded from ELITE, skip blur entirely.
+        // The engine.ts sync already nullifies blurRegions for non-ELITE, but this is a
+        // defense-in-depth guard against stale configs during sync delay or race conditions.
+        const isEliteForBlur = userPlan === 'ELITE';
+        const blurRegions = isEliteForBlur ? configs[0]?.blurRegions : undefined;
+
+        if (!isEliteForBlur && configs[0]?.blurRegions) {
+            logger.info({ ...logContext, userPlan }, 'Blur regions present but user is not ELITE — skipping blur processing (plan downgrade safeguard)');
+        }
+
+        let files = await processAttachmentsWithBlur(eligibleMedia, blurRegions, userPlan);
+
+        // ── Apply Watermark onto images (if configured) ──
+        // Chain after blur so watermarks appear on top of blurred regions.
+        // PRO/ELITE users get either VISUAL (logo) or TEXT (burn text) overlay.
+        const isPremiumForWm = ['PRO', 'ELITE'].includes(userPlan);
+        const { watermarkType, watermarkImageUrl, watermarkPosition, watermarkOpacity, customWatermark: wmText, brandColor: wmColor } = configs[0] || {};
+
+        let watermarkCfg: WatermarkConfig | undefined;
+
+        if (isPremiumForWm && watermarkType === 'VISUAL' && watermarkImageUrl) {
+            // VISUAL mode: overlay logo image
+            watermarkCfg = {
+                imageUrl: watermarkImageUrl,
+                position: watermarkPosition || 'southeast',
+                opacity: watermarkOpacity ?? 100
+            };
+        } else if (isPremiumForWm && watermarkType === 'TEXT' && wmText && wmText.trim()) {
+            // TEXT mode: burn branding text directly onto image pixels via SVG
+            const textOverlay: TextOverlayConfig = {
+                text: wmText.startsWith('via ') ? wmText : `via ${wmText}`,
+                fontSize: 20,
+                color: '#FFFFFF',
+                opacity: 70,
+                position: watermarkPosition || 'southeast',
+                enableBackdrop: true
+            };
+            watermarkCfg = {
+                imageUrl: '', // No logo — text overlay only
+                position: watermarkPosition || 'southeast',
+                textOverlay
+            };
+        }
+
+        if (watermarkCfg) {
+            files = await processAttachmentsWithWatermark(files, watermarkCfg);
+        }
 
         // Add Watermark
         // 5. Construct Embeds & Apply Branding
@@ -369,13 +540,17 @@ export class DiscordMirror {
 
         // 6. Fallback: Add Watermark as Embed if No Embeds (Discord Hierarchy Fix)
         if (finalEmbeds.length === 0) {
-            const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase());
+            const isPremium = ['PRO', 'ELITE'].includes(userPlan);
             const { customWatermark, brandColor } = configs[0];
 
             let footerText = 'via DisBot Engine'; // Default
             let showEmbed = true;
 
-            if (isPremium && customWatermark !== undefined && customWatermark !== null) {
+            // VISUAL mode: The logo is already overlaid on images.
+            // Skip the text-based footer embed when visual watermark is active.
+            if (isPremium && watermarkType === 'VISUAL' && watermarkImageUrl) {
+                showEmbed = false;
+            } else if (isPremium && customWatermark !== undefined && customWatermark !== null) {
                 if (customWatermark.trim() === "") {
                     showEmbed = false; // Clean Mode
                 } else {
@@ -512,7 +687,7 @@ export class DiscordMirror {
     ): any[] {
         if (!originalEmbeds || originalEmbeds.length === 0) return [];
 
-        const isPremium = ['PRO', 'ELITE'].includes(userPlan) || ['PRO', 'ELITE'].includes(userPlan.toUpperCase());
+        const isPremium = ['PRO', 'ELITE'].includes(userPlan);
         const { customWatermark, brandColor } = config;
 
         // Default Branding Constants
@@ -577,8 +752,29 @@ export class DiscordMirror {
     }
 
     public async shutdown() {
-        this.clients.forEach(c => c.client.destroy());
-        this.botClients.forEach(c => c.client.destroy());
+        const destroyPromises: Promise<void>[] = [];
+
+        for (const [token, session] of this.clients) {
+            destroyPromises.push(
+                (async () => {
+                    try { session.client.destroy(); } catch (err: any) {
+                        logger.warn({ token: maskToken(token), error: err.message }, 'Error destroying selfbot client during shutdown');
+                    }
+                })()
+            );
+        }
+
+        for (const [token, session] of this.botClients) {
+            destroyPromises.push(
+                (async () => {
+                    try { session.client.destroy(); } catch (err: any) {
+                        logger.warn({ token: maskToken(token), error: err.message }, 'Error destroying bot client during shutdown');
+                    }
+                })()
+            );
+        }
+
+        await Promise.allSettled(destroyPromises);
         this.clients.clear();
         this.botClients.clear();
     }

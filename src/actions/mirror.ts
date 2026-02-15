@@ -46,6 +46,10 @@ const mirrorSchema = z.object({
             return undefined;
         }
     }),
+    watermarkType: z.enum(["TEXT", "VISUAL"]).optional().default("TEXT"),
+    watermarkImageUrl: z.string().url().optional().or(z.literal("")),
+    watermarkPosition: z.string().optional(),
+    watermarkOpacity: z.coerce.number().min(0).max(100).optional().default(100),
 }).superRefine((data, ctx) => {
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
@@ -119,6 +123,10 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         customWatermark: (formData.get("customWatermark") as string) || undefined,
         brandColor: (formData.get("brandColor") as string) || undefined,
         blurRegions: (formData.get("blurRegions") as string) || undefined, // JSON string
+        watermarkType: (formData.get("watermarkType") as string) || undefined,
+        watermarkImageUrl: (formData.get("watermarkImageUrl") as string) || undefined,
+        watermarkPosition: (formData.get("watermarkPosition") as string) || undefined,
+        watermarkOpacity: formData.get("watermarkOpacity") || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -251,6 +259,10 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 customWatermark: validated.data.customWatermark,
                 brandColor: validated.data.brandColor,
                 blurRegions: validated.data.blurRegions ?? undefined,
+                watermarkType: validated.data.watermarkType as any,
+                watermarkImageUrl: validated.data.watermarkImageUrl || null,
+                watermarkPosition: validated.data.watermarkPosition || "southeast",
+                watermarkOpacity: validated.data.watermarkOpacity ?? 100,
             }
         });
 
@@ -381,6 +393,10 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         customWatermark: (formData.get("customWatermark") as string) || undefined,
         brandColor: (formData.get("brandColor") as string) || undefined,
         blurRegions: (formData.get("blurRegions") as string) || undefined,
+        watermarkType: (formData.get("watermarkType") as string) || undefined,
+        watermarkImageUrl: (formData.get("watermarkImageUrl") as string) || undefined,
+        watermarkPosition: (formData.get("watermarkPosition") as string) || undefined,
+        watermarkOpacity: formData.get("watermarkOpacity") || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -449,6 +465,10 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             customWatermark: validated.data.customWatermark,
             brandColor: validated.data.brandColor,
             blurRegions: validated.data.blurRegions ?? undefined,
+            watermarkType: validated.data.watermarkType as any,
+            watermarkImageUrl: validated.data.watermarkImageUrl || null,
+            watermarkPosition: validated.data.watermarkPosition || "southeast",
+            watermarkOpacity: validated.data.watermarkOpacity ?? 100,
         };
 
         if (sourcePlatform === "DISCORD") {

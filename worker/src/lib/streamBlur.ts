@@ -233,17 +233,31 @@ export async function streamBlurImage(
  * Non-image attachments pass through unchanged.
  * Failed blurs fall back to the original proxy URL (zero data loss).
  *
+ * SAFEGUARD: If `userPlan` is provided and is not 'ELITE', blur is skipped
+ * entirely. The mirror continues — only the blur step is bypassed.
+ * This protects against stale config data after plan downgrade.
+ *
  * @param attachments - Eligible ParsedAttachments from media.ts
  * @param blurRegions - Blur regions from MirrorConfig (or undefined)
+ * @param userPlan    - Optional plan string for defense-in-depth guard
  * @returns Array of webhook file objects (with Buffer for blurred, URL for others)
  */
 export async function processAttachmentsWithBlur(
     attachments: Array<{ proxyUrl: string; url: string; name: string; category: string }>,
-    blurRegions: BlurRegion[] | undefined
+    blurRegions: BlurRegion[] | undefined,
+    userPlan?: string
 ): Promise<Array<{ attachment: Buffer | string; name: string }>> {
     const files: Array<{ attachment: Buffer | string; name: string }> = [];
 
-    const hasBlurRegions = blurRegions && blurRegions.length > 0;
+    // SAFEGUARD: If plan is known and is not ELITE, force-skip blur processing.
+    // Blur regions may persist in DB after downgrade; this prevents unauthorized usage.
+    const planAllowsBlur = !userPlan || userPlan === 'ELITE';
+    const hasBlurRegions = planAllowsBlur && blurRegions && blurRegions.length > 0;
+
+    if (!planAllowsBlur && blurRegions && blurRegions.length > 0) {
+        logger.info({ fn: 'processAttachmentsWithBlur', userPlan, regionCount: blurRegions.length },
+            'Blur regions found but plan is not ELITE — skipping blur (downgrade safeguard)');
+    }
 
     for (const att of attachments) {
         // Only attempt blur on images when regions are defined

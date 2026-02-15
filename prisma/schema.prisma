@@ -106,6 +106,10 @@ model MirrorConfig {
   telegramTopicId   String?
   sourceGuildId     String?
   customWatermark   String?
+  watermarkType     WatermarkType @default(TEXT)
+  watermarkImageUrl String?
+  watermarkPosition String?       @default("southeast")
+  watermarkOpacity  Int?          @default(100)
   brandColor        String?
   blurRegions       Json?
   // Legacy fields (for backward compatibility / migration)
@@ -189,4 +193,9 @@ enum PlatformType {
 enum MirrorGroupType {
   DISCORD_TO_DISCORD
   TELEGRAM_TO_DISCORD
+}
+
+enum WatermarkType {
+  TEXT
+  VISUAL
 }
