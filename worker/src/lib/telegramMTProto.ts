@@ -31,7 +31,6 @@ interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
     lastActive: number;
-    keepAliveInterval?: NodeJS.Timeout;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -219,89 +218,12 @@ export class TelegramListener {
                 }
             }
 
-            // ── Production-grade Keep-Alive ──
+            // ── Production-grade Keep-Alive (REMOVED) ──
             //
-            // Design decisions for production reliability:
-            //  1. Reads fresh session from this.sessions.get(token) inside the callback
-            //     to avoid stale closure references when sync() runs multiple times.
-            //  2. Uses lightweight Api.Ping instead of getMe() — saves bandwidth & CPU.
-            //  3. Exponential backoff (30s → 60s → 120s → 240s cap) prevents
-            //     hammering Telegram servers during sustained outages.
-            //  4. Max consecutive failure limit (10) destroys zombie sessions.
-            //     The next engine sync cycle will re-create them if configs are still active.
-            const currentSession = this.sessions.get(token);
-            if (currentSession) {
-                // Clear any previous interval to prevent duplicates
-                if (currentSession.keepAliveInterval) clearInterval(currentSession.keepAliveInterval);
-
-                let consecutiveFailures = 0;
-                let backoffMs = 30_000;
-                const MAX_FAILURES = 10;
-
-                currentSession.keepAliveInterval = setInterval(async () => {
-                    // Always read fresh reference — never use stale `session` from outer closure
-                    const liveSession = this.sessions.get(token);
-                    if (!liveSession || this.isShuttingDown) return;
-
-                    try {
-                        if (!liveSession.client.connected) {
-                            logger.warn({ token: token.substring(0, 8) + '...' }, 'Keep-Alive: Client disconnected, reconnecting...');
-                            await liveSession.client.connect();
-                            consecutiveFailures = 0;
-                            backoffMs = 30_000;
-                            logger.info({ token: token.substring(0, 8) + '...' }, 'Keep-Alive: Reconnected successfully');
-                        } else {
-                            // Lightweight ping — native Telegram Ping RPC
-                            // Much cheaper than getMe() which deserializes the full user object
-                            const pingPromise = liveSession.client.invoke(
-                                new Api.Ping({ pingId: Math.floor(Math.random() * 2 ** 31) as any })
-                            );
-                            const timeoutPromise = new Promise((_, reject) =>
-                                setTimeout(() => reject(new Error('Ping Timeout')), 10_000)
-                            );
-                            await Promise.race([pingPromise, timeoutPromise]);
-
-                            // Ping succeeded — reset failure tracking
-                            if (consecutiveFailures > 0) {
-                                logger.info({ token: token.substring(0, 8) + '...' }, 'Keep-Alive: Connection recovered after failures');
-                            }
-                            consecutiveFailures = 0;
-                            backoffMs = 30_000;
-                        }
-                    } catch (err: any) {
-                        consecutiveFailures++;
-                        logger.error({
-                            error: err.message,
-                            failures: consecutiveFailures,
-                            maxFailures: MAX_FAILURES,
-                            nextRetryMs: backoffMs
-                        }, 'Keep-Alive: Ping/connect failed');
-
-                        // If too many consecutive failures, destroy session.
-                        // It will be re-created on the next engine sync cycle (5 min).
-                        if (consecutiveFailures >= MAX_FAILURES) {
-                            logger.error({
-                                token: token.substring(0, 8) + '...',
-                                consecutiveFailures
-                            }, 'Keep-Alive: Max failures reached — destroying zombie session');
-                            await this.destroySession(token, liveSession);
-                            return;
-                        }
-
-                        // Exponential backoff reconnect
-                        try {
-                            await liveSession.client.disconnect();
-                            await liveSession.client.connect();
-                            logger.info({ token: token.substring(0, 8) + '...' }, 'Keep-Alive: Reconnected after failure');
-                            consecutiveFailures = 0;
-                            backoffMs = 30_000;
-                        } catch (e: any) {
-                            backoffMs = Math.min(backoffMs * 2, 240_000);
-                            logger.error({ error: e.message, nextRetryMs: backoffMs }, 'Keep-Alive: Reconnect failed — backoff increased');
-                        }
-                    }
-                }, 30_000);
-            }
+            // Reverted to rely on internal auto-reconnect to avoid conflicts with Dashboard sessions.
+            // When Dashboard uses the same session string (AuthKey), it may cause temporary disconnects
+            // which the aggressive Keep-Alive logic misidentified as dead sessions and destroyed them.
+            // By relying on autoReconnect: true, the client will silently recover.
         });
 
         await Promise.allSettled(syncPromises);
@@ -726,10 +648,7 @@ export class TelegramListener {
     }
 
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
-        if (session.keepAliveInterval) {
-            clearInterval(session.keepAliveInterval);
-            session.keepAliveInterval = undefined;
-        }
+
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
         this.sessions.delete(token);
