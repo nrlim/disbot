@@ -15,6 +15,7 @@ import { PriorityMessageQueue } from './plan-enforcer';
 import { MirrorActiveConfig } from './types';
 import { WebhookExecutor, WebhookPayload } from './webhook';
 import { decrypt, maskToken } from './crypto';
+import { processAttachmentsWithBlur } from './streamBlur';
 
 const messageQueue = PriorityMessageQueue.getInstance();
 
@@ -356,11 +357,11 @@ export class DiscordMirror {
         const rejectionNotice = buildRejectionNotice(rejectedMedia);
         if (rejectionNotice) content += rejectionNotice;
 
-        // Construct Webhook Files (Direct URLs)
-        const files = eligibleMedia.map(att => ({
-            attachment: att.proxyUrl || att.url,
-            name: att.name
-        }));
+        // Construct Webhook Files
+        // If blur regions exist on the config (Elite only), process images through blur pipeline.
+        // Non-image attachments and failed blurs fall back to direct URL (zero data loss).
+        const blurRegions = configs[0]?.blurRegions;
+        const files = await processAttachmentsWithBlur(eligibleMedia, blurRegions);
 
         // Add Watermark
         // 5. Construct Embeds & Apply Branding

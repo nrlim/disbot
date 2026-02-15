@@ -39,15 +39,16 @@ const plans = [
     },
     {
         name: "DisBot Elite",
-        price: "Rp 499.000",
+        label: "PREMIUM FEATURE",
+        price: "Rp 749.000",
         period: "/ bln",
-        highlight: false,
-        color: "slate",
+        highlight: true,
+        color: "purple",
         features: {
             path: { label: "Mirror Path", value: "50 Paths", sub: "Soft Limit" },
-            source: { label: "Source Platform", value: "All Platform", sub: "Inc. Telegram Ghost/MTProto" },
-            media: { label: "Forward Media", value: "Semua Tipe File", sub: "No Limit" },
-            branding: { label: "Branding", value: "Custom Watermark", sub: "White-label & Colors" },
+            source: { label: "Source Platform", value: "All Platform", sub: "Inc. Ghost Mirroring (MTProto)" },
+            media: { label: "Forward Media", value: "Semua Tipe File", sub: "Dedicated Stream Processing" },
+            branding: { label: "Branding & Privacy", value: "Watermark + Blur", sub: "Custom Brand & Smart Masking" },
             tech: { label: "Teknologi", value: "Dedicated Instance & Priority Support" },
         },
     },
@@ -97,19 +98,27 @@ export default function PricingSection() {
                                 "flex flex-col relative bg-slate-900/50 border h-full backdrop-blur-sm",
                                 "rounded-none", // Strict 0px border radius
                                 plan.highlight
-                                    ? "border-emerald-500 ring-1 ring-emerald-500/50 z-10 shadow-2xl shadow-emerald-900/20"
+                                    ? plan.color === "purple"
+                                        ? "border-purple-500 ring-1 ring-purple-500/50 z-10 shadow-2xl shadow-purple-900/20"
+                                        : "border-emerald-500 ring-1 ring-emerald-500/50 z-10 shadow-2xl shadow-emerald-900/20"
                                     : "border-slate-800 hover:border-slate-700 hover:bg-slate-900 transition-colors"
                             )}
                         >
                             {plan.label && (
-                                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-emerald-600 text-white text-xs font-bold px-4 py-1 uppercase tracking-widest shadow-lg">
+                                <div className={cn(
+                                    "absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white text-xs font-bold px-4 py-1 uppercase tracking-widest shadow-lg",
+                                    plan.color === "purple" ? "bg-purple-600" : "bg-emerald-600"
+                                )}>
                                     {plan.label}
                                 </div>
                             )}
 
                             {/* Header */}
-                            <div className="p-8 border-b border-slate-800 text-center bg-slate-900">
-                                <h3 className={cn("text-lg font-bold uppercase tracking-wider mb-4", plan.highlight ? "text-emerald-400" : "text-slate-300")}>
+                            <div className="p-8 border-b border-slate-800 text-center bg-slate-900 min-h-[160px] flex flex-col justify-center">
+                                <h3 className={cn(
+                                    "text-lg font-bold uppercase tracking-wider mb-4",
+                                    plan.color === "purple" ? "text-purple-400" : (plan.highlight ? "text-emerald-400" : "text-slate-300")
+                                )}>
                                     {plan.name}
                                 </h3>
                                 <div className="flex items-center justify-center gap-1">
@@ -150,7 +159,7 @@ export default function PricingSection() {
                                 {plan.features.branding && (
                                     <div className="p-6 min-h-[140px] flex flex-col items-center justify-center text-center bg-slate-900/30">
                                         <span className="text-slate-500 text-xs uppercase tracking-widest font-semibold mb-2">{plan.features.branding.label}</span>
-                                        <span className="text-base font-semibold text-emerald-200">{plan.features.branding.value}</span>
+                                        <span className={cn("text-base font-semibold", plan.color === "purple" ? "text-purple-200" : "text-emerald-200")}>{plan.features.branding.value}</span>
                                         {plan.features.branding.sub && <span className="text-xs text-slate-500 mt-1">{plan.features.branding.sub}</span>}
                                     </div>
                                 )}
@@ -172,7 +181,9 @@ export default function PricingSection() {
                                         "w-full py-4 text-sm font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-3",
                                         "rounded-none", // Strict 0px border radius
                                         plan.highlight
-                                            ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30"
+                                            ? plan.color === "purple"
+                                                ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/30"
+                                                : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/30"
                                             : "bg-slate-800 hover:bg-slate-700 text-white hover:text-emerald-400",
                                         isLoading !== null && "opacity-50 cursor-not-allowed"
                                     )}

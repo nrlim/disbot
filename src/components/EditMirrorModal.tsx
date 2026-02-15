@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal, ArrowRight, UserPlus, Trash2, Globe, MessageSquare, Monitor, LayoutGrid, ChevronLeft } from "lucide-react";
+import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal, ArrowRight, UserPlus, Trash2, Globe, MessageSquare, Monitor, LayoutGrid, ChevronLeft, Lock, ScanEye } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
+import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
@@ -11,6 +12,7 @@ import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhook
 import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction } from "@/actions/telegramAuth";
 import { PLAN_PLATFORMS } from "@/lib/constants";
 import { BrandingCustomizer } from "@/components/BrandingCustomizer";
+import { BlurAreaSelector, Region } from "@/components/BlurAreaSelector";
 
 // --- Types ---
 
@@ -52,6 +54,7 @@ export interface MirrorConfig {
     // Branding
     customWatermark?: string | null;
     brandColor?: string | null;
+    blurRegions?: any; // JSON
 }
 
 interface EditMirrorModalProps {
@@ -148,6 +151,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     // Branding State
     const [customWatermark, setCustomWatermark] = useState("");
     const [brandColor, setBrandColor] = useState("#5865F2");
+    const [blurRegions, setBlurRegions] = useState<Region[]>([]);
 
 
     // UI State
@@ -202,6 +206,15 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 // Branding
                 setCustomWatermark(config.customWatermark || "");
                 setBrandColor(config.brandColor || "#5865F2");
+                if (config.blurRegions) {
+                    try {
+                        setBlurRegions(typeof config.blurRegions === 'string' ? JSON.parse(config.blurRegions) : config.blurRegions);
+                    } catch (e) {
+                        setBlurRegions([]);
+                    }
+                } else {
+                    setBlurRegions([]);
+                }
 
                 setIsBulkMode(false);
             } else {
@@ -249,6 +262,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 // Branding
                 setCustomWatermark("");
                 setBrandColor("#5865F2");
+                setBlurRegions([]);
             }
         } else {
             // Reset when closing
@@ -259,6 +273,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             // Branding
             setCustomWatermark("");
             setBrandColor("#5865F2");
+            setBlurRegions([]);
         }
     }, [isOpen, config, groups, initialTitle]); // Added groups and initialTitle for smart pre-fill
 
@@ -622,6 +637,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         // Branding
         if (customWatermark) formData.append("customWatermark", customWatermark);
         if (brandColor) formData.append("brandColor", brandColor);
+        if (blurRegions.length > 0) formData.append("blurRegions", JSON.stringify(blurRegions));
 
         if (sourcePlatform === 'DISCORD') {
             if (!selectedGuild) { setError("Please select a source server"); setIsSubmitting(false); return; }
@@ -1349,6 +1365,45 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                             </div>
                                                         )}
                                                     </div>
+                                                </div>
+
+                                                {/* BLUR ZONES (ELITE ONLY) */}
+                                                <div className="pt-6 border-t border-gray-200">
+                                                    <div className="flex items-center justify-between mb-4">
+                                                        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                                            <ScanEye className="w-4 h-4 text-gray-400" />
+                                                            Visual Blur Selector
+                                                            <span className="text-[10px] bg-black text-[#00FFFF] px-1.5 py-0.5 font-bold uppercase tracking-wider">Elite</span>
+                                                        </h3>
+                                                    </div>
+
+                                                    {userPlan === 'ELITE' ? (
+                                                        <BlurAreaSelector
+                                                            value={blurRegions}
+                                                            onChange={setBlurRegions}
+                                                            maxRegions={3}
+                                                        />
+                                                    ) : (
+                                                        <div className="bg-gray-50 border border-gray-200 p-6 flex flex-col items-center justify-center text-center gap-3 relative overflow-hidden group">
+                                                            <div className="absolute inset-0 bg-gray-100/50 backdrop-blur-[1px] z-0" />
+                                                            <div className="z-10 flex flex-col items-center gap-3">
+                                                                <div className="w-12 h-12 bg-gray-900 text-[#00FFFF] rounded-none flex items-center justify-center mb-1 shadow-sm">
+                                                                    <Lock className="w-5 h-5" />
+                                                                </div>
+                                                                <h4 className="font-bold text-gray-900">Elite Feature Locked</h4>
+                                                                <p className="text-sm text-gray-500 max-w-xs mx-auto">
+                                                                    Smart privacy blur and region masking is exclusive to the Elite plan.
+                                                                </p>
+                                                                {/* Mock Upgrade Button - In real app would link to billing */}
+                                                                <Link
+                                                                    href="/dashboard/settings"
+                                                                    className="text-xs font-bold text-gray-900 border border-gray-300 bg-white px-4 py-2 mt-1 hover:bg-gray-50 transition-colors shadow-sm block text-center"
+                                                                >
+                                                                    Upgrade to Elite
+                                                                </Link>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 {/* BRANDING CONFIGURATION */}

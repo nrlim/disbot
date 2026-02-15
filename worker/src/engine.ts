@@ -105,7 +105,11 @@ export class Engine {
                     sourceChannelName: cfg.sourceChannelName || undefined,
                     targetWebhookName: cfg.targetWebhookName || undefined,
                     customWatermark: cfg.customWatermark || undefined,
-                    brandColor: cfg.brandColor || undefined
+                    brandColor: cfg.brandColor || undefined,
+                    // Only pass blur regions for Elite users (plan-gated feature)
+                    blurRegions: (cfg.user?.plan === 'ELITE' && cfg.blurRegions)
+                        ? (typeof cfg.blurRegions === 'string' ? JSON.parse(cfg.blurRegions) : cfg.blurRegions)
+                        : undefined
                 };
             });
 

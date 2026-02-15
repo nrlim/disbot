@@ -27,6 +27,8 @@ export interface MirrorActiveConfig {
     // Branding
     customWatermark?: string;
     brandColor?: string;
+    // Privacy — Blur regions (Elite only)
+    blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
 }
 
 export interface TelegramConfig {

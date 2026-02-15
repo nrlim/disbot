@@ -39,6 +39,13 @@ const mirrorSchema = z.object({
     // Branding
     customWatermark: z.string().optional(),
     brandColor: z.string().optional(),
+    blurRegions: z.string().optional().transform(val => {
+        try {
+            return val ? JSON.parse(val) : undefined;
+        } catch {
+            return undefined;
+        }
+    }),
 }).superRefine((data, ctx) => {
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
@@ -111,6 +118,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         groupId: (formData.get("groupId") as string) || undefined,
         customWatermark: (formData.get("customWatermark") as string) || undefined,
         brandColor: (formData.get("brandColor") as string) || undefined,
+        blurRegions: (formData.get("blurRegions") as string) || undefined, // JSON string
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -242,6 +250,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 active: true,
                 customWatermark: validated.data.customWatermark,
                 brandColor: validated.data.brandColor,
+                blurRegions: validated.data.blurRegions ?? undefined,
             }
         });
 
@@ -371,6 +380,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         groupId: (formData.get("groupId") as string) || undefined,
         customWatermark: (formData.get("customWatermark") as string) || undefined,
         brandColor: (formData.get("brandColor") as string) || undefined,
+        blurRegions: (formData.get("blurRegions") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -438,6 +448,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             groupId: finalGroupId,
             customWatermark: validated.data.customWatermark,
             brandColor: validated.data.brandColor,
+            blurRegions: validated.data.blurRegions ?? undefined,
         };
 
         if (sourcePlatform === "DISCORD") {

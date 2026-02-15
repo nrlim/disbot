@@ -4,6 +4,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 // @ts-ignore
 import midtransClient from "midtrans-client";
+import { PLAN_DETAILS } from "@/lib/constants";
 
 export async function POST(req: Request) {
     try {
@@ -16,21 +17,12 @@ export async function POST(req: Request) {
         const body = await req.json();
         const { planType } = body;
 
-        let price = 0;
-
-        switch (planType) {
-            case "STARTER":
-                price = 75000;
-                break;
-            case "PRO":
-                price = 199000;
-                break;
-            case "ELITE":
-                price = 499000;
-                break;
-            default:
-                return NextResponse.json({ error: "Invalid plan type" }, { status: 400 });
+        const plan = PLAN_DETAILS.find(p => p.name === planType);
+        if (!plan) {
+            return NextResponse.json({ error: "Invalid plan type" }, { status: 400 });
         }
+
+        const price = plan.price;
 
         // Initialize Snap client
         const snap = new midtransClient.Snap({

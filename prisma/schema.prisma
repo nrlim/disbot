@@ -107,6 +107,7 @@ model MirrorConfig {
   sourceGuildId     String?
   customWatermark   String?
   brandColor        String?
+  blurRegions       Json?
   // Legacy fields (for backward compatibility / migration)
   telegramSession   String?
   telegramChatId    String?
