@@ -35,10 +35,13 @@ export const PLAN_DETAILS = [
     },
     {
         name: "ELITE",
-        price: 749000,
-        priceLabel: "Rp 749.000",
+        price: 499000,
+        priceLabel: "Rp 499.000",
+        normalPrice: 749000,
+        normalPriceLabel: "Rp 749.000",
+        label: "FLASH SALE",
         limit: PLAN_LIMITS.ELITE,
-        message: "Halo admin DISBOT, saya ingin berlangganan Paket Elite seharga Rp 749.000/bulan. Saya butuh Dedicated Instance, Custom Blur, dan Ghost Mirroring.",
+        message: "Halo admin DISBOT, saya ingin berlangganan Paket Elite seharga Rp 499.000/bulan (Flash Sale). Saya butuh Dedicated Instance, Custom Blur, dan Ghost Mirroring.",
         weight: 3,
         features: ["50 Mirror Paths", "Smart Custom Blur", "Ghost Mirroring (MTProto)", "Dedicated Stream Process", "Custom Watermark"]
     }

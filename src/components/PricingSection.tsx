@@ -39,8 +39,9 @@ const plans = [
     },
     {
         name: "DisBot Elite",
-        label: "PREMIUM FEATURE",
-        price: "Rp 749.000",
+        label: "FLASH SALE",
+        price: "Rp 499.000",
+        normalPrice: "Rp 749.000",
         period: "/ bln",
         highlight: true,
         color: "purple",
@@ -121,9 +122,16 @@ export default function PricingSection() {
                                 )}>
                                     {plan.name}
                                 </h3>
-                                <div className="flex items-center justify-center gap-1">
-                                    <span className="text-4xl font-bold text-white tracking-tight">{plan.price}</span>
-                                    <span className="text-slate-500 text-sm font-medium">{plan.period}</span>
+                                <div className="flex flex-col items-center justify-center">
+                                    {(plan as any).normalPrice && (
+                                        <span className="text-slate-400 text-sm line-through decoration-slate-500/50 decoration-2 mb-1">
+                                            {(plan as any).normalPrice}
+                                        </span>
+                                    )}
+                                    <div className="flex items-center justify-center gap-1">
+                                        <span className="text-4xl font-bold text-white tracking-tight">{plan.price}</span>
+                                        <span className="text-slate-500 text-sm font-medium">{plan.period}</span>
+                                    </div>
                                 </div>
                             </div>
 

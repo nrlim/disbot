@@ -171,9 +171,23 @@ export default function SettingsPricing({
                                 )}
 
                                 <div className="mb-6">
-                                    <div className="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">
-                                        {plan.name}
+                                    <div className="flex justify-between items-center mb-1">
+                                        <div className="text-sm text-gray-500 font-semibold uppercase tracking-wide">
+                                            {plan.name}
+                                        </div>
+                                        {(plan as any).label && (
+                                            <span className="px-2 py-0.5 bg-red-100 text-red-600 text-xs font-bold rounded-full animate-pulse">
+                                                {(plan as any).label}
+                                            </span>
+                                        )}
                                     </div>
+
+                                    {(plan as any).normalPriceLabel && (
+                                        <div className="text-sm text-gray-400 line-through decoration-gray-400/50 decoration-2 mb-0.5">
+                                            {(plan as any).normalPriceLabel}
+                                        </div>
+                                    )}
+
                                     <div className="text-2xl font-bold text-gray-900">
                                         {plan.priceLabel}
                                         <span className="text-sm font-normal text-gray-500">/mo</span>
