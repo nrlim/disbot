@@ -19,6 +19,8 @@ export const PLAN_DETAILS = [
         name: "STARTER",
         price: 75000,
         priceLabel: "Rp 75.000",
+        normalPrice: 99000,
+        normalPriceLabel: "Rp 99.000",
         limit: PLAN_LIMITS.STARTER,
         message: "Halo admin DISBOT, saya tertarik berlangganan Paket Starter seharga Rp 75.000/bulan.",
         weight: 1,
