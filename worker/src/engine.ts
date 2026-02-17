@@ -85,9 +85,18 @@ export class Engine {
 
                 let resolvedTgChatId = undefined;
                 if (platform === 'TELEGRAM') {
-                    // In new schema, sourceChannelId stores the chat ID for Telegram too
+                    // For Telegram source: sourceChannelId stores the source chat ID
                     resolvedTgChatId = cfg.sourceChannelId || cfg.telegramChatId;
                 }
+
+                // Destination Telegram Chat ID:
+                // For D2T: telegramChatId in DB is the destination
+                // For T2T: telegramChatId in DB is the destination (source is in sourceChannelId)
+                // For D2D/T2D: no Telegram destination
+                const resolvedTargetTgChatId = (
+                    (platform === 'DISCORD' && cfg.telegramChatId) // D2T
+                    || (platform === 'TELEGRAM' && cfg.telegramChatId && cfg.sourceChannelId && cfg.telegramChatId !== cfg.sourceChannelId) // T2T (dest != source)
+                ) ? cfg.telegramChatId : undefined;
 
                 return {
                     id: cfg.id,
@@ -105,6 +114,9 @@ export class Engine {
                     sourceChannelName: cfg.sourceChannelName || undefined,
                     targetWebhookName: cfg.targetWebhookName || undefined,
                     customWatermark: cfg.customWatermark || undefined,
+                    targetTelegramChatId: resolvedTargetTgChatId,
+                    targetTelegramTopicId: cfg.telegramTopicId || undefined,
+
                     // Visual Watermark fields (PRO/ELITE only)
                     watermarkType: (['PRO', 'ELITE'].includes(cfg.user?.plan))
                         ? (cfg.watermarkType as 'TEXT' | 'VISUAL' || 'TEXT')
@@ -135,52 +147,57 @@ export class Engine {
             const discordConfigs: MirrorActiveConfig[] = [];
 
             for (const cfg of allowedConfigs) {
-                if (cfg.sourcePlatform === 'TELEGRAM') {
+                // Determine if this config needs a Telegram Session (Listening OR Sending)
+                const needsTelegramSession = cfg.sourcePlatform === 'TELEGRAM' || !!cfg.targetTelegramChatId;
+
+                if (needsTelegramSession) {
                     // Decrypt session for TelegramListener
                     let decryptedSession = cfg.telegramSession || '';
                     if (decryptedSession.includes(':')) {
                         decryptedSession = decrypt(decryptedSession, process.env.ENCRYPTION_KEY || '') || '';
                     }
 
-                    if (decryptedSession && cfg.telegramChatId) {
-                        logger.debug({ id: cfg.id, sessionLength: decryptedSession.length }, '[Sync] Telegram config valid');
+                    if (decryptedSession) {
+                        // Check if we have source (for Listener) or target (for Sender)
+                        const hasSource = cfg.sourcePlatform === 'TELEGRAM' && cfg.telegramChatId;
+                        const hasTarget = !!cfg.targetTelegramChatId;
 
-                        telegramConfigs.push({
-                            id: cfg.id,
-                            telegramSession: decryptedSession,
-                            telegramChatId: cfg.telegramChatId,
-                            telegramTopicId: cfg.telegramTopicId,
-                            targetWebhookUrl: cfg.targetWebhookUrl,
-                            customWatermark: cfg.customWatermark,
-                            watermarkType: cfg.watermarkType,
-                            watermarkImageUrl: cfg.watermarkImageUrl,
-                            watermarkPosition: cfg.watermarkPosition,
-                            watermarkOpacity: cfg.watermarkOpacity ?? 100,
-                            brandColor: cfg.brandColor
-                        });
-                    } else {
-                        const reason = !decryptedSession ? 'NO_SESSION' : (!cfg.telegramChatId ? 'NO_CHAT_ID' : 'UNKNOWN');
-
+                        if (hasSource || hasTarget) {
+                            telegramConfigs.push({
+                                id: cfg.id,
+                                telegramSession: decryptedSession,
+                                telegramChatId: cfg.sourcePlatform === 'TELEGRAM' ? cfg.telegramChatId : undefined,
+                                telegramTopicId: cfg.telegramTopicId,
+                                targetWebhookUrl: cfg.targetWebhookUrl,
+                                targetTelegramChatId: cfg.targetTelegramChatId,
+                                targetTelegramTopicId: cfg.targetTelegramTopicId,
+                                customWatermark: cfg.customWatermark,
+                                watermarkType: cfg.watermarkType,
+                                watermarkImageUrl: cfg.watermarkImageUrl,
+                                watermarkPosition: cfg.watermarkPosition,
+                                watermarkOpacity: cfg.watermarkOpacity ?? 100,
+                                brandColor: cfg.brandColor,
+                                blurRegions: cfg.blurRegions
+                            });
+                        }
+                    } else if (cfg.sourcePlatform === 'TELEGRAM') {
+                        // Log and disable if strictly Telegram source but missing session
                         logger.warn({
                             configId: cfg.id,
                             userId: cfg.userId,
-                            hasSession: !!decryptedSession,
-                            hasChatId: !!cfg.telegramChatId,
-                            reason,
+                            reason: 'NO_SESSION',
                             platform: cfg.sourcePlatform
                         }, '[Sync] Skipping invalid Telegram config - Auto-disabling');
 
-                        // Auto-disable broken config to free up path limit for other valid configs
                         prisma.mirrorConfig.update({
                             where: { id: cfg.id },
-                            data: {
-                                active: false,
-                                status: 'CONFIGURATION_ERROR'
-                            }
-                        }).catch((e: any) => logger.error({ configId: cfg.id, error: e.message }, "Failed to auto-disable broken config"));
+                            data: { active: false, status: 'CONFIGURATION_ERROR' }
+                        }).catch(() => { });
                     }
-                } else {
-                    // Discord (Decryption happens inside DiscordMirror to verify tokens)
+                }
+
+                // Add to Discord Configs if Source is Discord
+                if (cfg.sourcePlatform === 'DISCORD') {
                     discordConfigs.push(cfg);
                 }
             }

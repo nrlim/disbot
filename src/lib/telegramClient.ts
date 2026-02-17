@@ -181,3 +181,40 @@ export async function getTelegramTopics(sessionString: string, chatId: string): 
         await client.destroy();
     }
 }
+
+export async function getTelegramMe(sessionString: string): Promise<{ id: string; username: string; firstName: string; lastName?: string; phone?: string; photoUrl?: string }> {
+    const apiId = parseInt(process.env.TELEGRAM_API_ID || '0');
+    const apiHash = process.env.TELEGRAM_API_HASH || '';
+
+    if (!sessionString) throw new Error("Session required");
+
+    const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, {
+        connectionRetries: 1,
+        useWSS: true,
+        deviceModel: 'DisBot Dashboard',
+        appVersion: '2.1.0',
+    });
+
+    try {
+        await client.connect();
+        const me: any = await client.getMe();
+
+        // Basic info
+        const result = {
+            id: me.id.toString(),
+            username: me.username || "",
+            firstName: me.firstName || "",
+            lastName: me.lastName || "",
+            phone: me.phone || "",
+            // Photo handling is complex (needs download), skip for now or use placeholder logic in UI
+        };
+
+        return result;
+    } catch (e: any) {
+        console.error("Get Telegram Me Error:", e);
+        throw e;
+    } finally {
+        await client.disconnect();
+        await client.destroy();
+    }
+}

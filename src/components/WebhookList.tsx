@@ -47,10 +47,11 @@ interface WebhookListProps {
     usageCount: number;
     isLimitReached: boolean;
     accounts: any[];
+    telegramAccounts?: any[];
     userPlan: string;
 }
 
-export default function WebhookList({ initialConfigs, groups, usageCount, isLimitReached, accounts, userPlan }: WebhookListProps) {
+export default function WebhookList({ initialConfigs, groups, usageCount, isLimitReached, accounts, telegramAccounts, userPlan }: WebhookListProps) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
     const [upgradeReason, setUpgradeReason] = useState("");
@@ -444,6 +445,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                     sourcePlatform: (editingConfig.sourcePlatform as any) || 'DISCORD'
                 } : undefined}
                 accounts={accounts}
+                telegramAccounts={telegramAccounts}
                 groups={groups}
                 initialTitle={directedGroupId ? groups.find(g => g.id === directedGroupId)?.name : (selectedFilterGroup !== "all" ? groups.find(g => g.id === selectedFilterGroup)?.name : "")}
                 initialStep={directedGroupId || (selectedFilterGroup !== "all") ? 2 : 1}

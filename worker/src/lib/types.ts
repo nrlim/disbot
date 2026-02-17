@@ -12,7 +12,7 @@ export interface MirrorActiveConfig {
     telegramChatId?: string;
     telegramTopicId?: string;
 
-    targetWebhookUrl: string;
+    targetWebhookUrl?: string;
     /** Mirror type determines forwarding strategy (Discord only currently) */
     type: 'CUSTOM_HOOK' | 'MANAGED_BOT';
     /** Target channel ID — only used for MANAGED_BOT */
@@ -33,14 +33,21 @@ export interface MirrorActiveConfig {
     brandColor?: string;
     // Privacy — Blur regions (Elite only)
     blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
+    // New fields for D2T/T2T
+    targetTelegramChatId?: string;
+    targetTelegramTopicId?: string;
 }
 
 export interface TelegramConfig {
     id: string;
     telegramSession?: string;
-    telegramChatId?: string;
-    telegramTopicId?: string;
-    targetWebhookUrl: string;
+    telegramChatId?: string; // Source Chat ID (for listener matching)
+    telegramTopicId?: string; // Source Topic ID (for listener matching)
+    targetWebhookUrl?: string; // Optional if targeting Telegram
+    // New Target Fields
+    targetTelegramChatId?: string;
+    targetTelegramTopicId?: string;
+
     customWatermark?: string;
     watermarkType?: 'TEXT' | 'VISUAL';
     watermarkImageUrl?: string;

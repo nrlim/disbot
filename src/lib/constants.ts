@@ -12,6 +12,16 @@ export const PLAN_PLATFORMS: Record<string, string[]> = {
     ELITE: ['DISCORD', 'TELEGRAM'],
 };
 
+// Which plans can use Telegram as a DESTINATION (D2T, T2T)
+// PRO can only use Telegram as SOURCE (T2D)
+// ELITE can use Telegram as both SOURCE and DESTINATION
+export const PLAN_DESTINATION_PLATFORMS: Record<string, string[]> = {
+    FREE: ['DISCORD'],
+    STARTER: ['DISCORD'],
+    PRO: ['DISCORD'],
+    ELITE: ['DISCORD', 'TELEGRAM'],
+};
+
 export const DISCORD_ADMIN_LINK = "https://discord.com/users/1216488049199026359";
 
 export const PLAN_DETAILS = [
@@ -33,7 +43,7 @@ export const PLAN_DETAILS = [
         limit: PLAN_LIMITS.PRO,
         message: "Halo admin DISBOT, saya ingin upgrade ke Paket Pro seharga Rp 199.000/bulan untuk 20 mirror paths.",
         weight: 2,
-        features: ["20 Mirror Paths", "Discord + Telegram", "Custom Watermark"]
+        features: ["20 Mirror Paths", "Telegram → Discord", "Custom Watermark"]
     },
     {
         name: "ELITE",
@@ -45,6 +55,6 @@ export const PLAN_DETAILS = [
         limit: PLAN_LIMITS.ELITE,
         message: "Halo admin DISBOT, saya ingin berlangganan Paket Elite seharga Rp 499.000/bulan (Flash Sale). Saya butuh Dedicated Instance, Custom Blur, dan Ghost Mirroring.",
         weight: 3,
-        features: ["50 Mirror Paths", "Smart Custom Blur", "Ghost Mirroring (MTProto)", "Dedicated Stream Process", "Custom Watermark"]
+        features: ["50 Mirror Paths", "All Mirror Directions (D2T, T2T)", "Smart Custom Blur", "Ghost Mirroring (MTProto)", "Dedicated Stream Process", "Custom Watermark"]
     }
 ];

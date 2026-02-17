@@ -1,9 +1,10 @@
 "use server";
 
-// ... (imports)
-import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTelegramChats, getTelegramTopics } from "@/lib/telegramClient";
-
-// ... (existing code)
+import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTelegramChats, getTelegramTopics, getTelegramMe } from "@/lib/telegramClient";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { prisma } from "@/lib/prisma";
+import { decrypt } from "@/lib/encryption";
 
 export async function getTelegramTopicsAction(sessionString: string, chatId: string) {
     if (!sessionString || !chatId) return { error: "Session and Chat ID required" };
@@ -12,6 +13,54 @@ export async function getTelegramTopicsAction(sessionString: string, chatId: str
         return { success: true, topics };
     } catch (e: any) {
         return { error: e.message || "Failed to fetch topics" };
+    }
+}
+
+export async function getTelegramChatsForAccount(accountId: string) {
+    if (!accountId) return { error: "Account ID required" };
+    try {
+        const account = await prisma.telegramAccount.findUnique({
+            where: { id: accountId }
+        });
+
+        if (!account) return { error: "Account not found" };
+
+        const sessionString = decrypt(account.sessionString);
+        const chats = await getTelegramChats(sessionString);
+        return { success: true, chats };
+    } catch (e: any) {
+        return { error: e.message || "Failed to fetch chats" };
+    }
+}
+
+export async function getTelegramMeAction(accountId: string) {
+    if (!accountId) return { error: "Account ID required" };
+    try {
+        const account = await prisma.telegramAccount.findUnique({
+            where: { id: accountId }
+        });
+
+        if (!account) return { error: "Account not found" };
+
+        const sessionString = decrypt(account.sessionString);
+        const me = await getTelegramMe(sessionString);
+
+        // Update DB with latest info (only schema fields)
+        await prisma.telegramAccount.update({
+            where: { id: accountId },
+            data: {
+                username: me.username || account.username,
+                telegramId: me.id,
+                firstName: me.firstName || null,
+                lastName: me.lastName || null,
+                photoUrl: me.photoUrl || null
+            }
+        });
+
+        // Return full info for UI
+        return { success: true, user: me };
+    } catch (e: any) {
+        return { error: e.message || "Failed to fetch user info" };
     }
 }
 
@@ -45,9 +94,6 @@ export async function loginTelegram(params: {
     }
 
     try {
-        // Note: Password support is minimal in current helper,
-        // but we pass it structures if we enhance the worker lib later.
-
         const sessionString = await protoCompleteAuth({
             phoneNumber,
             phoneCodeHash,
@@ -75,4 +121,27 @@ export async function getTelegramChatsAction(sessionString: string) {
     } catch (e: any) {
         return { error: e.message || "Failed to fetch chats" };
     }
+}
+
+export async function getTelegramAccounts() {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) return [];
+
+    const accounts = await prisma.telegramAccount.findMany({
+        where: { userId: session.user.id },
+        orderBy: { createdAt: 'desc' },
+        select: {
+            id: true,
+            username: true,
+            phone: true,
+            sessionString: true,
+            createdAt: true,
+            valid: true,
+            firstName: true,
+            lastName: true,
+            photoUrl: true
+        }
+    });
+
+    return accounts;
 }

@@ -8,6 +8,7 @@ import { Terminal, Shield, Cpu, Activity } from "lucide-react";
 import { PLAN_LIMITS } from "@/lib/constants";
 import { getDiscordAccounts } from "@/actions/discord-account";
 import { getMirrorConfigs, getMirrorGroups } from "@/actions/mirror";
+import { getTelegramAccounts } from "@/actions/telegramAuth";
 
 export default async function ExpertDashboard() {
     const session = await getServerSession(authOptions);
@@ -16,10 +17,11 @@ export default async function ExpertDashboard() {
         redirect("/");
     }
 
-    const [allConfigs, groups, accounts] = await Promise.all([
+    const [allConfigs, groups, accounts, telegramAccounts] = await Promise.all([
         getMirrorConfigs(),
         getMirrorGroups(),
-        getDiscordAccounts()
+        getDiscordAccounts(),
+        getTelegramAccounts()
     ]);
 
     // Decrypt tokens for the UI (Autofill feature)
@@ -97,6 +99,7 @@ export default async function ExpertDashboard() {
                     initialConfigs={configs}
                     groups={groups}
                     accounts={accounts}
+                    telegramAccounts={telegramAccounts}
                     usageCount={usageCount}
                     isLimitReached={isLimitReached}
                     userPlan={userPlan}

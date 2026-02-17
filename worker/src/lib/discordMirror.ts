@@ -585,32 +585,74 @@ export class DiscordMirror {
 
         if (content.length > 2000) content = content.substring(0, 1997) + '...';
 
-        const payload: WebhookPayload = {
-            username: message.author.username,
-            avatarURL: message.author.displayAvatarURL(),
-            content: content,
-            files: files,
-            embeds: finalEmbeds
-        };
+        if (content.length > 2000) content = content.substring(0, 1997) + '...';
 
-        // Forward to all webhooks
-        const uniqueParams = new Map<string, string>();
-        for (const cfg of configs) {
-            if (!uniqueParams.has(cfg.targetWebhookUrl)) {
-                uniqueParams.set(cfg.targetWebhookUrl, cfg.id);
+        // ── ROUTING ──
+        // Check if destination is Telegram (D2T) or Discord (Webhook)
+
+        // Group by destination type
+        const webhookConfigs = configs.filter(c => c.targetWebhookUrl);
+        const telegramConfigs = configs.filter(c => c.targetTelegramChatId);
+
+        const deliveryPromises: Promise<any>[] = [];
+
+        // 1. Send to Discord Webhooks
+        if (webhookConfigs.length > 0) {
+            const payload: WebhookPayload = {
+                username: message.author.username,
+                avatarURL: message.author.displayAvatarURL(),
+                content: content,
+                files: files,
+                embeds: finalEmbeds
+            };
+
+            const uniqueParams = new Map<string, string>();
+            for (const cfg of webhookConfigs) {
+                if (cfg.targetWebhookUrl && !uniqueParams.has(cfg.targetWebhookUrl)) {
+                    uniqueParams.set(cfg.targetWebhookUrl, cfg.id);
+                }
+            }
+
+            logger.info({
+                ...logContext,
+                targets: uniqueParams.size
+            }, `Dispatching message to ${uniqueParams.size} webhook(s)`);
+
+            const promises = Array.from(uniqueParams.entries()).map(([url, cfgId]) =>
+                WebhookExecutor.send(url, payload, cfgId)
+            );
+            deliveryPromises.push(...promises);
+        }
+
+        // 2. Send to Telegram (D2T)
+        if (telegramConfigs.length > 0) {
+            // Lazy load service
+            const { TelegramDeliveryService } = await import('./TelegramDeliveryService');
+            const service = TelegramDeliveryService.getInstance();
+
+            for (const cfg of telegramConfigs) {
+                logger.info({ ...logContext, target: 'TELEGRAM', chatId: cfg.targetTelegramChatId }, 'Dispatching message to Telegram');
+
+                // Map files to simple buffer structure for DeliveryService
+                const tFiles = files.map(f => {
+                    if (Buffer.isBuffer(f.attachment)) return { attachment: f.attachment, name: f.name };
+                    // If it's a string (blur failed or not image), we might need to download it or pass URL?
+                    // TelegramDeliveryService handles strings as URLs?
+                    // Let's assume it does or we filter.
+                    return { attachment: f.attachment, name: f.name };
+                });
+
+                deliveryPromises.push(
+                    service.deliver(cfg, content, tFiles, {
+                        username: message.author.username,
+                        avatarURL: message.author.displayAvatarURL(),
+                        embeds: message.embeds
+                    })
+                );
             }
         }
 
-        logger.info({
-            ...logContext,
-            targets: uniqueParams.size
-        }, `Dispatching message to ${uniqueParams.size} webhook(s)`);
-
-        const promises = Array.from(uniqueParams.entries()).map(([url, cfgId]) =>
-            WebhookExecutor.send(url, payload, cfgId)
-        );
-
-        const results = await Promise.allSettled(promises);
+        const results = await Promise.allSettled(deliveryPromises);
         const successes = results.filter(r => r.status === 'fulfilled').length;
         const failures = results.filter(r => r.status === 'rejected').length;
 

@@ -18,7 +18,7 @@ const plans = [
         color: "slate",
         features: {
             path: { label: "Mirror Path", value: "6 Paths", sub: "Hanya Rp 12.500/path", highlightSub: true },
-            source: { label: "Source Platform", value: "Discord Only" },
+            source: { label: "Mirror Routes", value: "Discord Internal", sub: "D2D Mode Only" },
             media: { label: "Forward Media", value: "Gambar & Audio", sub: "Snapshot Mode" },
             branding: { label: "Branding", value: "Via DisBot", sub: "Default Brand" },
             tech: { label: "Teknologi", value: "Non-Blocking Engine v2" },
@@ -36,7 +36,7 @@ const plans = [
         color: "emerald",
         features: {
             path: { label: "Mirror Path", value: "20 Paths" },
-            source: { label: "Source Platform", value: "Discord & Telegram", sub: "Standard Mode" },
+            source: { label: "Mirror Routes", value: "Multi-Source Input", sub: "D2D · T2D" },
             media: { label: "Forward Media", value: "Audio, Video & Dokumen" },
             branding: { label: "Branding", value: "Custom Watermark", sub: "White-label & Colors" },
             tech: { label: "Teknologi", value: "Hybrid Snapshot & Streaming" },
@@ -55,7 +55,7 @@ const plans = [
         isPremium: true, // For Glassmorphism
         features: {
             path: { label: "Mirror Path", value: "50 Paths", sub: "Soft Limit" }, // Updated to 50 Paths
-            source: { label: "Source Platform", value: "All Platform", sub: "Inc. Ghost Mirroring (MTProto)" },
+            source: { label: "Mirror Routes", value: "All Directions", sub: "D2D · T2D · D2T · T2T" },
             media: { label: "Forward Media", value: "Semua Tipe File", sub: "Dedicated Stream Processing" },
             branding: { label: "Branding & Privacy", value: "Watermark + Blur", sub: "Custom Brand & Smart Masking" },
             tech: { label: "Teknologi", value: "Dedicated Instance & Priority Support" },

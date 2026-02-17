@@ -162,6 +162,9 @@ model TelegramAccount {
   userId        String
   telegramId    String?
   username      String?
+  firstName     String?
+  lastName      String?
+  photoUrl      String?
   phone         String
   sessionString String
   valid         Boolean        @default(true)
@@ -193,6 +196,8 @@ enum PlatformType {
 enum MirrorGroupType {
   DISCORD_TO_DISCORD
   TELEGRAM_TO_DISCORD
+  DISCORD_TO_TELEGRAM
+  TELEGRAM_TO_TELEGRAM
 }
 
 enum WatermarkType {

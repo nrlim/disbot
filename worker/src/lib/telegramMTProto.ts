@@ -287,9 +287,6 @@ export class TelegramListener {
         const replyHeader = message.replyTo as any;
         let messageTopicId: string | null = null;
         if (replyHeader) {
-            // In Telegram Forums:
-            // - If replying to a specific message: replyToTopId is the Topic ID.
-            // - If sending a new message to a topic: replyToMsgId is the Topic ID (and topId is null).
             messageTopicId = (replyHeader.replyToTopId || replyHeader.replyToMsgId)?.toString() || null;
         }
 
@@ -310,7 +307,6 @@ export class TelegramListener {
         }
 
         logger.info({ targetCount: targetConfigs.length }, '[Telegram] Matches found, proceeding with forward');
-
 
         // ── 1. Resolve Global Metadata (Replies & Forwards) ──
         let replyContext = '';
@@ -352,12 +348,15 @@ export class TelegramListener {
         // Fetch avatar buffer - used for Embed Author Icon via attachment
         const avatarBuffer = await this.getAvatarBuffer(session.client, sender).catch(() => null);
 
-
         const content = (message.text || '').trim();
         const finalContent = `${replyContext}${forwardContext}${content}`.trim();
 
         const normalizedChatId = chatId.replace(/^-100/, '');
         const sourceLink = `https://t.me/c/${normalizedChatId}/${message.id}`;
+
+        // Separate T2D (Webhook) and T2T (DeliveryService) configs
+        const webhookConfigs = targetConfigs.filter(c => c.targetWebhookUrl);
+        const telegramConfigs = targetConfigs.filter(c => c.targetTelegramChatId);
 
         // Determine strategy
         const mediaInfo = this.analyzeMedia(message);
@@ -367,13 +366,35 @@ export class TelegramListener {
             webhookContent += `\n\n**⚠️ Media Skipped:** ${mediaInfo.skippedReason}`;
         }
 
+        // ── EXECUTE T2T Delivery ──
+        if (telegramConfigs.length > 0) {
+            // Lazy load service to avoid circular dependency
+            import('./TelegramDeliveryService').then(({ TelegramDeliveryService }) => {
+                const service = TelegramDeliveryService.getInstance();
+
+                // For T2T, we might ideally forward the message object directly?
+                // But our service interface expects content/files.
+                // We'll mimic the download flow or implement direct forward later.
+                // For now, reuse download if media exists, or send text.
+
+                // NOTE: Proper T2T usually forwards the message object (retaining original sender etc).
+                // But if we want to apply watermarks/blur, we MUST download and re-upload.
+                // The requirement says: "Ensure 'customWatermark' and 'blurRegions'... are applied".
+                // So we CANNOT use native forward. We must download-edit-upload.
+
+                // We'll hook into the downloadAndForward flow below, but enable it to target Telegram Delivery.
+            });
+        }
+
+        // We will modify downloadAndForward to accept mixed targets or split logic.
+        // Actually, let's just make downloadAndForward handle both.
+
         if (mediaInfo.shouldDownload && mediaInfo.fileName) {
             logger.info({ fileName: mediaInfo.fileName }, '[Telegram] Media detected - attempting download');
 
-            // Fire-and-forget logic with explicit catch
             this.downloadAndForward(
                 message,
-                targetConfigs,
+                targetConfigs, // ALL VALID CONFIGS (T2D + T2T)
                 username,
                 avatarBuffer || undefined,
                 webhookContent,
@@ -384,20 +405,139 @@ export class TelegramListener {
             });
         } else {
             // Text only
-            this.forwardToWebhooks(
+            this.handleMessageDelivery(
                 targetConfigs,
                 username,
                 avatarBuffer || undefined,
                 webhookContent,
                 sourceLink,
-                [] // No files
+                []
             ).catch((err: any) => {
                 logger.error({ error: err.message }, '[Telegram] Text forward failed');
             });
         }
     }
 
-    // ────────────── MEDIA ANALYSIS ──────────────
+    /**
+     * Unified delivery handler for both Webhooks (T2D) and Telegram (T2T)
+     */
+    private async handleMessageDelivery(
+        configs: TelegramConfig[],
+        username: string,
+        avatarBuffer: Buffer | undefined,
+        content: string,
+        sourceLink: string,
+        files: { attachment: Buffer; name: string }[]
+    ): Promise<void> {
+        const webhookConfigs = configs.filter(c => c.targetWebhookUrl);
+        const telegramConfigs = configs.filter(c => c.targetTelegramChatId);
+
+        const promises: Promise<any>[] = [];
+
+        // 1. T2D (Webhooks)
+        if (webhookConfigs.length > 0) {
+            promises.push(this.forwardToWebhooks(webhookConfigs, username, avatarBuffer, content, sourceLink, files));
+        }
+
+        // 2. T2T (Telegram Targets)
+        if (telegramConfigs.length > 0) {
+            promises.push(
+                import('./TelegramDeliveryService').then(async ({ TelegramDeliveryService }) => {
+                    const service = TelegramDeliveryService.getInstance();
+                    for (const cfg of telegramConfigs) {
+                        // Apply watermarks/blur is handled inside TelegramDeliveryService? 
+                        // No, we should probably process images HERE once, then send?
+                        // But different configs might have different watermarks.
+                        // For T2T, we should apply specific config watermarks.
+                        // WebhookExecutor does per-webhook processing.
+                        // TelegramDeliveryService expects `files`. 
+
+                        // We will replicate the per-target processing logic for T2T here?
+                        // Or make TelegramDeliveryService capable of processing?
+                        // Let's process here to reuse the logic in forwardToWebhooks (extracted if possible).
+                        // Since we can't easily extract private method in one edit, I'll inline the processing for T2T for now.
+
+                        let finalFiles = [...files];
+
+                        // Apply Blur (Privacy)
+                        if (cfg.blurRegions && cfg.blurRegions.length > 0) {
+                            // ... blur logic ...
+                            // Reuse logic is hard without extraction.
+                            // I'll call a helper if I can, or duplicate for now given constraints.
+                            const blurredFiles: Array<{ attachment: Buffer; name: string }> = [];
+                            for (const file of finalFiles) {
+                                if (Buffer.isBuffer(file.attachment) && /\.(jpg|jpeg|png|webp)$/i.test(file.name)) {
+                                    const blurRes = await applyBlurToBuffer(file.attachment, cfg.blurRegions, file.name);
+                                    if (blurRes.applied && blurRes.buffer) {
+                                        blurredFiles.push({ attachment: blurRes.buffer, name: file.name });
+                                    } else {
+                                        blurredFiles.push(file as any);
+                                    }
+                                } else {
+                                    blurredFiles.push(file as any);
+                                }
+                            }
+                            finalFiles = blurredFiles;
+                        }
+
+                        // Apply Watermark
+                        let watermarkCfg: WatermarkConfig | undefined;
+                        if (cfg.watermarkType === 'VISUAL' && cfg.watermarkImageUrl) {
+                            watermarkCfg = { imageUrl: cfg.watermarkImageUrl, position: cfg.watermarkPosition || 'southeast', opacity: cfg.watermarkOpacity ?? 100 };
+                        } else if (cfg.watermarkType === 'TEXT' && cfg.customWatermark?.trim()) {
+                            watermarkCfg = {
+                                imageUrl: '',
+                                position: cfg.watermarkPosition || 'southeast',
+                                textOverlay: {
+                                    text: cfg.customWatermark.startsWith('via ') ? cfg.customWatermark : `via ${cfg.customWatermark}`,
+                                    fontSize: 20, color: '#FFFFFF', opacity: 70, position: cfg.watermarkPosition || 'southeast', enableBackdrop: true
+                                }
+                            };
+                        }
+
+                        if (watermarkCfg) {
+                            finalFiles = (await processAttachmentsWithWatermark(finalFiles as any, watermarkCfg)) as any;
+                        }
+
+                        // Send
+                        await service.deliver(cfg, content, finalFiles, { username, avatarURL: '' });
+                    }
+                })
+            );
+        }
+
+        await Promise.allSettled(promises);
+    }
+
+    /**
+     * Public accessor for TelegramDeliveryService to reuse active sessions
+     */
+    public async getOrConnectClient(sessionString: string): Promise<TelegramClient | undefined> {
+        const token = sessionString.trim();
+        if (!token) return undefined;
+
+        // 1. Check active sessions (reusing Listener connection)
+        if (this.sessions.has(token)) {
+            const session = this.sessions.get(token);
+            if (session && session.client.connected) {
+                return session.client;
+            }
+        }
+
+        // 2. If not active or connected, this might be a Sender-only session or broken session.
+        // We'll attempt to return the client if it exists (even if disconnected, caller might reconnect? No, we should ensure connection).
+        // Since this is called by DeliveryService, creating a new connection for EVERY send is bad.
+        // But getOrConnectClient implies retrieving.
+
+        // TODO: Ideally we should add this session to 'this.sessions' to cache it.
+        // But 'this.sessions' requires a list of Configs to be valid for Sync.
+        // Sync logic removes sessions not in configs.
+        // So `engine.ts` MUST include these sessions in the sync list.
+        // If they are in sync list, they are in `this.sessions`.
+        // So falling through here means it's NOT in sync list or sync hasn't run yet.
+
+        return undefined;
+    }
 
     private analyzeMedia(message: any): { shouldDownload: boolean; fileName: string; skippedReason?: string } {
         if (!message.media) return { shouldDownload: false, fileName: '' };
@@ -471,7 +611,7 @@ export class TelegramListener {
             }
         }
 
-        await this.forwardToWebhooks(configs, username, avatarBuffer, content, sourceLink, files);
+        await this.handleMessageDelivery(configs, username, avatarBuffer, content, sourceLink, files);
 
         // Explicit cleanup
         if (buffer) buffer = null;
@@ -523,7 +663,7 @@ export class TelegramListener {
         // Group unique webhooks
         const uniqueWebhooks = new Map<string, string>(); // url -> configId
         for (const cfg of configs) {
-            if (!uniqueWebhooks.has(cfg.targetWebhookUrl)) {
+            if (cfg.targetWebhookUrl && !uniqueWebhooks.has(cfg.targetWebhookUrl)) {
                 uniqueWebhooks.set(cfg.targetWebhookUrl, cfg.id);
             }
         }

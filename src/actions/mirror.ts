@@ -6,14 +6,15 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { encrypt, decrypt } from "@/lib/encryption";
-import { PLAN_LIMITS, PLAN_PLATFORMS } from "@/lib/constants";
+import { PLAN_LIMITS, PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS } from "@/lib/constants";
 
 // --- Schema ---
 
 const mirrorSchema = z.object({
     sourcePlatform: z.enum(["DISCORD", "TELEGRAM"]).default("DISCORD"),
+    destinationPlatform: z.enum(["DISCORD", "TELEGRAM"]).default("DISCORD"),
     sourceGuildName: z.string().min(1, "Server name is required"),
-    targetWebhookUrl: z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL"),
+    targetWebhookUrl: z.string().url("Invalid Webhook URL").startsWith("https://discord.com/api/webhooks/", "Must be a Discord Webhook URL").optional().or(z.literal("")),
 
     // Discord Specific
     sourceChannelId: z.string().optional(),
@@ -26,6 +27,7 @@ const mirrorSchema = z.object({
     telegramChatId: z.string().optional(),
     telegramTopicId: z.string().optional(),
     telegramPhone: z.string().optional(),
+    telegramAccountId: z.string().optional().nullable(),
 
     // Destination Metadata (for UI pre-fill)
     targetChannelId: z.string().optional(),
@@ -51,6 +53,7 @@ const mirrorSchema = z.object({
     watermarkPosition: z.string().optional(),
     watermarkOpacity: z.coerce.number().min(0).max(100).optional().default(100),
 }).superRefine((data, ctx) => {
+    // --- Source Platform Validation ---
     if (data.sourcePlatform === "DISCORD") {
         if (!data.sourceChannelId || data.sourceChannelId.length < 17) {
             ctx.addIssue({
@@ -67,25 +70,71 @@ const mirrorSchema = z.object({
             });
         }
     } else if (data.sourcePlatform === "TELEGRAM") {
-        if (!data.telegramSession || data.telegramSession.length < 10) {
+        // For T2D and T2T: source requires session + source chat ID
+        // Session can come from telegramAccountId OR telegramSession
+        if ((!data.telegramSession || data.telegramSession.length < 10) && !data.telegramAccountId) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
-                message: "Telegram Session is required",
+                message: "Telegram Session or Account is required",
                 path: ["telegramSession"]
             });
         }
-        if (!data.telegramChatId) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "Telegram Chat ID is required",
-                path: ["telegramChatId"]
-            });
+
+        // Source Chat ID: for T2T it's in sourceChannelId, for T2D it's in telegramChatId
+        if (data.destinationPlatform === "TELEGRAM") {
+            // T2T: source chat is in sourceChannelId
+            if (!data.sourceChannelId) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Source Telegram Chat ID is required",
+                    path: ["sourceChannelId"]
+                });
+            }
+        } else {
+            // T2D: source chat is in telegramChatId
+            if (!data.telegramChatId) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: "Telegram Chat ID is required",
+                    path: ["telegramChatId"]
+                });
+            }
         }
-        if (!data.telegramPhone || data.telegramPhone.length < 5) {
+
+        if ((!data.telegramPhone || data.telegramPhone.length < 5) && !data.telegramAccountId) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 message: "Telegram Phone Number is required for account linking",
                 path: ["telegramPhone"]
+            });
+        }
+    }
+
+    // --- Destination Platform Validation ---
+    if (data.destinationPlatform === "TELEGRAM") {
+        // D2T or T2T: destination requires a Telegram Chat ID
+        if (!data.telegramChatId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Destination Telegram Chat ID is required",
+                path: ["telegramChatId"]
+            });
+        }
+        // Also require a Telegram account for destination
+        if (!data.telegramAccountId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Destination Telegram Account is required",
+                path: ["telegramAccountId"]
+            });
+        }
+    } else {
+        // D2D or T2D: destination requires a Discord Webhook URL
+        if (!data.targetWebhookUrl || data.targetWebhookUrl.length < 10) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Destination Discord Webhook URL is required",
+                path: ["targetWebhookUrl"]
             });
         }
     }
@@ -101,6 +150,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
     const rawData = {
         sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
+        destinationPlatform: formData.get("destinationPlatform") || "DISCORD",
         sourceGuildName: formData.get("sourceGuildName") as string || undefined,
         sourceGuildId: formData.get("sourceGuildId") as string || undefined,
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
@@ -112,6 +162,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         telegramChatId: formData.get("telegramChatId") || undefined,
         telegramTopicId: formData.get("telegramTopicId") || undefined,
         telegramPhone: formData.get("telegramPhone") || undefined,
+        telegramAccountId: (formData.get("telegramAccountId") as string) || undefined,
 
         targetChannelId: (formData.get("targetChannelId") as string) || undefined,
         targetGuildId: (formData.get("targetGuildId") as string) || undefined,
@@ -150,7 +201,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
     // Create
     try {
-        const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data; // Note: telegramSession/userToken from input are now ignored or used to find account if not provided (though manual token is deprecated)
+        const { sourcePlatform, destinationPlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data; // Note: telegramSession/userToken from input are now ignored or used to find account if not provided (though manual token is deprecated)
 
         // Enforce account selection for Discord
         if (sourcePlatform === "DISCORD" && !discordAccountId) {
@@ -163,6 +214,10 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
 
         if (!allowedPlatforms.includes(sourcePlatform)) {
             return { error: `Your ${userPlan} plan does not support ${sourcePlatform} mirroring.` };
+        }
+
+        if (destinationPlatform && !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes(destinationPlatform)) {
+            return { error: `Your ${userPlan} plan does not support ${destinationPlatform} as a destination. Upgrade to Elite to unlock Discord → Telegram and Telegram → Telegram mirroring.` };
         }
 
         // Enforce account selection for Discord
@@ -180,7 +235,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         // Since we removed `telegramSession` from MirrorConfig, we CANNOT store it there.
         // We must store it in a TelegramAccount and link it.
 
-        let telegramAccountIdToLink = null;
+        let telegramAccountIdToLink = validated.data.telegramAccountId || null;
+
         if (sourcePlatform === "TELEGRAM" && telegramSession && telegramPhone) {
             // Check if account exists or create it
             let tgAccount = await prisma.telegramAccount.findFirst({
@@ -210,11 +266,16 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         // We use sourceGuildName as the Group Name
         let finalGroupId = validated.data.groupId || null;
         if (validated.data.sourceGuildName) {
+            let type: any = "DISCORD_TO_DISCORD";
+            if (sourcePlatform === "DISCORD" && destinationPlatform === "TELEGRAM") type = "DISCORD_TO_TELEGRAM";
+            else if (sourcePlatform === "TELEGRAM" && destinationPlatform === "DISCORD") type = "TELEGRAM_TO_DISCORD";
+            else if (sourcePlatform === "TELEGRAM" && destinationPlatform === "TELEGRAM") type = "TELEGRAM_TO_TELEGRAM";
+
             let existingGroup = await prisma.mirrorGroup.findFirst({
                 where: {
                     userId: session.user.id,
                     name: validated.data.sourceGuildName,
-                    type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD"
+                    type: type
                 }
             });
 
@@ -223,7 +284,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                     data: {
                         name: validated.data.sourceGuildName,
                         userId: session.user.id,
-                        type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD",
+                        type: type,
                         active: true
                     }
                 });
@@ -239,12 +300,14 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 // Universal (Legacy)
                 sourceChannelId: sourcePlatform === "DISCORD"
                     ? (validated.data.sourceChannelId || "")
-                    : (validated.data.telegramChatId || ""),
+                    : (destinationPlatform === "TELEGRAM" ? (validated.data.sourceChannelId || "") : (validated.data.telegramChatId || "")),
                 sourceGuildId: validated.data.sourceGuildId,
 
                 // Relations
                 discordAccountId: sourcePlatform === "DISCORD" ? discordAccountId : null,
-                telegramAccountId: sourcePlatform === "TELEGRAM" ? telegramAccountIdToLink : null,
+                telegramAccountId: (sourcePlatform === "TELEGRAM" || destinationPlatform === "TELEGRAM") ? telegramAccountIdToLink : null,
+
+                telegramChatId: validated.data.telegramChatId, // Store Telegram Chat ID (Source for T2D, Dest for D2T/T2T)
 
                 targetWebhookUrl: validated.data.targetWebhookUrl, // Legacy
                 targetChannelId: validated.data.targetChannelId,
@@ -371,6 +434,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
     const rawData = {
         sourcePlatform: formData.get("sourcePlatform") || "DISCORD",
+        destinationPlatform: formData.get("destinationPlatform") || "DISCORD",
         sourceGuildName: formData.get("sourceGuildName") as string || undefined,
         sourceGuildId: formData.get("sourceGuildId") as string || undefined,
         sourceChannelId: formData.get("sourceChannelId") as string || undefined,
@@ -382,6 +446,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         telegramChatId: formData.get("telegramChatId") || undefined,
         telegramTopicId: formData.get("telegramTopicId") || undefined,
         telegramPhone: formData.get("telegramPhone") || undefined,
+        telegramAccountId: (formData.get("telegramAccountId") as string) || undefined,
 
         targetChannelId: (formData.get("targetChannelId") as string) || undefined,
         targetGuildId: (formData.get("targetGuildId") as string) || undefined,
@@ -413,7 +478,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         if (!existing) return { error: "Configuration not found" };
 
-        const { sourcePlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
+        const { sourcePlatform, destinationPlatform, telegramSession, userToken, discordAccountId, telegramChatId, telegramPhone } = validated.data;
 
         // Enforce Plan Platform Restrictions
         const user = await prisma.user.findUnique({ where: { id: session.user.id } });
@@ -426,12 +491,22 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
         // Find or Create Mirror Group by Name
         let finalGroupId = validated.data.groupId || null;
+
+        if (destinationPlatform && !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes(destinationPlatform)) {
+            return { error: `Your ${userPlan} plan does not support ${destinationPlatform} as a destination. Upgrade to Elite to unlock Discord → Telegram and Telegram → Telegram mirroring.` };
+        }
+
         if (validated.data.sourceGuildName) {
+            let type: any = "DISCORD_TO_DISCORD";
+            if (sourcePlatform === "DISCORD" && destinationPlatform === "TELEGRAM") type = "DISCORD_TO_TELEGRAM";
+            else if (sourcePlatform === "TELEGRAM" && destinationPlatform === "DISCORD") type = "TELEGRAM_TO_DISCORD";
+            else if (sourcePlatform === "TELEGRAM" && destinationPlatform === "TELEGRAM") type = "TELEGRAM_TO_TELEGRAM";
+
             let existingGroup = await prisma.mirrorGroup.findFirst({
                 where: {
                     userId: session.user.id,
                     name: validated.data.sourceGuildName,
-                    type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD"
+                    type: type
                 }
             });
 
@@ -440,7 +515,7 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
                     data: {
                         name: validated.data.sourceGuildName,
                         userId: session.user.id,
-                        type: sourcePlatform === "DISCORD" ? "DISCORD_TO_DISCORD" : "TELEGRAM_TO_DISCORD",
+                        type: type,
                         active: true
                     }
                 });
@@ -482,12 +557,15 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             }
 
             // Clear telegram fields (by removing the relation if we switched platform, but Prisma doesn't auto-clear relation unless we set to null)
-            updateData.telegramAccountId = null;
-
+            // Only clear if destination is NOT Telegram either
+            if (destinationPlatform !== 'TELEGRAM') {
+                updateData.telegramAccountId = null;
+                updateData.telegramChatId = null;
+            }
         } else {
             // Telegram
             // We need to link a TelegramAccount.
-            let telegramAccountIdToLink = null;
+            let telegramAccountIdToLink = validated.data.telegramAccountId || null;
             if (telegramSession && telegramPhone) {
                 // Check/Create account similar to createMirrorConfig
                 let tgAccount = await prisma.telegramAccount.findFirst({
@@ -514,10 +592,35 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             if (telegramAccountIdToLink) {
                 updateData.telegramAccountId = telegramAccountIdToLink;
             }
-            updateData.sourceChannelId = telegramChatId || ""; // Use chat ID as sourceChannelId
+            // Logic for Source Channel ID update
+            updateData.sourceChannelId = (destinationPlatform === "TELEGRAM")
+                ? (validated.data.sourceChannelId || "")
+                : (telegramChatId || "");
 
-            // Clear discord fields
+            updateData.telegramChatId = telegramChatId; // Ensure updated
+
+            // Clear discord fields (only if dest is not Discord? But source is Telegram, so Discord Account ID is not needed unless we support T2D with account... which we do via Webhook, so no account needed)
             updateData.discordAccountId = null;
+        }
+
+        // Account Logic for Destination Telegram (D2T)
+        // If Source was Discord, we handled Account above. But we need to link Telegram Account for Dest.
+        if (sourcePlatform === "DISCORD" && destinationPlatform === "TELEGRAM") {
+            // Check/Create Telegram Account logic needs to run even for D2T
+            // We need to copy the logic block or refactor.
+            // For now, let's just run it if we have session/phone
+            let telegramAccountIdToLink = validated.data.telegramAccountId || null;
+            if (telegramSession && telegramPhone) {
+                let tgAccount = await prisma.telegramAccount.findFirst({ where: { userId: session.user.id, phone: telegramPhone } });
+                if (!tgAccount) {
+                    tgAccount = await prisma.telegramAccount.create({ data: { userId: session.user.id, phone: telegramPhone, sessionString: encrypt(telegramSession), username: "Telegram User" } });
+                } else {
+                    await prisma.telegramAccount.update({ where: { id: tgAccount.id }, data: { sessionString: encrypt(telegramSession) } });
+                }
+                telegramAccountIdToLink = tgAccount.id;
+            }
+            if (telegramAccountIdToLink) updateData.telegramAccountId = telegramAccountIdToLink;
+            updateData.telegramChatId = telegramChatId;
         }
 
         // Reset status to ACTIVE when updated by user
