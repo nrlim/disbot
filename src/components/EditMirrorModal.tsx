@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal, ArrowRight, UserPlus, Trash2, Globe, MessageSquare, Monitor, LayoutGrid, ChevronLeft, Lock, ScanEye } from "lucide-react";
+import { X, ChevronDown, Search, CheckCircle2, AlertTriangle, Loader2, Info, Terminal, ShieldAlert, Eye, EyeOff, Layers, FileText, Signal, ArrowRight, UserPlus, Trash2, Globe, MessageSquare, Monitor, LayoutGrid, ChevronLeft, Lock, ScanEye, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
-import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction, getTelegramChatsForAccount, getTelegramMeAction } from "@/actions/telegramAuth";
+import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction, getTelegramChatsForAccount, getTelegramMeAction, getTelegramTopicsForAccount } from "@/actions/telegramAuth";
 import { PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS } from "@/lib/constants";
 import { BrandingCustomizer } from "@/components/BrandingCustomizer";
 import { BlurAreaSelector, Region } from "@/components/BlurAreaSelector";
@@ -627,7 +627,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     };
 
-    // Fetch Telegram Chats
+    // Fetch Telegram Chats (uses cached data to avoid kicking worker off)
     useEffect(() => {
         if (sourcePlatform === 'TELEGRAM' && (telegramSession || selectedTelegramSourceAccountId) && isOpen) {
             const fetchTgChats = async () => {
@@ -635,7 +635,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 try {
                     let res;
                     if (selectedTelegramSourceAccountId) {
+                        // Uses cached chats from DB — no live MTProto connection
                         res = await getTelegramChatsForAccount(selectedTelegramSourceAccountId);
+                        // Profile info is also cached in DB
                         getTelegramMeAction(selectedTelegramSourceAccountId).then(me => {
                             if (me.success) setSourceUserProfile(me.user);
                         });
@@ -659,14 +661,19 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     }, [telegramSession, sourcePlatform, isOpen]);
 
-    // Fetch Telegram Topics
+    // Fetch Telegram Topics (short-lived connection — unavoidable for per-chat data)
     useEffect(() => {
-        if (sourcePlatform === 'TELEGRAM' && telegramSession && telegramChatId) {
+        if (sourcePlatform === 'TELEGRAM' && (telegramSession || selectedTelegramSourceAccountId) && telegramChatId) {
             const fetchTopics = async () => {
                 setIsLoadingTopics(true);
                 try {
-                    const res = await getTelegramTopicsAction(telegramSession, telegramChatId);
-                    if (res.success && res.topics) {
+                    let res;
+                    if (selectedTelegramSourceAccountId) {
+                        res = await getTelegramTopicsForAccount(selectedTelegramSourceAccountId, telegramChatId);
+                    } else if (telegramSession) {
+                        res = await getTelegramTopicsAction(telegramSession, telegramChatId);
+                    }
+                    if (res?.success && res.topics) {
                         setTelegramTopics(res.topics);
                     } else {
                         setTelegramTopics([]);
@@ -682,15 +689,16 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         } else {
             setTelegramTopics([]);
         }
-    }, [telegramChatId, telegramSession, sourcePlatform]);
+    }, [telegramChatId, telegramSession, selectedTelegramSourceAccountId, sourcePlatform]);
 
 
-    // Fetch Destination Telegram Chats when Account changes
+    // Fetch Destination Telegram Chats when Account changes (uses cached data)
     useEffect(() => {
         if (selectedTelegramDestAccountId && isTelegramDestination) {
             const fetchDestChats = async () => {
                 setIsLoadingDestChats(true);
                 try {
+                    // Uses cached chats from DB — no live MTProto connection
                     const res = await getTelegramChatsForAccount(selectedTelegramDestAccountId);
                     if (res.success && res.chats) {
                         setDestinationTelegramChats(res.chats);
@@ -706,19 +714,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 }
             };
             fetchDestChats();
-        } else {
-            setDestinationTelegramChats([]);
-            setDestinationUserProfile(null);
-        }
-    }, [selectedTelegramDestAccountId, isTelegramDestination]);
 
-    // Fetch Destination User Profile (Effectively inside the above effect, but let's separate or combine)
-    // Actually, let's combine lightly or add another simple fetch
-    useEffect(() => {
-        if (selectedTelegramDestAccountId && isTelegramDestination) {
+            // Profile info is also cached in DB — no live connection needed
             getTelegramMeAction(selectedTelegramDestAccountId).then(res => {
                 if (res.success) setDestinationUserProfile(res.user);
             });
+        } else {
+            setDestinationTelegramChats([]);
+            setDestinationUserProfile(null);
         }
     }, [selectedTelegramDestAccountId, isTelegramDestination]);
 
@@ -729,6 +732,44 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
     const handleSelectTelegramDestAccount = (accId: string) => {
         setSelectedTelegramDestAccountId(accId);
+    };
+
+    const handleRefreshSourceChats = async () => {
+        if (!selectedTelegramSourceAccountId) return;
+        if (!confirm("Refeshing chats requires a live connection which may momentarily disconnect your active mirror worker. Continue?")) return;
+
+        setIsLoadingTelegramChats(true);
+        try {
+            const res = await getTelegramChatsForAccount(selectedTelegramSourceAccountId, true);
+            if (res.success && res.chats) {
+                setTelegramChats(res.chats);
+                // Also refresh profile
+                getTelegramMeAction(selectedTelegramSourceAccountId).then(me => {
+                    if (me.success) setSourceUserProfile(me.user);
+                });
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoadingTelegramChats(false);
+        }
+    };
+
+    const handleRefreshDestChats = async () => {
+        if (!selectedTelegramDestAccountId) return;
+        if (!confirm("Refeshing chats requires a live connection which may momentarily disconnect your active mirror worker. Continue?")) return;
+
+        setIsLoadingDestChats(true);
+        try {
+            const res = await getTelegramChatsForAccount(selectedTelegramDestAccountId, true);
+            if (res.success && res.chats) {
+                setDestinationTelegramChats(res.chats);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoadingDestChats(false);
+        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -1414,7 +1455,21 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                         </div>
 
                                                         <div className="space-y-1.5 relative">
-                                                            <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
+                                                            <div className="flex items-center justify-between pointer-events-none">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
+                                                                {selectedTelegramSourceAccountId && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={handleRefreshSourceChats}
+                                                                        disabled={isLoadingTelegramChats}
+                                                                        className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                        title="Force refresh cached chats"
+                                                                    >
+                                                                        <RefreshCw className={cn("w-3 h-3", isLoadingTelegramChats && "animate-spin")} />
+                                                                        Refresh
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                             {(telegramSession || selectedTelegramSourceAccountId) && (telegramChats.length > 0 || isLoadingTelegramChats) ? (
                                                                 <div className="relative">
                                                                     <button
@@ -1622,7 +1677,21 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                             {/* Destination Chat ID */}
                                                             <div className="space-y-1.5">
                                                                 <div className="flex items-center justify-between">
-                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Target Chat ID</label>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <label className="text-xs font-medium text-gray-500 uppercase">Target Chat ID</label>
+                                                                        {selectedTelegramDestAccountId && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={handleRefreshDestChats}
+                                                                                disabled={isLoadingDestChats}
+                                                                                className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                                title="Force refresh cached chats"
+                                                                            >
+                                                                                <RefreshCw className={cn("w-3 h-3", isLoadingDestChats && "animate-spin")} />
+                                                                                Refresh
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
                                                                     <div className="group relative">
                                                                         <Info className="w-3 h-3 text-gray-400 cursor-help" />
                                                                         <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">

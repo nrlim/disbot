@@ -83,6 +83,17 @@ export class Engine {
                     resolvedTgSession = cfg.telegramSession; // Legacy fallback
                 }
 
+                // Decrypt session early so both discordConfigs (for D2T delivery) and
+                // telegramConfigs (for Listener) use the same decrypted key.
+                // Without this, TelegramDeliveryService passes the encrypted session to
+                // getOrConnectClient(), which can't find it in the sessions map (keyed by decrypted strings).
+                if (resolvedTgSession && resolvedTgSession.includes(':')) {
+                    const decrypted = decrypt(resolvedTgSession, process.env.ENCRYPTION_KEY || '');
+                    if (decrypted) {
+                        resolvedTgSession = decrypted;
+                    }
+                }
+
                 let resolvedTgChatId = undefined;
                 if (platform === 'TELEGRAM') {
                     // For Telegram source: sourceChannelId stores the source chat ID
@@ -151,13 +162,10 @@ export class Engine {
                 const needsTelegramSession = cfg.sourcePlatform === 'TELEGRAM' || !!cfg.targetTelegramChatId;
 
                 if (needsTelegramSession) {
-                    // Decrypt session for TelegramListener
-                    let decryptedSession = cfg.telegramSession || '';
-                    if (decryptedSession.includes(':')) {
-                        decryptedSession = decrypt(decryptedSession, process.env.ENCRYPTION_KEY || '') || '';
-                    }
+                    // Session is already decrypted during the MirrorActiveConfig mapping phase above
+                    const sessionString = cfg.telegramSession || '';
 
-                    if (decryptedSession) {
+                    if (sessionString) {
                         // Check if we have source (for Listener) or target (for Sender)
                         const hasSource = cfg.sourcePlatform === 'TELEGRAM' && cfg.telegramChatId;
                         const hasTarget = !!cfg.targetTelegramChatId;
@@ -165,7 +173,7 @@ export class Engine {
                         if (hasSource || hasTarget) {
                             telegramConfigs.push({
                                 id: cfg.id,
-                                telegramSession: decryptedSession,
+                                telegramSession: sessionString,
                                 telegramChatId: cfg.sourcePlatform === 'TELEGRAM' ? cfg.telegramChatId : undefined,
                                 telegramTopicId: cfg.telegramTopicId,
                                 targetWebhookUrl: cfg.targetWebhookUrl,

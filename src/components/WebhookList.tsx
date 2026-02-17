@@ -264,9 +264,13 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                             <div className="flex items-center gap-2">
                                                 <h3 className="text-base font-bold text-gray-900">{group.name}</h3>
                                                 {group.type === "TELEGRAM_TO_DISCORD" ? (
-                                                    <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded-full font-bold">TELEGRAM</span>
+                                                    <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded-full font-bold">Telegram → Discord</span>
                                                 ) : group.type === "DISCORD_TO_DISCORD" ? (
-                                                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold">DISCORD</span>
+                                                    <span className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full font-bold">Discord → Discord</span>
+                                                ) : group.type === "DISCORD_TO_TELEGRAM" ? (
+                                                    <span className="text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-bold">Discord → Telegram</span>
+                                                ) : group.type === "TELEGRAM_TO_TELEGRAM" ? (
+                                                    <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded-full font-bold">Telegram → Telegram</span>
                                                 ) : null}
                                             </div>
                                             <div className="flex items-center gap-3 mt-0.5">

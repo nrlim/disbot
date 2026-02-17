@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { PLAN_LIMITS, PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS } from "@/lib/constants";
+import { cacheTelegramChatsForAccount } from "@/actions/telegramAuth";
 
 // --- Schema ---
 
@@ -260,6 +261,9 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 });
             }
             telegramAccountIdToLink = tgAccount.id;
+
+            // Cache chats in background so future create/edit flows don't need live connections
+            cacheTelegramChatsForAccount(tgAccount.id).catch(() => { });
         }
 
         // Find or Create Mirror Group by Name
@@ -587,6 +591,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
                     });
                 }
                 telegramAccountIdToLink = tgAccount.id;
+
+                // Cache chats in background so future create/edit flows don't need live connections
+                cacheTelegramChatsForAccount(tgAccount.id).catch(() => { });
             }
 
             if (telegramAccountIdToLink) {
@@ -618,6 +625,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
                     await prisma.telegramAccount.update({ where: { id: tgAccount.id }, data: { sessionString: encrypt(telegramSession) } });
                 }
                 telegramAccountIdToLink = tgAccount.id;
+
+                // Cache chats in background
+                cacheTelegramChatsForAccount(tgAccount.id).catch(() => { });
             }
             if (telegramAccountIdToLink) updateData.telegramAccountId = telegramAccountIdToLink;
             updateData.telegramChatId = telegramChatId;

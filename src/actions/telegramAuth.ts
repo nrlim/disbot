@@ -6,6 +6,12 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 import { decrypt } from "@/lib/encryption";
 
+// ──────────────────────────────────────────────────────────────
+//  Cache Duration: How long before we consider cached chats stale
+//  Set high (24h) because refreshing kicks the worker off
+// ──────────────────────────────────────────────────────────────
+const CHAT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 export async function getTelegramTopicsAction(sessionString: string, chatId: string) {
     if (!sessionString || !chatId) return { error: "Session and Chat ID required" };
     try {
@@ -16,8 +22,13 @@ export async function getTelegramTopicsAction(sessionString: string, chatId: str
     }
 }
 
-export async function getTelegramChatsForAccount(accountId: string) {
-    if (!accountId) return { error: "Account ID required" };
+/**
+ * Get Telegram topics for a linked account.
+ * This still requires a live connection since topics are per-chat and change frequently.
+ * But it's a short-lived operation.
+ */
+export async function getTelegramTopicsForAccount(accountId: string, chatId: string) {
+    if (!accountId || !chatId) return { error: "Account ID and Chat ID required" };
     try {
         const account = await prisma.telegramAccount.findUnique({
             where: { id: accountId }
@@ -26,9 +37,72 @@ export async function getTelegramChatsForAccount(accountId: string) {
         if (!account) return { error: "Account not found" };
 
         const sessionString = decrypt(account.sessionString);
-        const chats = await getTelegramChats(sessionString);
-        return { success: true, chats };
+        const topics = await getTelegramTopics(sessionString, chatId);
+        return { success: true, topics };
     } catch (e: any) {
+        return { error: e.message || "Failed to fetch topics" };
+    }
+}
+
+/**
+ * Get Telegram chats for a linked account.
+ * 
+ * IMPORTANT: Uses cached data by default to avoid creating a competing MTProto
+ * connection that would kick the worker off and cause lost messages.
+ * 
+ * @param accountId - The Telegram account ID
+ * @param forceRefresh - If true, fetches fresh data (will momentarily disconnect worker!)
+ */
+export async function getTelegramChatsForAccount(accountId: string, forceRefresh = false) {
+    if (!accountId) return { error: "Account ID required" };
+    try {
+        const account = await prisma.telegramAccount.findUnique({
+            where: { id: accountId }
+        });
+
+        if (!account) return { error: "Account not found" };
+
+        // Check if we have fresh cached data
+        const cacheAge = account.chatsCachedAt
+            ? Date.now() - new Date(account.chatsCachedAt).getTime()
+            : Infinity;
+        const cacheValid = cacheAge < CHAT_CACHE_TTL_MS;
+
+        if (!forceRefresh && cacheValid && account.cachedChats) {
+            // Return cached data — no MTProto connection needed!
+            return { success: true, chats: account.cachedChats as any[], fromCache: true };
+        }
+
+        // Cache is stale or force refresh requested — connect and fetch
+        const sessionString = decrypt(account.sessionString);
+        const chats = await getTelegramChats(sessionString);
+
+        // Update cache in DB
+        await prisma.telegramAccount.update({
+            where: { id: accountId },
+            data: {
+                cachedChats: chats as any,
+                chatsCachedAt: new Date()
+            }
+        });
+
+        return { success: true, chats, fromCache: false };
+    } catch (e: any) {
+        // If live fetch fails but we have stale cache, return it as fallback
+        try {
+            const account = await prisma.telegramAccount.findUnique({
+                where: { id: accountId }
+            });
+            if (account?.cachedChats) {
+                return {
+                    success: true,
+                    chats: account.cachedChats as any[],
+                    fromCache: true,
+                    warning: "Using cached data (live fetch failed)"
+                };
+            }
+        } catch { }
+
         return { error: e.message || "Failed to fetch chats" };
     }
 }
@@ -42,10 +116,28 @@ export async function getTelegramMeAction(accountId: string) {
 
         if (!account) return { error: "Account not found" };
 
+        // If we already have profile data cached in the account record, return it
+        // without making a live connection
+        if (account.firstName || account.username) {
+            return {
+                success: true,
+                user: {
+                    id: account.telegramId || "",
+                    username: account.username || "",
+                    firstName: account.firstName || "",
+                    lastName: account.lastName || "",
+                    phone: account.phone || "",
+                    photoUrl: account.photoUrl || ""
+                },
+                fromCache: true
+            };
+        }
+
+        // No cached profile — fetch live (only happens once after linking)
         const sessionString = decrypt(account.sessionString);
         const me = await getTelegramMe(sessionString);
 
-        // Update DB with latest info (only schema fields)
+        // Update DB with latest info
         await prisma.telegramAccount.update({
             where: { id: accountId },
             data: {
@@ -57,7 +149,6 @@ export async function getTelegramMeAction(accountId: string) {
             }
         });
 
-        // Return full info for UI
         return { success: true, user: me };
     } catch (e: any) {
         return { error: e.message || "Failed to fetch user info" };
@@ -105,7 +196,6 @@ export async function loginTelegram(params: {
         return { success: true, sessionString };
     } catch (e: any) {
         console.error("Telegram Login Error:", e?.message || "Unknown error");
-        // Handle 2FA specifically if needed
         if (e.message.includes("2FA Password Required") || e.message.includes("SESSION_PASSWORD_NEEDED")) {
             return { error: "2FA Password Required" };
         }
@@ -144,4 +234,45 @@ export async function getTelegramAccounts() {
     });
 
     return accounts;
+}
+
+/**
+ * Cache chats for a newly linked Telegram account.
+ * Called right after account linking to populate the cache
+ * so subsequent create/edit flows don't need live connections.
+ */
+export async function cacheTelegramChatsForAccount(accountId: string) {
+    if (!accountId) return;
+    try {
+        const account = await prisma.telegramAccount.findUnique({
+            where: { id: accountId }
+        });
+        if (!account) return;
+
+        const sessionString = decrypt(account.sessionString);
+        const chats = await getTelegramChats(sessionString);
+
+        // Also fetch profile info while we're connected
+        let me: any = null;
+        try {
+            me = await getTelegramMe(sessionString);
+        } catch { }
+
+        await prisma.telegramAccount.update({
+            where: { id: accountId },
+            data: {
+                cachedChats: chats as any,
+                chatsCachedAt: new Date(),
+                ...(me ? {
+                    username: me.username || account.username,
+                    telegramId: me.id,
+                    firstName: me.firstName || null,
+                    lastName: me.lastName || null,
+                    photoUrl: me.photoUrl || null
+                } : {})
+            }
+        });
+    } catch (e: any) {
+        console.error("Cache Telegram chats error:", e?.message);
+    }
 }
