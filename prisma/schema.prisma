@@ -168,8 +168,9 @@ model TelegramAccount {
   phone         String
   sessionString String
   valid         Boolean        @default(true)
-  cachedChats   Json?          // Cached chat list to avoid connecting from website (which kicks worker)
-  chatsCachedAt DateTime?      // When chats were last cached
+  cachedChannel Json?          // Cached chat/channel list
+  cachedAt      DateTime?      // When channels were cached
+  cachedTopics  Json?          // Cache: { [chatId]: { topics: [], cachedAt: date } }
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   mirrorConfigs MirrorConfig[]

@@ -27,7 +27,7 @@ export async function getTelegramTopicsAction(sessionString: string, chatId: str
  * This still requires a live connection since topics are per-chat and change frequently.
  * But it's a short-lived operation.
  */
-export async function getTelegramTopicsForAccount(accountId: string, chatId: string) {
+export async function getTelegramTopicsForAccount(accountId: string, chatId: string, forceRefresh = false) {
     if (!accountId || !chatId) return { error: "Account ID and Chat ID required" };
     try {
         const account = await prisma.telegramAccount.findUnique({
@@ -36,10 +36,47 @@ export async function getTelegramTopicsForAccount(accountId: string, chatId: str
 
         if (!account) return { error: "Account not found" };
 
+        // 1. Check Cache
+        const cachedData = (account.cachedTopics || {}) as Record<string, { topics: any[], cachedAt: string }>;
+        const entry = cachedData[chatId];
+
+        if (!forceRefresh && entry) {
+            const age = Date.now() - new Date(entry.cachedAt).getTime();
+            if (age < CHAT_CACHE_TTL_MS) {
+                return { success: true, topics: entry.topics, fromCache: true };
+            }
+        }
+
+        // 2. Fetch Live
         const sessionString = decrypt(account.sessionString);
         const topics = await getTelegramTopics(sessionString, chatId);
-        return { success: true, topics };
+
+        // 3. Update Cache (merge with existing)
+        const updatedCache = {
+            ...cachedData,
+            [chatId]: {
+                topics,
+                cachedAt: new Date().toISOString()
+            }
+        };
+
+        // Update in background to not block UI too much? No, await ensures consistency.
+        await prisma.telegramAccount.update({
+            where: { id: accountId },
+            data: { cachedTopics: updatedCache }
+        });
+
+        return { success: true, topics, fromCache: false };
     } catch (e: any) {
+        // Fallback to cache if live fetch fails
+        try {
+            const account = await prisma.telegramAccount.findUnique({ where: { id: accountId } });
+            const cachedData = (account?.cachedTopics || {}) as Record<string, { topics: any[] }>;
+            if (cachedData[chatId]) {
+                return { success: true, topics: cachedData[chatId].topics, fromCache: true, warning: "Using cached topics (live fetch failed)" };
+            }
+        } catch { }
+
         return { error: e.message || "Failed to fetch topics" };
     }
 }
@@ -63,14 +100,14 @@ export async function getTelegramChatsForAccount(accountId: string, forceRefresh
         if (!account) return { error: "Account not found" };
 
         // Check if we have fresh cached data
-        const cacheAge = account.chatsCachedAt
-            ? Date.now() - new Date(account.chatsCachedAt).getTime()
+        const cacheAge = account.cachedAt
+            ? Date.now() - new Date(account.cachedAt).getTime()
             : Infinity;
         const cacheValid = cacheAge < CHAT_CACHE_TTL_MS;
 
-        if (!forceRefresh && cacheValid && account.cachedChats) {
+        if (!forceRefresh && cacheValid && account.cachedChannel) {
             // Return cached data — no MTProto connection needed!
-            return { success: true, chats: account.cachedChats as any[], fromCache: true };
+            return { success: true, chats: account.cachedChannel as any[], fromCache: true };
         }
 
         // Cache is stale or force refresh requested — connect and fetch
@@ -81,8 +118,8 @@ export async function getTelegramChatsForAccount(accountId: string, forceRefresh
         await prisma.telegramAccount.update({
             where: { id: accountId },
             data: {
-                cachedChats: chats as any,
-                chatsCachedAt: new Date()
+                cachedChannel: chats as any,
+                cachedAt: new Date()
             }
         });
 
@@ -93,10 +130,10 @@ export async function getTelegramChatsForAccount(accountId: string, forceRefresh
             const account = await prisma.telegramAccount.findUnique({
                 where: { id: accountId }
             });
-            if (account?.cachedChats) {
+            if (account?.cachedChannel) {
                 return {
                     success: true,
-                    chats: account.cachedChats as any[],
+                    chats: account.cachedChannel as any[],
                     fromCache: true,
                     warning: "Using cached data (live fetch failed)"
                 };
@@ -261,8 +298,8 @@ export async function cacheTelegramChatsForAccount(accountId: string) {
         await prisma.telegramAccount.update({
             where: { id: accountId },
             data: {
-                cachedChats: chats as any,
-                chatsCachedAt: new Date(),
+                cachedChannel: chats as any,
+                cachedAt: new Date(),
                 ...(me ? {
                     username: me.username || account.username,
                     telegramId: me.id,

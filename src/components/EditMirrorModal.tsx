@@ -231,6 +231,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                     setTelegramSession(config.telegramSession || config.userToken || "");
                     setTelegramChatId(config.telegramChatId || config.sourceChannelId || "");
                     setTelegramTopicId(config.telegramTopicId || "");
+                    setSelectedTelegramSourceAccountId(config.telegramAccountId || null);
                 } else {
                     setChannelId(config.sourceChannelId || "");
                     if (config.discordAccountId) {
@@ -659,7 +660,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         } else {
             setTelegramChats([]);
         }
-    }, [telegramSession, sourcePlatform, isOpen]);
+    }, [telegramSession, sourcePlatform, isOpen, selectedTelegramSourceAccountId]);
 
     // Fetch Telegram Topics (short-lived connection — unavoidable for per-chat data)
     useEffect(() => {
@@ -769,6 +770,23 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             console.error(e);
         } finally {
             setIsLoadingDestChats(false);
+        }
+    };
+
+    const handleRefreshTopics = async () => {
+        if (!selectedTelegramSourceAccountId || !telegramChatId) return;
+        if (!confirm("Refeshing topics requires a live connection. Continue?")) return;
+
+        setIsLoadingTopics(true);
+        try {
+            const res = await getTelegramTopicsForAccount(selectedTelegramSourceAccountId, telegramChatId, true);
+            if (res.success && res.topics) {
+                setTelegramTopics(res.topics);
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsLoadingTopics(false);
         }
     };
 
@@ -1551,12 +1569,25 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                             </p>
                                                         </div>
 
-                                                        {/* Topic Selection (Optional) */}
                                                         {telegramTopics.length > 0 && (
                                                             <div className="space-y-1.5 relative">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase flex items-center gap-2">
-                                                                    Topic / Forum Thread <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Optional</span>
-                                                                </label>
+                                                                <div className="flex items-center justify-between pointer-events-none">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase flex items-center gap-2">
+                                                                        Topic / Forum Thread <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Optional</span>
+                                                                    </label>
+                                                                    {selectedTelegramSourceAccountId && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleRefreshTopics}
+                                                                            disabled={isLoadingTopics}
+                                                                            className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                            title="Force refresh cached topics"
+                                                                        >
+                                                                            <RefreshCw className={cn("w-3 h-3", isLoadingTopics && "animate-spin")} />
+                                                                            Refresh
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                                 <div className="relative">
                                                                     <button
                                                                         type="button"
