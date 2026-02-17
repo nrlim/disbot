@@ -23,10 +23,6 @@ export const PLAN_PLATFORMS: Record<string, string[]> = {
     ELITE: ['DISCORD', 'TELEGRAM'],
 };
 
-// ──────────────────────────────────────────────────────────────
-//  Path Limit & Feature Enforcement
-// ──────────────────────────────────────────────────────────────
-
 export interface PathLimitResult {
     /** Configs that are within the user's plan limit */
     allowed: any[];
@@ -38,20 +34,47 @@ export interface PathLimitResult {
     plan: string;
 }
 
+// ──────────────────────────────────────────────────────────────
+//  Plan Destination Limits (D2T, T2T)
+// ──────────────────────────────────────────────────────────────
+
+export const PLAN_DESTINATION_PLATFORMS: Record<string, string[]> = {
+    FREE: ['DISCORD'],
+    STARTER: ['DISCORD'],
+    PRO: ['DISCORD'],
+    ELITE: ['DISCORD', 'TELEGRAM'],
+};
+
 /**
  * Validates a single config against the plan's feature set.
  * Checks:
- * 1. Platform support (e.g., Starter cannot use Telegram)
+ * 1. Source Platform support (e.g., Starter cannot use Telegram)
+ * 2. Destination Platform support (e.g., Only Elite can use Telegram as destination)
  */
 export function validatePlanConfig(config: any): { valid: boolean; reason?: string } {
     const plan = config.userPlan || config.user?.plan || 'FREE';
-    const allowedPlatforms = PLAN_PLATFORMS[plan] || PLAN_PLATFORMS.FREE;
-    const platform = config.sourcePlatform || 'DISCORD';
 
-    if (!allowedPlatforms.includes(platform)) {
+    // 1. Source Platform Check
+    const allowedSources = PLAN_PLATFORMS[plan] || PLAN_PLATFORMS.FREE;
+    const sourcePlatform = config.sourcePlatform || 'DISCORD';
+
+    if (!allowedSources.includes(sourcePlatform)) {
         return {
             valid: false,
-            reason: `Plan ${plan} does not support source platform: ${platform}`
+            reason: `Plan ${plan} does not support source platform: ${sourcePlatform}`
+        };
+    }
+
+    // 2. Destination Platform Check (D2T, T2T)
+    const allowedDestinations = PLAN_DESTINATION_PLATFORMS[plan] || PLAN_DESTINATION_PLATFORMS.FREE;
+
+    // In our schema/types, targetTelegramChatId is set for D2T or T2T
+    const isTargetingTelegram = !!config.targetTelegramChatId || (config.destinationPlatform === 'TELEGRAM');
+
+    if (isTargetingTelegram && !allowedDestinations.includes('TELEGRAM')) {
+        return {
+            valid: false,
+            reason: `Plan ${plan} does not support Telegram as a destination. Elite required.`
         };
     }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import { PLAN_DETAILS, PLAN_LIMITS } from "@/lib/constants";
+import { PLAN_DETAILS, PLAN_LIMITS, PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS } from "@/lib/constants";
 import { Plan } from "@prisma/client";
 
 export async function POST(
@@ -108,22 +108,54 @@ export async function POST(
                 }
             });
 
-            // Activate Mirror Configs up to limit
+            // Activate Mirror Configs up to limit and within plan features
             const limit = PLAN_LIMITS[targetPlan] || 0;
+            const allowedSources = PLAN_PLATFORMS[targetPlan] || ['DISCORD'];
+            const allowedDestinations = PLAN_DESTINATION_PLATFORMS[targetPlan] || ['DISCORD'];
 
-            // Get all user configs, ordered by creation (or maybe last active?)
-            // We want to enable the first N configs.
+            // Get all user configs
             const userConfigs = await prisma.mirrorConfig.findMany({
                 where: { userId: userId },
                 orderBy: { createdAt: 'asc' } // Enable oldest/first created configs by default
             });
 
-            // Update logic: Set first 'limit' to active=true, others to active=false?
-            const updates = userConfigs.map((config, index) => {
-                const shouldBeActive = index < limit;
+            let activeCount = 0;
+            const updates = userConfigs.map((config) => {
+                // 1. Feature Check: Source Platform
+                const sourceAllowed = allowedSources.includes(config.sourcePlatform);
+
+                // 2. Feature Check: Destination Platform
+                // D2T: source DISCORD + telegramChatId present
+                // T2T: source TELEGRAM + telegramChatId (dest) != sourceChannelId (source)
+                const isTelegramDest = (config.sourcePlatform === 'DISCORD' && !!config.telegramChatId) ||
+                    (config.sourcePlatform === 'TELEGRAM' && !!config.telegramChatId && !!config.sourceChannelId && config.telegramChatId !== config.sourceChannelId);
+
+                const destAllowed = !isTelegramDest || allowedDestinations.includes('TELEGRAM');
+
+                const isFeatureValid = sourceAllowed && destAllowed;
+
+                // 3. Path Limit
+                let shouldBeActive = false;
+                let status = "ACTIVE";
+
+                if (!isFeatureValid) {
+                    shouldBeActive = false;
+                    status = "PLAN_RESTRICTION";
+                } else if (activeCount < limit) {
+                    shouldBeActive = true;
+                    activeCount++;
+                    status = "ACTIVE";
+                } else {
+                    shouldBeActive = false;
+                    status = "PATH_LIMIT_REACHED";
+                }
+
                 return prisma.mirrorConfig.update({
                     where: { id: config.id },
-                    data: { active: shouldBeActive }
+                    data: {
+                        active: shouldBeActive,
+                        status: status
+                    }
                 });
             });
 
