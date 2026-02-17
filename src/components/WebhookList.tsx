@@ -10,7 +10,7 @@ import { toast } from "react-hot-toast";
 import { deleteMirrorConfig, toggleMirrorConfig, deleteMirrorGroup } from "@/actions/mirror";
 import { useRouter } from "next/navigation";
 import UpgradeModal from "./UpgradeModal";
-import { PLAN_PLATFORMS } from "@/lib/constants";
+import { PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS, PLAN_LIMITS } from "@/lib/constants";
 
 // --- Types ---
 
@@ -86,12 +86,37 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
         router.refresh();
     };
 
-    const handleToggle = async (id: string, currentStatus: boolean, platform: string) => {
+    const handleToggle = async (config: MirrorConfig) => {
+        const id = config.id;
+        const currentStatus = config.active;
+        const platform = config.sourcePlatform || 'DISCORD';
+
         // If enabling, check plan restrictions
         if (!currentStatus) {
+            // 1. Source Check
             const allowedPlatforms = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
             if (!allowedPlatforms.includes(platform)) {
                 setUpgradeReason(`Your ${userPlan} plan does not support ${platform} mirroring.`);
+                setUpgradeModalOpen(true);
+                return;
+            }
+
+            // 2. Destination Check (D2T, T2T)
+            const allowedDestinations = PLAN_DESTINATION_PLATFORMS[userPlan] || ['DISCORD'];
+            const isTelegramDest = (config.sourcePlatform === 'DISCORD' && !!config.telegramChatId) ||
+                (config.sourcePlatform === 'TELEGRAM' && !!config.telegramChatId && !!config.sourceChannelId && config.telegramChatId !== config.sourceChannelId);
+
+            if (isTelegramDest && !allowedDestinations.includes('TELEGRAM')) {
+                setUpgradeReason(`Your ${userPlan} plan does not support Telegram as a destination. Elite required.`);
+                setUpgradeModalOpen(true);
+                return;
+            }
+
+            // 3. Usage Check (Path Limit)
+            // Note: We use usageCount from props which should be the count of ACTIVE mirrors
+            const limit = PLAN_LIMITS[userPlan] || 0;
+            if (usageCount >= limit) {
+                setUpgradeReason(`You have reached your ${userPlan} plan limit of ${limit} active mirrors.`);
                 setUpgradeModalOpen(true);
                 return;
             }
@@ -344,7 +369,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                             <tr key={config.id} className="group hover:bg-blue-50/30 transition-colors">
                                                                 <td className="px-6 py-4">
                                                                     <button
-                                                                        onClick={() => handleToggle(config.id, config.active, config.sourcePlatform || 'DISCORD')}
+                                                                        onClick={() => handleToggle(config)}
                                                                         disabled={togglingId === config.id}
                                                                         className={cn(
                                                                             "relative flex items-center gap-2 pr-3 pl-1.5 py-1 rounded-full text-[10px] font-bold border transition-all",

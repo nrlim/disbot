@@ -10,9 +10,10 @@ import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
 import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
 import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction, getTelegramChatsForAccount, getTelegramMeAction, getTelegramTopicsForAccount } from "@/actions/telegramAuth";
-import { PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS } from "@/lib/constants";
+import { PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS, PLAN_LIMITS } from "@/lib/constants";
 import { BrandingCustomizer } from "@/components/BrandingCustomizer";
 import { BlurAreaSelector, Region } from "@/components/BlurAreaSelector";
+import UpgradeModal from "./UpgradeModal";
 
 // --- Types ---
 
@@ -196,6 +197,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [authError, setAuthError] = useState(false);
+
+    // Upgrade Modal State
+    const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+    const [upgradeReason, setUpgradeReason] = useState("");
 
     // Initialize Modal
     useEffect(() => {
@@ -840,6 +845,23 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         setError(null);
         setIsSubmitting(true);
 
+        // --- Plan Feature Validation ---
+        const allowedSources = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
+        if (!allowedSources.includes(sourcePlatform)) {
+            setUpgradeReason(`Your ${userPlan} plan does not support ${sourcePlatform} mirroring.`);
+            setUpgradeModalOpen(true);
+            setIsSubmitting(false);
+            return;
+        }
+
+        const allowedDestinations = PLAN_DESTINATION_PLATFORMS[userPlan] || ['DISCORD'];
+        if (destinationPlatform === 'TELEGRAM' && !allowedDestinations.includes('TELEGRAM')) {
+            setUpgradeReason(`Your ${userPlan} plan does not support Telegram as a destination. Upgrade to Elite to unlock Discord → Telegram and Telegram → Telegram mirroring.`);
+            setUpgradeModalOpen(true);
+            setIsSubmitting(false);
+            return;
+        }
+
         const formData = new FormData();
 
         if (!isTelegramDestination) {
@@ -995,1060 +1017,215 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const prevStep = () => setStep(1);
 
     return (
-        <AnimatePresence>
-            {isOpen && (
-                <>
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={onClose}
-                        className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50"
-                    />
-
-                    <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none p-4">
+        <>
+            <AnimatePresence>
+                {isOpen && (
+                    <>
                         <motion.div
-                            initial={{ opacity: 0, scale: 0.98, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.98, y: 10 }}
-                            transition={{ duration: 0.2, ease: "easeOut" }}
-                            className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-5xl pointer-events-auto flex flex-col max-h-[90vh]"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            {/* Header */}
-                            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                                        {step === 1 ? (
-                                            <>
-                                                <Layers className="w-5 h-5 text-gray-400" />
-                                                Select Platform
-                                            </>
-                                        ) : (
-                                            <>
-                                                {sourcePlatform === 'DISCORD' ? <DiscordLogo className="w-5 h-5 text-gray-400" /> : <TelegramLogo className="w-5 h-5 text-blue-500" />}
-                                                Configure Mirror
-                                            </>
-                                        )}
-                                    </h2>
-                                    <p className="text-sm text-gray-500 mt-0.5">
-                                        {step === 1 ? "Choose your source and target platforms" : `Setup your ${sourcePlatform === 'DISCORD' ? 'Discord' : 'Telegram'} connection details`}
-                                    </p>
-                                </div>
-                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-full">
-                                    <X className="w-5 h-5" />
-                                </button>
-                            </div>
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            onClick={onClose}
+                            className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50"
+                        />
 
-                            {/* Body */}
-                            <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
-                                <AnimatePresence mode="wait">
-                                    {step === 1 ? (
-                                        <motion.div
-                                            key="step1"
-                                            initial={{ opacity: 0, x: -10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: -10 }}
-                                            className="space-y-6"
-                                        >
-                                            <div className="space-y-4">
-                                                <label className="text-sm font-semibold text-gray-900">Choose Mirror Type</label>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                    <div
-                                                        onClick={() => {
-                                                            setSourcePlatform('DISCORD');
-                                                            setDestinationPlatform('DISCORD');
-                                                        }}
-                                                        className={cn(
-                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
-                                                            sourcePlatform === 'DISCORD' && destinationPlatform === 'DISCORD' ? "border-primary bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200"
-                                                        )}
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-3">
-                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
-                                                                <DiscordLogo className="w-5 h-5" />
-                                                            </div>
-                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
-                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
-                                                                <DiscordLogo className="w-5 h-5" />
-                                                            </div>
-                                                        </div>
-                                                        <h3 className="font-bold text-gray-900">Discord to Discord</h3>
-                                                        <p className="text-xs text-gray-500 mt-1">Mirror messages between Discord servers instantly.</p>
-                                                        {sourcePlatform === 'DISCORD' && destinationPlatform === 'DISCORD' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-primary" />}
-                                                    </div>
-
-                                                    <div
-                                                        onClick={() => {
-                                                            if (!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
-                                                            setSourcePlatform('TELEGRAM');
-                                                            setDestinationPlatform('DISCORD');
-                                                        }}
-                                                        className={cn(
-                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
-                                                            sourcePlatform === 'TELEGRAM' && destinationPlatform === 'DISCORD' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
-                                                            !PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
-                                                        )}
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-3">
-                                                            <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
-                                                                <TelegramLogo className="w-5 h-5" />
-                                                            </div>
-                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
-                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
-                                                                <DiscordLogo className="w-5 h-5" />
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex justify-between items-start">
-                                                            <div>
-                                                                <h3 className="font-bold text-gray-900">Telegram to Discord</h3>
-                                                                <p className="text-xs text-gray-500 mt-1">Forward Telegram channel posts to Discord webhooks.</p>
-                                                            </div>
-                                                            {!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && (
-                                                                <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Pro to unlock">
-                                                                    <ShieldAlert className="w-4 h-4" />
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                        {sourcePlatform === 'TELEGRAM' && destinationPlatform === 'DISCORD' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
-                                                    </div>
-
-                                                    <div
-                                                        onClick={() => {
-                                                            if (!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
-                                                            setSourcePlatform('DISCORD');
-                                                            setDestinationPlatform('TELEGRAM');
-                                                        }}
-                                                        className={cn(
-                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
-                                                            sourcePlatform === 'DISCORD' && destinationPlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
-                                                            !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
-                                                        )}
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-3">
-                                                            <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
-                                                                <DiscordLogo className="w-5 h-5" />
-                                                            </div>
-                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
-                                                            <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
-                                                                <TelegramLogo className="w-5 h-5" />
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex justify-between items-start">
-                                                            <div>
-                                                                <h3 className="font-bold text-gray-900">Discord to Telegram</h3>
-                                                                <p className="text-xs text-gray-500 mt-1">Mirror Discord messages to a Telegram chat.</p>
-                                                            </div>
-                                                            {!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') ? (
-                                                                <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Elite to unlock">
-                                                                    <ShieldAlert className="w-4 h-4" />
-                                                                </div>
-                                                            ) : (
-                                                                <div className="bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">ELITE</div>
-                                                            )}
-                                                        </div>
-                                                        {sourcePlatform === 'DISCORD' && destinationPlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
-                                                    </div>
-
-                                                    <div
-                                                        onClick={() => {
-                                                            if (!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
-                                                            setSourcePlatform('TELEGRAM');
-                                                            setDestinationPlatform('TELEGRAM');
-                                                        }}
-                                                        className={cn(
-                                                            "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
-                                                            sourcePlatform === 'TELEGRAM' && destinationPlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
-                                                            !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
-                                                        )}
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-3">
-                                                            <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
-                                                                <TelegramLogo className="w-5 h-5" />
-                                                            </div>
-                                                            <ArrowRight className="w-4 h-4 text-gray-400" />
-                                                            <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
-                                                                <TelegramLogo className="w-5 h-5" />
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex justify-between items-start">
-                                                            <div>
-                                                                <h3 className="font-bold text-gray-900">Telegram to Telegram</h3>
-                                                                <p className="text-xs text-gray-500 mt-1">Mirror messages between Telegram chats.</p>
-                                                            </div>
-                                                            {!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') ? (
-                                                                <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Elite to unlock">
-                                                                    <ShieldAlert className="w-4 h-4" />
-                                                                </div>
-                                                            ) : (
-                                                                <div className="bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">ELITE</div>
-                                                            )}
-                                                        </div>
-                                                        {sourcePlatform === 'TELEGRAM' && destinationPlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <label className="text-sm font-semibold text-gray-900">Mirror Title</label>
-                                                <input
-                                                    type="text"
-                                                    value={mirrorTitle}
-                                                    onChange={(e) => setMirrorTitle(e.target.value)}
-                                                    placeholder="e.g. VIP Crypto Signals"
-                                                    className={cn(
-                                                        "w-full px-4 py-3 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium",
-                                                        error && !mirrorTitle.trim() ? "border-red-300 ring-red-100" : ""
-                                                    )}
-                                                />
-                                                <p className="text-xs text-gray-500 mt-1">Give this mirror a recognizable name for your dashboard.</p>
-                                            </div>
-
-                                            {error && (
-                                                <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
-                                                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                                                    {error}
-                                                </div>
+                        <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none p-4">
+                            <motion.div
+                                initial={{ opacity: 0, scale: 0.98, y: 10 }}
+                                animate={{ opacity: 1, scale: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.98, y: 10 }}
+                                transition={{ duration: 0.2, ease: "easeOut" }}
+                                className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-5xl pointer-events-auto flex flex-col max-h-[90vh]"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                {/* Header */}
+                                <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+                                    <div>
+                                        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                                            {step === 1 ? (
+                                                <>
+                                                    <Layers className="w-5 h-5 text-gray-400" />
+                                                    Select Platform
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {sourcePlatform === 'DISCORD' ? <DiscordLogo className="w-5 h-5 text-gray-400" /> : <TelegramLogo className="w-5 h-5 text-blue-500" />}
+                                                    Configure Mirror
+                                                </>
                                             )}
-                                        </motion.div>
-                                    ) : (
-                                        <motion.div
-                                            key="step2"
-                                            initial={{ opacity: 0, x: 10 }}
-                                            animate={{ opacity: 1, x: 0 }}
-                                            exit={{ opacity: 0, x: 10 }}
-                                            className="space-y-6"
-                                        >
-                                            <form onSubmit={handleSubmit} className="space-y-6">
+                                        </h2>
+                                        <p className="text-sm text-gray-500 mt-0.5">
+                                            {step === 1 ? "Choose your source and target platforms" : `Setup your ${sourcePlatform === 'DISCORD' ? 'Discord' : 'Telegram'} connection details`}
+                                        </p>
+                                    </div>
+                                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors p-2 hover:bg-gray-100 rounded-full">
+                                        <X className="w-5 h-5" />
+                                    </button>
+                                </div>
 
-                                                {/* Account Selection - Only for Discord source (used as Source context) */}
-                                                {sourcePlatform === 'DISCORD' && (
-                                                    <div className="space-y-3">
-                                                        <label className="text-sm font-medium text-gray-700">
-                                                            Account Context
-                                                        </label>
-
-                                                        {localAccounts.length > 0 ? (
-                                                            <div className="grid grid-cols-1 gap-2">
-                                                                {localAccounts.map((acc: any) => (
-                                                                    <div
-                                                                        key={acc.id}
-                                                                        onClick={() => setSelectedAccountId(acc.id)}
-                                                                        className={cn(
-                                                                            "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
-                                                                            selectedAccountId === acc.id ? "bg-blue-50 border-primary ring-1 ring-primary" : "bg-white border-gray-200 hover:border-gray-300"
-                                                                        )}
-                                                                    >
-                                                                        {acc.avatar ? (
-                                                                            <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={36} height={36} alt="" className="rounded-full bg-gray-200" unoptimized />
-                                                                        ) : (
-                                                                            <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
-                                                                                {acc.username[0]}
-                                                                            </div>
-                                                                        )}
-                                                                        <div className="flex-1">
-                                                                            <div className="text-sm font-semibold text-gray-900">{acc.username}</div>
-                                                                            <div className="text-xs text-gray-500">ID: {acc.discordId}</div>
-                                                                        </div>
-                                                                        {selectedAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-primary" />}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        ) : (
-                                                            <div className="text-center p-4 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
-                                                                No accounts linked. Please add one.
-                                                            </div>
-                                                        )}
-
-                                                        {/* Add Account Button */}
-                                                        {!isAddingAccount ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setIsAddingAccount(true)}
-                                                                className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-400 transition-all flex items-center justify-center gap-2"
-                                                            >
-                                                                <UserPlus className="w-4 h-4" /> Link Another Account
-                                                            </button>
-                                                        ) : (
-                                                            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
-                                                                <div className="flex justify-between items-center">
-                                                                    <span className="text-sm font-medium text-gray-900">Link New Account</span>
-                                                                    <button onClick={() => setIsAddingAccount(false)}><X className="w-4 h-4 text-gray-400" /></button>
-                                                                </div>
-                                                                <input
-                                                                    type="password"
-                                                                    value={newAccountToken}
-                                                                    onChange={(e) => setNewAccountToken(e.target.value)}
-                                                                    placeholder="Paste User Token Here"
-                                                                    className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                                                                />
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={handleAddNewAccount}
-                                                                    disabled={isAddingAccountLoading || !newAccountToken}
-                                                                    className="w-full py-2 bg-primary text-white text-sm font-medium rounded-md hover:bg-primary/90 transition-colors flex justify-center gap-2"
-                                                                >
-                                                                    {isAddingAccountLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                                                                    Verify & Link
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-
-                                                {/* DISCORD CONFIG */}
-                                                {sourcePlatform === 'DISCORD' && (
-                                                    <div className="space-y-6">
-
-                                                        {/* Guild & Channel Selection */}
-                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                            {/* Guild Select */}
-                                                            <div className="space-y-1.5 relative">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Source Server</label>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setIsGuildDropdownOpen(!isGuildDropdownOpen)}
-                                                                    disabled={!selectedAccountId}
-                                                                    className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50 disabled:bg-gray-50"
-                                                                >
-                                                                    {selectedGuild ? (
-                                                                        <div className="flex items-center gap-2 truncate">
-                                                                            {selectedGuild.icon ? (
-                                                                                <Image src={selectedGuild.icon} width={20} height={20} alt="" className="rounded-full" unoptimized />
-                                                                            ) : (
-                                                                                <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">{selectedGuild.name.substring(0, 2)}</div>
-                                                                            )}
-                                                                            <span className="text-sm text-gray-900 truncate font-medium">{selectedGuild.name}</span>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <span className="text-sm text-gray-500">Select Server...</span>
-                                                                    )}
-                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                </button>
-
-                                                                {/* Guild Dropdown */}
-                                                                <AnimatePresence>
-                                                                    {isGuildDropdownOpen && (
-                                                                        <motion.div
-                                                                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
-                                                                            className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
-                                                                        >
-                                                                            <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                <Search className="absolute left-4 top-4 w-4 h-4 text-gray-400" />
-                                                                                <input
-                                                                                    type="text"
-                                                                                    value={searchQuery}
-                                                                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                                                                    className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
-                                                                                    placeholder="Search servers..."
-                                                                                    autoFocus
-                                                                                />
-                                                                            </div>
-                                                                            <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                {isLoadingGuilds ? (
-                                                                                    <div className="p-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
-                                                                                ) : filteredGuilds.length > 0 ? (
-                                                                                    filteredGuilds.map(g => (
-                                                                                        <button
-                                                                                            key={g.id}
-                                                                                            type="button"
-                                                                                            onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
-                                                                                            className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
-                                                                                        >
-                                                                                            {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{g.name.substring(0, 2)}</div>}
-                                                                                            <span className="text-sm text-gray-700 truncate">{g.name}</span>
-                                                                                        </button>
-                                                                                    ))
-                                                                                ) : (
-                                                                                    <div className="p-3 text-center text-xs text-gray-500">No servers found</div>
-                                                                                )}
-                                                                            </div>
-                                                                        </motion.div>
-                                                                    )}
-                                                                </AnimatePresence>
-                                                            </div>
-
-                                                            {/* Channel ID */}
-                                                            <div className="space-y-1.5">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Channel ID</label>
-                                                                <div className="relative">
-                                                                    {selectedGuild ? (
-                                                                        <div className="relative">
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => setIsChannelDropdownOpen(!isChannelDropdownOpen)}
-                                                                                disabled={channels.length === 0}
-                                                                                className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
-                                                                            >
-                                                                                {channelId ? (
-                                                                                    <div className="flex items-center gap-1 overflow-hidden">
-                                                                                        <span className="text-gray-400">#</span>
-                                                                                        <span className="text-sm text-gray-900 truncate font-medium">{selectedChannel?.name || channelId}</span>
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <span className="text-sm text-gray-500">{isLoadingChannels ? "Loading..." : "Select Channel..."}</span>
-                                                                                )}
-                                                                                <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                            </button>
-                                                                            <AnimatePresence>
-                                                                                {isChannelDropdownOpen && (
-                                                                                    <motion.div
-                                                                                        initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
-                                                                                        className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
-                                                                                    >
-                                                                                        <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                            <input type="text" value={channelSearchQuery} onChange={(e) => setChannelSearchQuery(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary" placeholder="Search..." autoFocus />
-                                                                                        </div>
-                                                                                        <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                            {filteredChannels.map(c => (
-                                                                                                <button key={c.id} type="button" onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md text-left text-sm text-gray-700">
-                                                                                                    <span className="text-gray-400">#</span>
-                                                                                                    <span className="truncate flex-1">{c.name}</span>
-                                                                                                    <span className="text-xs text-gray-400 font-mono">{c.id.substring(0, 4)}...</span>
-                                                                                                </button>
-                                                                                            ))}
-                                                                                        </div>
-                                                                                    </motion.div>
-                                                                                )}
-                                                                            </AnimatePresence>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <input
-                                                                            type="text"
-                                                                            value={channelId}
-                                                                            onChange={(e) => setChannelId(e.target.value)}
-                                                                            className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono placeholder:text-gray-400"
-                                                                            placeholder="Channel ID..."
-                                                                        />
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                {/* TELEGRAM CONFIG */}
-                                                {sourcePlatform === 'TELEGRAM' && (
-                                                    <div className="space-y-6">
-                                                        {/* Telegram Auth UI */}
-                                                        <div className="space-y-4">
-                                                            {/* Saved Accounts Selection */}
-                                                            {telegramAccounts && telegramAccounts.length > 0 && !telegramSession && (
-                                                                <div className="space-y-1.5">
-                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Select Source Account</label>
-                                                                    <div className="grid grid-cols-1 gap-2">
-                                                                        {telegramAccounts.map((acc: any) => (
-                                                                            <button
-                                                                                key={acc.id}
-                                                                                type="button"
-                                                                                onClick={() => {
-                                                                                    setSelectedTelegramSourceAccountId(acc.id);
-                                                                                    setTelegramSession(""); // Reset session string if using account ID
-                                                                                }}
-                                                                                className={cn(
-                                                                                    "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all text-left w-full",
-                                                                                    selectedTelegramSourceAccountId === acc.id ? "bg-blue-50 border-blue-500 ring-1 ring-blue-500" : "bg-white border-gray-200 hover:border-gray-300"
-                                                                                )}
-                                                                            >
-                                                                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">
-                                                                                    <TelegramLogo className="w-4 h-4" />
-                                                                                </div>
-                                                                                <div className="flex-1 overflow-hidden">
-                                                                                    <div className="text-sm font-semibold text-gray-900 truncate">
-                                                                                        {selectedTelegramSourceAccountId === acc.id && sourceUserProfile ?
-                                                                                            (sourceUserProfile.firstName || acc.firstName || acc.username || acc.phone) :
-                                                                                            (acc.firstName || acc.username || acc.phone)
-                                                                                        }
-                                                                                    </div>
-                                                                                    {selectedTelegramSourceAccountId === acc.id && sourceUserProfile && (
-                                                                                        <div className="text-xs text-gray-500 truncate">
-                                                                                            ID: {sourceUserProfile.id} | @{sourceUserProfile.username}
-                                                                                        </div>
-                                                                                    )}
-                                                                                    {!acc.valid && <span className="text-xs text-red-500">Invalid Session</span>}
-                                                                                </div>
-                                                                                {selectedTelegramSourceAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
-                                                                            </button>
-                                                                        ))}
-                                                                    </div>
-                                                                    <div className="text-right">
-                                                                        <button type="button" onClick={() => { setSelectedTelegramSourceAccountId(""); setTelegramSession(""); }} className="text-xs text-primary hover:underline">
-                                                                            + Add / Use New Account
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
+                                {/* Body */}
+                                <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
+                                    <AnimatePresence mode="wait">
+                                        {step === 1 ? (
+                                            <motion.div
+                                                key="step1"
+                                                initial={{ opacity: 0, x: -10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                exit={{ opacity: 0, x: -10 }}
+                                                className="space-y-6"
+                                            >
+                                                <div className="space-y-4">
+                                                    <label className="text-sm font-semibold text-gray-900">Choose Mirror Type</label>
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div
+                                                            onClick={() => {
+                                                                setSourcePlatform('DISCORD');
+                                                                setDestinationPlatform('DISCORD');
+                                                            }}
+                                                            className={cn(
+                                                                "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                                sourcePlatform === 'DISCORD' && destinationPlatform === 'DISCORD' ? "border-primary bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200"
                                                             )}
-
-                                                            {/* Manual Auth / New Account */}
-                                                            {(!selectedTelegramSourceAccountId || telegramSession) && (
-                                                                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4">
-                                                                    <div className="flex items-center justify-between">
-                                                                        <h3 className="text-sm font-semibold text-gray-900">Telegram Authentication</h3>
-                                                                        <TelegramLogo className="w-6 h-6 text-[#24A1DE]" />
-                                                                    </div>
-                                                                    {!telegramSession ? (
-                                                                        <div className="space-y-3">
-                                                                            {authStep === 'PHONE' && (
-                                                                                <div className="flex gap-2">
-                                                                                    <input type="text" value={telegramPhone} onChange={(e) => setTelegramPhone(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary" placeholder="Phone Number (+62...)" />
-                                                                                    <button type="button" onClick={handleSendCode} disabled={isAuthLoading} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">Send Code</button>
-                                                                                </div>
-                                                                            )}
-                                                                            {(authStep === 'CODE' || authStep === 'PASSWORD') && (
-                                                                                <div className="space-y-3">
-                                                                                    <input type="text" value={telegramCode} onChange={(e) => setTelegramCode(e.target.value)} placeholder="SMS Code" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
-                                                                                    {authStep === 'PASSWORD' && (
-                                                                                        <input type="password" value={telegramPassword} onChange={(e) => setTelegramPassword(e.target.value)} placeholder="2FA Password" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
-                                                                                    )}
-                                                                                    <div className="flex gap-2">
-                                                                                        <button type="button" onClick={() => setAuthStep('PHONE')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">Back</button>
-                                                                                        <button type="button" onClick={handleLogin} disabled={isAuthLoading} className="flex-1 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90">Verify</button>
-                                                                                    </div>
-                                                                                </div>
-                                                                            )}
-                                                                            {telegramAccounts.length > 0 && (
-                                                                                <div className="text-center pt-2">
-                                                                                    <button type="button" onClick={() => setSelectedTelegramSourceAccountId(telegramAccounts[0].id)} className="text-xs text-gray-500 hover:text-gray-900">Cancel & Use Saved Accounts</button>
-                                                                                </div>
-                                                                            )}
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="flex items-center justify-between bg-green-50 p-3 rounded-lg border border-green-100">
-                                                                            <div className="flex items-center gap-2 text-green-700 text-sm font-medium"><Signal className="w-4 h-4" /> Session Active</div>
-                                                                            <button type="button" onClick={() => { setTelegramSession(""); setAuthStep('PHONE'); localStorage.removeItem("draft_telegram_session"); }} className="text-xs text-red-600 hover:underline">Disconnect</button>
-                                                                        </div>
-                                                                    )}
+                                                        >
+                                                            <div className="flex items-center gap-3 mb-3">
+                                                                <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                    <DiscordLogo className="w-5 h-5" />
                                                                 </div>
-                                                            )}
+                                                                <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                                <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                    <DiscordLogo className="w-5 h-5" />
+                                                                </div>
+                                                            </div>
+                                                            <h3 className="font-bold text-gray-900">Discord to Discord</h3>
+                                                            <p className="text-xs text-gray-500 mt-1">Mirror messages between Discord servers instantly.</p>
+                                                            {sourcePlatform === 'DISCORD' && destinationPlatform === 'DISCORD' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-primary" />}
                                                         </div>
 
-                                                        <div className="space-y-1.5 relative">
-                                                            <div className="flex items-center justify-between pointer-events-none">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
-                                                                {selectedTelegramSourceAccountId && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={handleRefreshSourceChats}
-                                                                        disabled={isLoadingTelegramChats}
-                                                                        className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
-                                                                        title="Force refresh cached chats"
-                                                                    >
-                                                                        <RefreshCw className={cn("w-3 h-3", isLoadingTelegramChats && "animate-spin")} />
-                                                                        Refresh
-                                                                    </button>
+                                                        <div
+                                                            onClick={() => {
+                                                                if (!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
+                                                                setSourcePlatform('TELEGRAM');
+                                                                setDestinationPlatform('DISCORD');
+                                                            }}
+                                                            className={cn(
+                                                                "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                                sourcePlatform === 'TELEGRAM' && destinationPlatform === 'DISCORD' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
+                                                                !PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
+                                                            )}
+                                                        >
+                                                            <div className="flex items-center gap-3 mb-3">
+                                                                <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
+                                                                    <TelegramLogo className="w-5 h-5" />
+                                                                </div>
+                                                                <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                                <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                    <DiscordLogo className="w-5 h-5" />
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex justify-between items-start">
+                                                                <div>
+                                                                    <h3 className="font-bold text-gray-900">Telegram to Discord</h3>
+                                                                    <p className="text-xs text-gray-500 mt-1">Forward Telegram channel posts to Discord webhooks.</p>
+                                                                </div>
+                                                                {!PLAN_PLATFORMS[userPlan]?.includes('TELEGRAM') && (
+                                                                    <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Pro to unlock">
+                                                                        <ShieldAlert className="w-4 h-4" />
+                                                                    </div>
                                                                 )}
                                                             </div>
-                                                            {(telegramSession || selectedTelegramSourceAccountId) && (telegramChats.length > 0 || isLoadingTelegramChats) ? (
-                                                                <div className="relative">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setIsTelegramChatDropdownOpen(!isTelegramChatDropdownOpen)}
-                                                                        disabled={isLoadingTelegramChats}
-                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
-                                                                    >
-                                                                        {telegramChatId ? (
-                                                                            <div className="flex items-center gap-2 truncate">
-                                                                                <span className="text-sm text-gray-900 truncate font-medium">{selectedTelegramChat?.title || telegramChatId}</span>
-                                                                            </div>
-                                                                        ) : (
-                                                                            <span className="text-sm text-gray-500">{isLoadingTelegramChats ? "Loading..." : "Select Telegram Chat..."}</span>
-                                                                        )}
-                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                    </button>
-
-                                                                    <AnimatePresence>
-                                                                        {isTelegramChatDropdownOpen && (
-                                                                            <motion.div
-                                                                                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
-                                                                                className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
-                                                                            >
-                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                    <div className="relative">
-                                                                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                                                                        <input
-                                                                                            type="text"
-                                                                                            value={telegramChatSearchQuery}
-                                                                                            onChange={(e) => setTelegramChatSearchQuery(e.target.value)}
-                                                                                            className="w-full pl-9 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
-                                                                                            placeholder="Search chats..."
-                                                                                            autoFocus
-                                                                                        />
-                                                                                    </div>
-                                                                                </div>
-                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                    {filteredTelegramChats.length > 0 ? (
-                                                                                        filteredTelegramChats.map(c => (
-                                                                                            <button
-                                                                                                key={c.id}
-                                                                                                type="button"
-                                                                                                onClick={() => {
-                                                                                                    setTelegramChatId(c.id);
-                                                                                                    setIsTelegramChatDropdownOpen(false);
-                                                                                                    if (!mirrorTitle.trim()) setMirrorTitle(c.title);
-                                                                                                }}
-                                                                                                className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
-                                                                                            >
-                                                                                                <div className="flex-1 min-w-0">
-                                                                                                    <div className="text-sm text-gray-700 truncate font-medium">{c.title}</div>
-                                                                                                    <div className="text-[10px] text-gray-400 font-mono">ID: {c.id}</div>
-                                                                                                </div>
-                                                                                                {telegramChatId === c.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
-                                                                                            </button>
-                                                                                        ))
-                                                                                    ) : (
-                                                                                        <div className="p-4 text-center text-xs text-gray-500">No chats found</div>
-                                                                                    )}
-                                                                                </div>
-                                                                            </motion.div>
-                                                                        )}
-                                                                    </AnimatePresence>
-                                                                </div>
-                                                            ) : (
-                                                                <input
-                                                                    type="text"
-                                                                    value={telegramChatId}
-                                                                    onChange={(e) => setTelegramChatId(e.target.value)}
-                                                                    placeholder="Source Chat ID (-100...)"
-                                                                    className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary font-mono"
-                                                                />
-                                                            )}
-                                                            <p className="text-xs text-gray-500">
-                                                                {telegramSession && (telegramChats.length > 0 || isLoadingTelegramChats)
-                                                                    ? "Select from your active channels/groups."
-                                                                    : "Enter the Channel ID or User ID you want to mirror from."}
-                                                            </p>
+                                                            {sourcePlatform === 'TELEGRAM' && destinationPlatform === 'DISCORD' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
                                                         </div>
 
-                                                        {telegramTopics.length > 0 && (
-                                                            <div className="space-y-1.5 relative">
-                                                                <div className="flex items-center justify-between pointer-events-none">
-                                                                    <label className="text-xs font-medium text-gray-500 uppercase flex items-center gap-2">
-                                                                        Topic / Forum Thread <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Optional</span>
-                                                                    </label>
-                                                                    {selectedTelegramSourceAccountId && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={handleRefreshTopics}
-                                                                            disabled={isLoadingTopics}
-                                                                            className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
-                                                                            title="Force refresh cached topics"
-                                                                        >
-                                                                            <RefreshCw className={cn("w-3 h-3", isLoadingTopics && "animate-spin")} />
-                                                                            Refresh
-                                                                        </button>
-                                                                    )}
+                                                        <div
+                                                            onClick={() => {
+                                                                if (!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
+                                                                setSourcePlatform('DISCORD');
+                                                                setDestinationPlatform('TELEGRAM');
+                                                            }}
+                                                            className={cn(
+                                                                "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                                sourcePlatform === 'DISCORD' && destinationPlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
+                                                                !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
+                                                            )}
+                                                        >
+                                                            <div className="flex items-center gap-3 mb-3">
+                                                                <div className="w-10 h-10 rounded-lg bg-[#5865F2] flex items-center justify-center text-white">
+                                                                    <DiscordLogo className="w-5 h-5" />
                                                                 </div>
-                                                                <div className="relative">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setIsTopicDropdownOpen(!isTopicDropdownOpen)}
-                                                                        disabled={isLoadingTopics}
-                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
-                                                                    >
-                                                                        {telegramTopicId ? (
-                                                                            <div className="flex items-center gap-2 truncate">
-                                                                                <span className="text-sm text-gray-900 truncate font-medium">
-                                                                                    {telegramTopics.find(t => t.id === telegramTopicId)?.title || telegramTopicId}
-                                                                                </span>
-                                                                            </div>
-                                                                        ) : (
-                                                                            <span className="text-sm text-gray-500">All Topics / General</span>
-                                                                        )}
-                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                    </button>
-                                                                    <AnimatePresence>
-                                                                        {isTopicDropdownOpen && (
-                                                                            <motion.div
-                                                                                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
-                                                                                className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
-                                                                            >
-                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        value={topicSearchQuery}
-                                                                                        onChange={(e) => setTopicSearchQuery(e.target.value)}
-                                                                                        className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
-                                                                                        placeholder="Search topics..."
-                                                                                        autoFocus
-                                                                                    />
-                                                                                </div>
-                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        onClick={() => { setTelegramTopicId(""); setIsTopicDropdownOpen(false); }}
-                                                                                        className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
-                                                                                    >
-                                                                                        <div className="w-1 h-4 bg-gray-300 rounded-full"></div>
-                                                                                        <span className="text-sm text-gray-700 font-medium">All Topics / General</span>
-                                                                                        {!telegramTopicId && <CheckCircle2 className="w-4 h-4 text-primary ml-auto" />}
-                                                                                    </button>
-                                                                                    {telegramTopics.filter(t => t.title.toLowerCase().includes(topicSearchQuery.toLowerCase())).map(t => (
-                                                                                        <button
-                                                                                            key={t.id}
-                                                                                            type="button"
-                                                                                            onClick={() => { setTelegramTopicId(t.id); setIsTopicDropdownOpen(false); }}
-                                                                                            className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
-                                                                                        >
-                                                                                            <div className="w-1 h-4 rounded-full" style={{ backgroundColor: t.color ? `#${t.color.toString(16)}` : '#ccc' }}></div>
-                                                                                            <span className="text-sm text-gray-700 truncate font-medium flex-1">{t.title}</span>
-                                                                                            <span className="text-[10px] text-gray-400 font-mono">ID: {t.id}</span>
-                                                                                            {telegramTopicId === t.id && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                                                                                        </button>
-                                                                                    ))}
-                                                                                </div>
-                                                                            </motion.div>
-                                                                        )}
-                                                                    </AnimatePresence>
+                                                                <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                                <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
+                                                                    <TelegramLogo className="w-5 h-5" />
                                                                 </div>
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                )}
-
-                                                {/* TARGET CONFIGURATION */}
-                                                <div className="pt-6 border-t border-gray-200">
-                                                    <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                                                        <ArrowRight className="w-4 h-4 text-gray-400" /> Destination
-                                                        {isTelegramDestination && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded border border-amber-200 uppercase tracking-wide">Elite</span>}
-                                                    </h3>
-
-                                                    {isTelegramDestination ? (
-                                                        <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-
-                                                            {/* Telegram Account Selection */}
-                                                            <div className="space-y-1.5">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Destination Account</label>
-                                                                {telegramAccounts && telegramAccounts.length > 0 ? (
-                                                                    <div className="grid grid-cols-1 gap-2">
-                                                                        {telegramAccounts.map((acc: any) => (
-                                                                            <div
-                                                                                key={acc.id}
-                                                                                onClick={() => handleSelectTelegramDestAccount(acc.id)}
-                                                                                className={cn(
-                                                                                    "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
-                                                                                    selectedTelegramDestAccountId === acc.id ? "bg-blue-50 border-blue-500 ring-1 ring-blue-500" : "bg-white border-gray-200 hover:border-gray-300"
-                                                                                )}
-                                                                            >
-                                                                                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                                                                                    <TelegramLogo className="w-4 h-4" />
-                                                                                </div>
-                                                                                <div className="flex-1">
-                                                                                    <div className="text-sm font-semibold text-gray-900">
-                                                                                        {selectedTelegramDestAccountId === acc.id && destinationUserProfile
-                                                                                            ? (destinationUserProfile.firstName || acc.firstName || acc.username || acc.phone) // Prefer fetch
-                                                                                            : (acc.firstName || acc.username || acc.phone)
-                                                                                        }
-                                                                                    </div>
-                                                                                    {selectedTelegramDestAccountId === acc.id && destinationUserProfile && (
-                                                                                        <div className="text-xs text-gray-500">
-                                                                                            ID: {destinationUserProfile.id} | @{destinationUserProfile.username}
-                                                                                        </div>
-                                                                                    )}
-                                                                                    {!acc.valid && <span className="text-xs text-red-500">Invalid Session</span>}
-                                                                                </div>
-                                                                                {selectedTelegramDestAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-blue-500" />}
-                                                                            </div>
-                                                                        ))}
+                                                            <div className="flex justify-between items-start">
+                                                                <div>
+                                                                    <h3 className="font-bold text-gray-900">Discord to Telegram</h3>
+                                                                    <p className="text-xs text-gray-500 mt-1">Mirror Discord messages to a Telegram chat.</p>
+                                                                </div>
+                                                                {!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') ? (
+                                                                    <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Elite to unlock">
+                                                                        <ShieldAlert className="w-4 h-4" />
                                                                     </div>
                                                                 ) : (
-                                                                    <div className="text-sm text-gray-500 italic p-2">No Telegram accounts found. Please add one in Settings.</div>
+                                                                    <div className="bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">ELITE</div>
                                                                 )}
                                                             </div>
-
-                                                            {/* Destination Chat ID */}
-                                                            <div className="space-y-1.5">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <label className="text-xs font-medium text-gray-500 uppercase">Target Chat ID</label>
-                                                                        {selectedTelegramDestAccountId && (
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={handleRefreshDestChats}
-                                                                                disabled={isLoadingDestChats}
-                                                                                className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
-                                                                                title="Force refresh cached chats"
-                                                                            >
-                                                                                <RefreshCw className={cn("w-3 h-3", isLoadingDestChats && "animate-spin")} />
-                                                                                Refresh
-                                                                            </button>
-                                                                        )}
-                                                                    </div>
-                                                                    <div className="group relative">
-                                                                        <Info className="w-3 h-3 text-gray-400 cursor-help" />
-                                                                        <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
-                                                                            Use @userinfobot or @getidsbot on Telegram to find the numeric ID of your channel or group (usually starts with -100).
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
-                                                                <div className="relative">
-                                                                    {selectedTelegramDestAccountId && (destinationTelegramChats.length > 0 || isLoadingDestChats) ? (
-                                                                        <div className="relative">
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => setIsDestChatDropdownOpen(!isDestChatDropdownOpen)}
-                                                                                disabled={isLoadingDestChats}
-                                                                                className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all disabled:opacity-50"
-                                                                            >
-                                                                                {targetTelegramChatId ? (
-                                                                                    <div className="flex items-center gap-2 truncate">
-                                                                                        <span className="text-sm text-gray-900 truncate font-medium">
-                                                                                            {destinationTelegramChats.find(c => c.id === targetTelegramChatId)?.title || targetTelegramChatId}
-                                                                                        </span>
-                                                                                    </div>
-                                                                                ) : (
-                                                                                    <span className="text-sm text-gray-500">{isLoadingDestChats ? "Loading..." : "Select Target Chat..."}</span>
-                                                                                )}
-                                                                                <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                            </button>
-
-                                                                            <AnimatePresence>
-                                                                                {isDestChatDropdownOpen && (
-                                                                                    <motion.div
-                                                                                        initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
-                                                                                        className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
-                                                                                    >
-                                                                                        <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                            <div className="relative">
-                                                                                                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                                                                                <input
-                                                                                                    type="text"
-                                                                                                    value={destChatSearchQuery}
-                                                                                                    onChange={(e) => setDestChatSearchQuery(e.target.value)}
-                                                                                                    className="w-full pl-9 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-blue-500"
-                                                                                                    placeholder="Search chats..."
-                                                                                                    autoFocus
-                                                                                                />
-                                                                                            </div>
-                                                                                        </div>
-                                                                                        <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                            {filteredDestTelegramChats.length > 0 ? (
-                                                                                                filteredDestTelegramChats.map(c => (
-                                                                                                    <button
-                                                                                                        key={c.id}
-                                                                                                        type="button"
-                                                                                                        onClick={() => {
-                                                                                                            setTargetTelegramChatId(c.id);
-                                                                                                            setIsDestChatDropdownOpen(false);
-                                                                                                        }}
-                                                                                                        className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
-                                                                                                    >
-                                                                                                        <div className="flex-1 min-w-0">
-                                                                                                            <div className="text-sm text-gray-700 truncate font-medium">{c.title}</div>
-                                                                                                            <div className="text-[10px] text-gray-400 font-mono">ID: {c.id}</div>
-                                                                                                        </div>
-                                                                                                        {targetTelegramChatId === c.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
-                                                                                                    </button>
-                                                                                                ))
-                                                                                            ) : (
-                                                                                                <div className="p-4 text-center text-xs text-gray-500">No chats found</div>
-                                                                                            )}
-                                                                                        </div>
-                                                                                    </motion.div>
-                                                                                )}
-                                                                            </AnimatePresence>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <input
-                                                                            type="text"
-                                                                            value={targetTelegramChatId}
-                                                                            onChange={(e) => setTargetTelegramChatId(e.target.value)}
-                                                                            placeholder="-100123456789"
-                                                                            className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
-                                                                        />
-                                                                    )}
-                                                                </div>
-                                                                <p className="text-xs text-gray-500">
-                                                                    The bot must be an admin in this channel/group to post messages.
-                                                                </p>
-                                                            </div>
+                                                            {sourcePlatform === 'DISCORD' && destinationPlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
                                                         </div>
-                                                    ) : (
-                                                        <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                                                            {/* Destination Account Context */}
-                                                            <div className="space-y-1.5">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Destination Account</label>
-                                                                {localAccounts.length > 0 ? (
-                                                                    <div className="grid grid-cols-1 gap-2">
-                                                                        {localAccounts.map((acc: any) => (
-                                                                            <div
-                                                                                key={acc.id}
-                                                                                onClick={() => setSelectedDestAccountId(acc.id)}
-                                                                                className={cn(
-                                                                                    "flex items-center gap-3 p-2.5 border rounded-lg cursor-pointer transition-all",
-                                                                                    selectedDestAccountId === acc.id ? "bg-white border-primary ring-1 ring-primary shadow-sm" : "bg-white/50 border-gray-200 hover:border-gray-300 hover:bg-white"
-                                                                                )}
-                                                                            >
-                                                                                {acc.avatar ? (
-                                                                                    <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={32} height={32} alt="" className="rounded-full bg-gray-200" unoptimized />
-                                                                                ) : (
-                                                                                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500">
-                                                                                        {acc.username[0]}
-                                                                                    </div>
-                                                                                )}
-                                                                                <div className="flex-1 min-w-0">
-                                                                                    <div className="text-sm font-semibold text-gray-900 truncate">{acc.username}</div>
-                                                                                    <div className="text-[10px] text-gray-500 truncate">ID: {acc.discordId}</div>
-                                                                                </div>
-                                                                                {selectedDestAccountId === acc.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
-                                                                            </div>
-                                                                        ))}
+
+                                                        <div
+                                                            onClick={() => {
+                                                                if (!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM')) return;
+                                                                setSourcePlatform('TELEGRAM');
+                                                                setDestinationPlatform('TELEGRAM');
+                                                            }}
+                                                            className={cn(
+                                                                "cursor-pointer relative p-5 rounded-xl border-2 transition-all hover:shadow-md",
+                                                                sourcePlatform === 'TELEGRAM' && destinationPlatform === 'TELEGRAM' ? "border-blue-500 bg-blue-50/50" : "border-gray-200 bg-white hover:border-blue-200",
+                                                                !PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') && "opacity-50 grayscale cursor-not-allowed hover:border-gray-200 hover:shadow-none bg-gray-50"
+                                                            )}
+                                                        >
+                                                            <div className="flex items-center gap-3 mb-3">
+                                                                <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
+                                                                    <TelegramLogo className="w-5 h-5" />
+                                                                </div>
+                                                                <ArrowRight className="w-4 h-4 text-gray-400" />
+                                                                <div className="w-10 h-10 rounded-lg bg-[#24A1DE] flex items-center justify-center text-white">
+                                                                    <TelegramLogo className="w-5 h-5" />
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex justify-between items-start">
+                                                                <div>
+                                                                    <h3 className="font-bold text-gray-900">Telegram to Telegram</h3>
+                                                                    <p className="text-xs text-gray-500 mt-1">Mirror messages between Telegram chats.</p>
+                                                                </div>
+                                                                {!PLAN_DESTINATION_PLATFORMS[userPlan]?.includes('TELEGRAM') ? (
+                                                                    <div className="bg-amber-100 text-amber-700 p-1.5 rounded-lg" title="Upgrade to Elite to unlock">
+                                                                        <ShieldAlert className="w-4 h-4" />
                                                                     </div>
                                                                 ) : (
-                                                                    <div className="text-center p-3 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 bg-white/50">
-                                                                        No Discord accounts linked.
-                                                                    </div>
+                                                                    <div className="bg-purple-100 text-purple-700 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">ELITE</div>
                                                                 )}
                                                             </div>
-                                                            {/* Target Guild Select */}
-                                                            <div className="space-y-1.5 relative">
-                                                                <label className="text-xs font-medium text-gray-500 uppercase">Target Server</label>
-                                                                <button type="button" onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary">
-                                                                    <span className="text-sm text-gray-900 font-medium">{targetGuild?.name || "Select Destination Server..."}</span>
-                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                </button>
-                                                                <AnimatePresence>
-                                                                    {isTargetGuildDropdownOpen && (
-                                                                        <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto p-1">
-                                                                            {filteredTargetGuilds.map(g => (
-                                                                                <button key={g.id} type="button" onClick={() => { setTargetGuild(g); setIsTargetGuildDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">{g.name}</button>
-                                                                            ))}
-                                                                        </motion.div>
-                                                                    )}
-                                                                </AnimatePresence>
-                                                            </div>
-
-                                                            {/* Target Channel & Webhook */}
-                                                            {targetGuild && (
-                                                                <div className="space-y-1.5 relative">
-                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Target Channel</label>
-                                                                    <button type="button" onClick={() => setIsTargetChannelDropdownOpen(!isTargetChannelDropdownOpen)} disabled={isLoadingTargetChannels} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary disabled:opacity-50">
-                                                                        <span className={cn("text-sm", targetChannelId ? "text-gray-900 font-medium" : "text-gray-500")}>
-                                                                            {targetChannelId ? `#${selectedTargetChannel?.name || targetChannelId}` : (isLoadingTargetChannels ? "Loading..." : "Select Channel...")}
-                                                                        </span>
-                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
-                                                                    </button>
-                                                                    <AnimatePresence>
-                                                                        {isTargetChannelDropdownOpen && (
-                                                                            <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden">
-                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
-                                                                                    <input
-                                                                                        type="text"
-                                                                                        value={targetChannelSearchQuery}
-                                                                                        onChange={(e) => setTargetChannelSearchQuery(e.target.value)}
-                                                                                        className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
-                                                                                        placeholder="Search channels..."
-                                                                                        autoFocus
-                                                                                    />
-                                                                                </div>
-                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                    {filteredTargetChannels.length > 0 ? filteredTargetChannels.map(c => (
-                                                                                        <button key={c.id} type="button" onClick={() => { setTargetChannelId(c.id); setIsTargetChannelDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">#{c.name}</button>
-                                                                                    )) : (
-                                                                                        <div className="p-2 text-xs text-gray-400 text-center">No channels found</div>
-                                                                                    )}
-                                                                                </div>
-                                                                            </motion.div>
-                                                                        )}
-                                                                    </AnimatePresence>
-
-                                                                </div>
-                                                            )}
-
-                                                            {/* Webhooks */}
-                                                            {targetChannelId && (
-                                                                <div className="space-y-2 pt-2">
-                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Webhook Configuration</label>
-                                                                    {isLoadingWebhooks ? (
-                                                                        <div className="text-xs text-gray-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /> Loading webhooks...</div>
-                                                                    ) : webhookError ? (
-                                                                        <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2 border border-red-100">
-                                                                            <AlertTriangle className="w-4 h-4 shrink-0" />
-                                                                            {webhookError}
-                                                                        </div>
-                                                                    ) : webhooks.length > 0 ? (
-                                                                        <div className="grid gap-2">
-                                                                            {webhooks.map((wh: any) => (
-                                                                                <button key={wh.id} type="button" onClick={() => handleSelectWebhook(wh)} className={cn("w-full flex items-center gap-2 px-3 py-2 border rounded-lg transition-all", wh.url === webhookUrl ? "bg-blue-50 border-primary shadow-sm" : "bg-white border-gray-200 hover:bg-gray-50")}>
-                                                                                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                                                                    <span className="text-sm font-medium text-gray-700 flex-1 text-left truncate">{wh.name}</span>
-                                                                                    {wh.url === webhookUrl && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                                                                                </button>
-                                                                            ))}
-                                                                        </div>
-                                                                    ) : (
-                                                                        <div className="text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
-                                                                            <p className="text-xs text-gray-500 mb-2">No webhooks found.</p>
-                                                                            <button type="button" onClick={handleCreateWebhook} disabled={isCreatingWebhook} className="text-xs font-bold text-primary hover:underline disabled:opacity-50">Create New One</button>
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                            )}
+                                                            {sourcePlatform === 'TELEGRAM' && destinationPlatform === 'TELEGRAM' && <CheckCircle2 className="absolute top-4 right-4 w-5 h-5 text-blue-500" />}
                                                         </div>
-                                                    )}
-                                                </div>
-
-                                                {/* BLUR ZONES (ELITE ONLY) */}
-                                                <div className="pt-6 border-t border-gray-200">
-                                                    <div className="flex items-center justify-between mb-4">
-                                                        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                                                            <ScanEye className="w-4 h-4 text-gray-400" />
-                                                            Visual Blur Selector
-                                                            <span className="text-[10px] bg-black text-[#00FFFF] px-1.5 py-0.5 font-bold uppercase tracking-wider">Elite</span>
-                                                        </h3>
                                                     </div>
-
-                                                    {userPlan === 'ELITE' ? (
-                                                        <BlurAreaSelector
-                                                            value={blurRegions}
-                                                            onChange={setBlurRegions}
-                                                            maxRegions={3}
-                                                        />
-                                                    ) : (
-                                                        <div className="bg-gray-50 border border-gray-200 p-6 flex flex-col items-center justify-center text-center gap-3 relative overflow-hidden group">
-                                                            <div className="absolute inset-0 bg-gray-100/50 backdrop-blur-[1px] z-0" />
-                                                            <div className="z-10 flex flex-col items-center gap-3">
-                                                                <div className="w-12 h-12 bg-gray-900 text-[#00FFFF] rounded-none flex items-center justify-center mb-1 shadow-sm">
-                                                                    <Lock className="w-5 h-5" />
-                                                                </div>
-                                                                <h4 className="font-bold text-gray-900">Elite Feature Locked</h4>
-                                                                <p className="text-sm text-gray-500 max-w-xs mx-auto">
-                                                                    Smart privacy blur and region masking is exclusive to the Elite plan.
-                                                                </p>
-                                                                {/* Mock Upgrade Button - In real app would link to billing */}
-                                                                <Link
-                                                                    href="/dashboard/settings"
-                                                                    className="text-xs font-bold text-gray-900 border border-gray-300 bg-white px-4 py-2 mt-1 hover:bg-gray-50 transition-colors shadow-sm block text-center"
-                                                                >
-                                                                    Upgrade to Elite
-                                                                </Link>
-                                                            </div>
-                                                        </div>
-                                                    )}
                                                 </div>
 
-                                                {/* BRANDING CONFIGURATION */}
-                                                <div className="pt-6 border-t border-gray-200">
-                                                    <BrandingCustomizer
-                                                        userPlan={userPlan}
-                                                        config={{
-                                                            watermarkType,
-                                                            customWatermark,
-                                                            watermarkImageUrl,
-                                                            watermarkPosition,
-                                                            watermarkOpacity,
-                                                            brandColor
-                                                        }}
-                                                        onChange={(updates) => {
-                                                            if (updates.watermarkType !== undefined) setWatermarkType(updates.watermarkType);
-                                                            if (updates.customWatermark !== undefined) setCustomWatermark(updates.customWatermark);
-                                                            if (updates.watermarkImageUrl !== undefined) setWatermarkImageUrl(updates.watermarkImageUrl);
-                                                            if (updates.watermarkPosition !== undefined) setWatermarkPosition(updates.watermarkPosition);
-                                                            if (updates.watermarkOpacity !== undefined) setWatermarkOpacity(updates.watermarkOpacity);
-                                                            if (updates.brandColor !== undefined) setBrandColor(updates.brandColor);
-                                                        }}
+                                                <div className="space-y-2">
+                                                    <label className="text-sm font-semibold text-gray-900">Mirror Title</label>
+                                                    <input
+                                                        type="text"
+                                                        value={mirrorTitle}
+                                                        onChange={(e) => setMirrorTitle(e.target.value)}
+                                                        placeholder="e.g. VIP Crypto Signals"
+                                                        className={cn(
+                                                            "w-full px-4 py-3 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-medium",
+                                                            error && !mirrorTitle.trim() ? "border-red-300 ring-red-100" : ""
+                                                        )}
                                                     />
+                                                    <p className="text-xs text-gray-500 mt-1">Give this mirror a recognizable name for your dashboard.</p>
                                                 </div>
-
 
                                                 {error && (
                                                     <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
@@ -2056,56 +1233,908 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                         {error}
                                                     </div>
                                                 )}
+                                            </motion.div>
+                                        ) : (
+                                            <motion.div
+                                                key="step2"
+                                                initial={{ opacity: 0, x: 10 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                exit={{ opacity: 0, x: 10 }}
+                                                className="space-y-6"
+                                            >
+                                                <form onSubmit={handleSubmit} className="space-y-6">
 
-                                            </form>
-                                        </motion.div>
+                                                    {/* Account Selection - Only for Discord source (used as Source context) */}
+                                                    {sourcePlatform === 'DISCORD' && (
+                                                        <div className="space-y-3">
+                                                            <label className="text-sm font-medium text-gray-700">
+                                                                Account Context
+                                                            </label>
+
+                                                            {localAccounts.length > 0 ? (
+                                                                <div className="grid grid-cols-1 gap-2">
+                                                                    {localAccounts.map((acc: any) => (
+                                                                        <div
+                                                                            key={acc.id}
+                                                                            onClick={() => setSelectedAccountId(acc.id)}
+                                                                            className={cn(
+                                                                                "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
+                                                                                selectedAccountId === acc.id ? "bg-blue-50 border-primary ring-1 ring-primary" : "bg-white border-gray-200 hover:border-gray-300"
+                                                                            )}
+                                                                        >
+                                                                            {acc.avatar ? (
+                                                                                <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={36} height={36} alt="" className="rounded-full bg-gray-200" unoptimized />
+                                                                            ) : (
+                                                                                <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">
+                                                                                    {acc.username[0]}
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="flex-1">
+                                                                                <div className="text-sm font-semibold text-gray-900">{acc.username}</div>
+                                                                                <div className="text-xs text-gray-500">ID: {acc.discordId}</div>
+                                                                            </div>
+                                                                            {selectedAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            ) : (
+                                                                <div className="text-center p-4 border border-dashed border-gray-300 rounded-lg text-sm text-gray-500">
+                                                                    No accounts linked. Please add one.
+                                                                </div>
+                                                            )}
+
+                                                            {/* Add Account Button */}
+                                                            {!isAddingAccount ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setIsAddingAccount(true)}
+                                                                    className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-400 transition-all flex items-center justify-center gap-2"
+                                                                >
+                                                                    <UserPlus className="w-4 h-4" /> Link Another Account
+                                                                </button>
+                                                            ) : (
+                                                                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 space-y-3">
+                                                                    <div className="flex justify-between items-center">
+                                                                        <span className="text-sm font-medium text-gray-900">Link New Account</span>
+                                                                        <button onClick={() => setIsAddingAccount(false)}><X className="w-4 h-4 text-gray-400" /></button>
+                                                                    </div>
+                                                                    <input
+                                                                        type="password"
+                                                                        value={newAccountToken}
+                                                                        onChange={(e) => setNewAccountToken(e.target.value)}
+                                                                        placeholder="Paste User Token Here"
+                                                                        className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={handleAddNewAccount}
+                                                                        disabled={isAddingAccountLoading || !newAccountToken}
+                                                                        className="w-full py-2 bg-primary text-white text-sm font-medium rounded-md hover:bg-primary/90 transition-colors flex justify-center gap-2"
+                                                                    >
+                                                                        {isAddingAccountLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                                                                        Verify & Link
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* DISCORD CONFIG */}
+                                                    {sourcePlatform === 'DISCORD' && (
+                                                        <div className="space-y-6">
+
+                                                            {/* Guild & Channel Selection */}
+                                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                {/* Guild Select */}
+                                                                <div className="space-y-1.5 relative">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Source Server</label>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setIsGuildDropdownOpen(!isGuildDropdownOpen)}
+                                                                        disabled={!selectedAccountId}
+                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50 disabled:bg-gray-50"
+                                                                    >
+                                                                        {selectedGuild ? (
+                                                                            <div className="flex items-center gap-2 truncate">
+                                                                                {selectedGuild.icon ? (
+                                                                                    <Image src={selectedGuild.icon} width={20} height={20} alt="" className="rounded-full" unoptimized />
+                                                                                ) : (
+                                                                                    <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">{selectedGuild.name.substring(0, 2)}</div>
+                                                                                )}
+                                                                                <span className="text-sm text-gray-900 truncate font-medium">{selectedGuild.name}</span>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span className="text-sm text-gray-500">Select Server...</span>
+                                                                        )}
+                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                    </button>
+
+                                                                    {/* Guild Dropdown */}
+                                                                    <AnimatePresence>
+                                                                        {isGuildDropdownOpen && (
+                                                                            <motion.div
+                                                                                initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                            >
+                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                    <Search className="absolute left-4 top-4 w-4 h-4 text-gray-400" />
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        value={searchQuery}
+                                                                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                                                                        className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                        placeholder="Search servers..."
+                                                                                        autoFocus
+                                                                                    />
+                                                                                </div>
+                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                    {isLoadingGuilds ? (
+                                                                                        <div className="p-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
+                                                                                    ) : filteredGuilds.length > 0 ? (
+                                                                                        filteredGuilds.map(g => (
+                                                                                            <button
+                                                                                                key={g.id}
+                                                                                                type="button"
+                                                                                                onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
+                                                                                                className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                            >
+                                                                                                {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{g.name.substring(0, 2)}</div>}
+                                                                                                <span className="text-sm text-gray-700 truncate">{g.name}</span>
+                                                                                            </button>
+                                                                                        ))
+                                                                                    ) : (
+                                                                                        <div className="p-3 text-center text-xs text-gray-500">No servers found</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </motion.div>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </div>
+
+                                                                {/* Channel ID */}
+                                                                <div className="space-y-1.5">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Channel ID</label>
+                                                                    <div className="relative">
+                                                                        {selectedGuild ? (
+                                                                            <div className="relative">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => setIsChannelDropdownOpen(!isChannelDropdownOpen)}
+                                                                                    disabled={channels.length === 0}
+                                                                                    className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                                >
+                                                                                    {channelId ? (
+                                                                                        <div className="flex items-center gap-1 overflow-hidden">
+                                                                                            <span className="text-gray-400">#</span>
+                                                                                            <span className="text-sm text-gray-900 truncate font-medium">{selectedChannel?.name || channelId}</span>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <span className="text-sm text-gray-500">{isLoadingChannels ? "Loading..." : "Select Channel..."}</span>
+                                                                                    )}
+                                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                                </button>
+                                                                                <AnimatePresence>
+                                                                                    {isChannelDropdownOpen && (
+                                                                                        <motion.div
+                                                                                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                            className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                                        >
+                                                                                            <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                                <input type="text" value={channelSearchQuery} onChange={(e) => setChannelSearchQuery(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary" placeholder="Search..." autoFocus />
+                                                                                            </div>
+                                                                                            <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                                {filteredChannels.map(c => (
+                                                                                                    <button key={c.id} type="button" onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md text-left text-sm text-gray-700">
+                                                                                                        <span className="text-gray-400">#</span>
+                                                                                                        <span className="truncate flex-1">{c.name}</span>
+                                                                                                        <span className="text-xs text-gray-400 font-mono">{c.id.substring(0, 4)}...</span>
+                                                                                                    </button>
+                                                                                                ))}
+                                                                                            </div>
+                                                                                        </motion.div>
+                                                                                    )}
+                                                                                </AnimatePresence>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <input
+                                                                                type="text"
+                                                                                value={channelId}
+                                                                                onChange={(e) => setChannelId(e.target.value)}
+                                                                                className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-mono placeholder:text-gray-400"
+                                                                                placeholder="Channel ID..."
+                                                                            />
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* TELEGRAM CONFIG */}
+                                                    {sourcePlatform === 'TELEGRAM' && (
+                                                        <div className="space-y-6">
+                                                            {/* Telegram Auth UI */}
+                                                            <div className="space-y-4">
+                                                                {/* Saved Accounts Selection */}
+                                                                {telegramAccounts && telegramAccounts.length > 0 && !telegramSession && (
+                                                                    <div className="space-y-1.5">
+                                                                        <label className="text-xs font-medium text-gray-500 uppercase">Select Source Account</label>
+                                                                        <div className="grid grid-cols-1 gap-2">
+                                                                            {telegramAccounts.map((acc: any) => (
+                                                                                <button
+                                                                                    key={acc.id}
+                                                                                    type="button"
+                                                                                    onClick={() => {
+                                                                                        setSelectedTelegramSourceAccountId(acc.id);
+                                                                                        setTelegramSession(""); // Reset session string if using account ID
+                                                                                    }}
+                                                                                    className={cn(
+                                                                                        "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all text-left w-full",
+                                                                                        selectedTelegramSourceAccountId === acc.id ? "bg-blue-50 border-blue-500 ring-1 ring-blue-500" : "bg-white border-gray-200 hover:border-gray-300"
+                                                                                    )}
+                                                                                >
+                                                                                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shrink-0">
+                                                                                        <TelegramLogo className="w-4 h-4" />
+                                                                                    </div>
+                                                                                    <div className="flex-1 overflow-hidden">
+                                                                                        <div className="text-sm font-semibold text-gray-900 truncate">
+                                                                                            {selectedTelegramSourceAccountId === acc.id && sourceUserProfile ?
+                                                                                                (sourceUserProfile.firstName || acc.firstName || acc.username || acc.phone) :
+                                                                                                (acc.firstName || acc.username || acc.phone)
+                                                                                            }
+                                                                                        </div>
+                                                                                        {selectedTelegramSourceAccountId === acc.id && sourceUserProfile && (
+                                                                                            <div className="text-xs text-gray-500 truncate">
+                                                                                                ID: {sourceUserProfile.id} | @{sourceUserProfile.username}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {!acc.valid && <span className="text-xs text-red-500">Invalid Session</span>}
+                                                                                    </div>
+                                                                                    {selectedTelegramSourceAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-blue-500 shrink-0" />}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                        <div className="text-right">
+                                                                            <button type="button" onClick={() => { setSelectedTelegramSourceAccountId(""); setTelegramSession(""); }} className="text-xs text-primary hover:underline">
+                                                                                + Add / Use New Account
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Manual Auth / New Account */}
+                                                                {(!selectedTelegramSourceAccountId || telegramSession) && (
+                                                                    <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4">
+                                                                        <div className="flex items-center justify-between">
+                                                                            <h3 className="text-sm font-semibold text-gray-900">Telegram Authentication</h3>
+                                                                            <TelegramLogo className="w-6 h-6 text-[#24A1DE]" />
+                                                                        </div>
+                                                                        {!telegramSession ? (
+                                                                            <div className="space-y-3">
+                                                                                {authStep === 'PHONE' && (
+                                                                                    <div className="flex gap-2">
+                                                                                        <input type="text" value={telegramPhone} onChange={(e) => setTelegramPhone(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary" placeholder="Phone Number (+62...)" />
+                                                                                        <button type="button" onClick={handleSendCode} disabled={isAuthLoading} className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">Send Code</button>
+                                                                                    </div>
+                                                                                )}
+                                                                                {(authStep === 'CODE' || authStep === 'PASSWORD') && (
+                                                                                    <div className="space-y-3">
+                                                                                        <input type="text" value={telegramCode} onChange={(e) => setTelegramCode(e.target.value)} placeholder="SMS Code" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
+                                                                                        {authStep === 'PASSWORD' && (
+                                                                                            <input type="password" value={telegramPassword} onChange={(e) => setTelegramPassword(e.target.value)} placeholder="2FA Password" className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm" />
+                                                                                        )}
+                                                                                        <div className="flex gap-2">
+                                                                                            <button type="button" onClick={() => setAuthStep('PHONE')} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">Back</button>
+                                                                                            <button type="button" onClick={handleLogin} disabled={isAuthLoading} className="flex-1 px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary/90">Verify</button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+                                                                                {telegramAccounts.length > 0 && (
+                                                                                    <div className="text-center pt-2">
+                                                                                        <button type="button" onClick={() => setSelectedTelegramSourceAccountId(telegramAccounts[0].id)} className="text-xs text-gray-500 hover:text-gray-900">Cancel & Use Saved Accounts</button>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="flex items-center justify-between bg-green-50 p-3 rounded-lg border border-green-100">
+                                                                                <div className="flex items-center gap-2 text-green-700 text-sm font-medium"><Signal className="w-4 h-4" /> Session Active</div>
+                                                                                <button type="button" onClick={() => { setTelegramSession(""); setAuthStep('PHONE'); localStorage.removeItem("draft_telegram_session"); }} className="text-xs text-red-600 hover:underline">Disconnect</button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            <div className="space-y-1.5 relative">
+                                                                <div className="flex items-center justify-between pointer-events-none">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Chat Context</label>
+                                                                    {selectedTelegramSourceAccountId && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={handleRefreshSourceChats}
+                                                                            disabled={isLoadingTelegramChats}
+                                                                            className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                            title="Force refresh cached chats"
+                                                                        >
+                                                                            <RefreshCw className={cn("w-3 h-3", isLoadingTelegramChats && "animate-spin")} />
+                                                                            Refresh
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                {(telegramSession || selectedTelegramSourceAccountId) && (telegramChats.length > 0 || isLoadingTelegramChats) ? (
+                                                                    <div className="relative">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setIsTelegramChatDropdownOpen(!isTelegramChatDropdownOpen)}
+                                                                            disabled={isLoadingTelegramChats}
+                                                                            className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                        >
+                                                                            {telegramChatId ? (
+                                                                                <div className="flex items-center gap-2 truncate">
+                                                                                    <span className="text-sm text-gray-900 truncate font-medium">{selectedTelegramChat?.title || telegramChatId}</span>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <span className="text-sm text-gray-500">{isLoadingTelegramChats ? "Loading..." : "Select Telegram Chat..."}</span>
+                                                                            )}
+                                                                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                        </button>
+
+                                                                        <AnimatePresence>
+                                                                            {isTelegramChatDropdownOpen && (
+                                                                                <motion.div
+                                                                                    initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                    className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                                >
+                                                                                    <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                        <div className="relative">
+                                                                                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                                                                            <input
+                                                                                                type="text"
+                                                                                                value={telegramChatSearchQuery}
+                                                                                                onChange={(e) => setTelegramChatSearchQuery(e.target.value)}
+                                                                                                className="w-full pl-9 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                                placeholder="Search chats..."
+                                                                                                autoFocus
+                                                                                            />
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                        {filteredTelegramChats.length > 0 ? (
+                                                                                            filteredTelegramChats.map(c => (
+                                                                                                <button
+                                                                                                    key={c.id}
+                                                                                                    type="button"
+                                                                                                    onClick={() => {
+                                                                                                        setTelegramChatId(c.id);
+                                                                                                        setIsTelegramChatDropdownOpen(false);
+                                                                                                        if (!mirrorTitle.trim()) setMirrorTitle(c.title);
+                                                                                                    }}
+                                                                                                    className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                                >
+                                                                                                    <div className="flex-1 min-w-0">
+                                                                                                        <div className="text-sm text-gray-700 truncate font-medium">{c.title}</div>
+                                                                                                        <div className="text-[10px] text-gray-400 font-mono">ID: {c.id}</div>
+                                                                                                    </div>
+                                                                                                    {telegramChatId === c.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                                                                                                </button>
+                                                                                            ))
+                                                                                        ) : (
+                                                                                            <div className="p-4 text-center text-xs text-gray-500">No chats found</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </motion.div>
+                                                                            )}
+                                                                        </AnimatePresence>
+                                                                    </div>
+                                                                ) : (
+                                                                    <input
+                                                                        type="text"
+                                                                        value={telegramChatId}
+                                                                        onChange={(e) => setTelegramChatId(e.target.value)}
+                                                                        placeholder="Source Chat ID (-100...)"
+                                                                        className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:border-primary font-mono"
+                                                                    />
+                                                                )}
+                                                                <p className="text-xs text-gray-500">
+                                                                    {telegramSession && (telegramChats.length > 0 || isLoadingTelegramChats)
+                                                                        ? "Select from your active channels/groups."
+                                                                        : "Enter the Channel ID or User ID you want to mirror from."}
+                                                                </p>
+                                                            </div>
+
+                                                            {telegramTopics.length > 0 && (
+                                                                <div className="space-y-1.5 relative">
+                                                                    <div className="flex items-center justify-between pointer-events-none">
+                                                                        <label className="text-xs font-medium text-gray-500 uppercase flex items-center gap-2">
+                                                                            Topic / Forum Thread <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">Optional</span>
+                                                                        </label>
+                                                                        {selectedTelegramSourceAccountId && (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={handleRefreshTopics}
+                                                                                disabled={isLoadingTopics}
+                                                                                className="pointer-events-auto flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                                title="Force refresh cached topics"
+                                                                            >
+                                                                                <RefreshCw className={cn("w-3 h-3", isLoadingTopics && "animate-spin")} />
+                                                                                Refresh
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="relative">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setIsTopicDropdownOpen(!isTopicDropdownOpen)}
+                                                                            disabled={isLoadingTopics}
+                                                                            className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                        >
+                                                                            {telegramTopicId ? (
+                                                                                <div className="flex items-center gap-2 truncate">
+                                                                                    <span className="text-sm text-gray-900 truncate font-medium">
+                                                                                        {telegramTopics.find(t => t.id === telegramTopicId)?.title || telegramTopicId}
+                                                                                    </span>
+                                                                                </div>
+                                                                            ) : (
+                                                                                <span className="text-sm text-gray-500">All Topics / General</span>
+                                                                            )}
+                                                                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                        </button>
+                                                                        <AnimatePresence>
+                                                                            {isTopicDropdownOpen && (
+                                                                                <motion.div
+                                                                                    initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                    className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                                >
+                                                                                    <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                        <input
+                                                                                            type="text"
+                                                                                            value={topicSearchQuery}
+                                                                                            onChange={(e) => setTopicSearchQuery(e.target.value)}
+                                                                                            className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                            placeholder="Search topics..."
+                                                                                            autoFocus
+                                                                                        />
+                                                                                    </div>
+                                                                                    <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => { setTelegramTopicId(""); setIsTopicDropdownOpen(false); }}
+                                                                                            className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                        >
+                                                                                            <div className="w-1 h-4 bg-gray-300 rounded-full"></div>
+                                                                                            <span className="text-sm text-gray-700 font-medium">All Topics / General</span>
+                                                                                            {!telegramTopicId && <CheckCircle2 className="w-4 h-4 text-primary ml-auto" />}
+                                                                                        </button>
+                                                                                        {telegramTopics.filter(t => t.title.toLowerCase().includes(topicSearchQuery.toLowerCase())).map(t => (
+                                                                                            <button
+                                                                                                key={t.id}
+                                                                                                type="button"
+                                                                                                onClick={() => { setTelegramTopicId(t.id); setIsTopicDropdownOpen(false); }}
+                                                                                                className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                            >
+                                                                                                <div className="w-1 h-4 rounded-full" style={{ backgroundColor: t.color ? `#${t.color.toString(16)}` : '#ccc' }}></div>
+                                                                                                <span className="text-sm text-gray-700 truncate font-medium flex-1">{t.title}</span>
+                                                                                                <span className="text-[10px] text-gray-400 font-mono">ID: {t.id}</span>
+                                                                                                {telegramTopicId === t.id && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                                                                                            </button>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </motion.div>
+                                                                            )}
+                                                                        </AnimatePresence>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+
+                                                    {/* TARGET CONFIGURATION */}
+                                                    <div className="pt-6 border-t border-gray-200">
+                                                        <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                                                            <ArrowRight className="w-4 h-4 text-gray-400" /> Destination
+                                                            {isTelegramDestination && <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded border border-amber-200 uppercase tracking-wide">Elite</span>}
+                                                        </h3>
+
+                                                        {isTelegramDestination ? (
+                                                            <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+
+                                                                {/* Telegram Account Selection */}
+                                                                <div className="space-y-1.5">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Destination Account</label>
+                                                                    {telegramAccounts && telegramAccounts.length > 0 ? (
+                                                                        <div className="grid grid-cols-1 gap-2">
+                                                                            {telegramAccounts.map((acc: any) => (
+                                                                                <div
+                                                                                    key={acc.id}
+                                                                                    onClick={() => handleSelectTelegramDestAccount(acc.id)}
+                                                                                    className={cn(
+                                                                                        "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
+                                                                                        selectedTelegramDestAccountId === acc.id ? "bg-blue-50 border-blue-500 ring-1 ring-blue-500" : "bg-white border-gray-200 hover:border-gray-300"
+                                                                                    )}
+                                                                                >
+                                                                                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                                                                                        <TelegramLogo className="w-4 h-4" />
+                                                                                    </div>
+                                                                                    <div className="flex-1">
+                                                                                        <div className="text-sm font-semibold text-gray-900">
+                                                                                            {selectedTelegramDestAccountId === acc.id && destinationUserProfile
+                                                                                                ? (destinationUserProfile.firstName || acc.firstName || acc.username || acc.phone) // Prefer fetch
+                                                                                                : (acc.firstName || acc.username || acc.phone)
+                                                                                            }
+                                                                                        </div>
+                                                                                        {selectedTelegramDestAccountId === acc.id && destinationUserProfile && (
+                                                                                            <div className="text-xs text-gray-500">
+                                                                                                ID: {destinationUserProfile.id} | @{destinationUserProfile.username}
+                                                                                            </div>
+                                                                                        )}
+                                                                                        {!acc.valid && <span className="text-xs text-red-500">Invalid Session</span>}
+                                                                                    </div>
+                                                                                    {selectedTelegramDestAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-blue-500" />}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="text-sm text-gray-500 italic p-2">No Telegram accounts found. Please add one in Settings.</div>
+                                                                    )}
+                                                                </div>
+
+                                                                {/* Destination Chat ID */}
+                                                                <div className="space-y-1.5">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <label className="text-xs font-medium text-gray-500 uppercase">Target Chat ID</label>
+                                                                            {selectedTelegramDestAccountId && (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={handleRefreshDestChats}
+                                                                                    disabled={isLoadingDestChats}
+                                                                                    className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full transition-colors"
+                                                                                    title="Force refresh cached chats"
+                                                                                >
+                                                                                    <RefreshCw className={cn("w-3 h-3", isLoadingDestChats && "animate-spin")} />
+                                                                                    Refresh
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="group relative">
+                                                                            <Info className="w-3 h-3 text-gray-400 cursor-help" />
+                                                                            <div className="absolute right-0 bottom-full mb-2 w-64 p-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+                                                                                Use @userinfobot or @getidsbot on Telegram to find the numeric ID of your channel or group (usually starts with -100).
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="relative">
+                                                                        {selectedTelegramDestAccountId && (destinationTelegramChats.length > 0 || isLoadingDestChats) ? (
+                                                                            <div className="relative">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => setIsDestChatDropdownOpen(!isDestChatDropdownOpen)}
+                                                                                    disabled={isLoadingDestChats}
+                                                                                    className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-all disabled:opacity-50"
+                                                                                >
+                                                                                    {targetTelegramChatId ? (
+                                                                                        <div className="flex items-center gap-2 truncate">
+                                                                                            <span className="text-sm text-gray-900 truncate font-medium">
+                                                                                                {destinationTelegramChats.find(c => c.id === targetTelegramChatId)?.title || targetTelegramChatId}
+                                                                                            </span>
+                                                                                        </div>
+                                                                                    ) : (
+                                                                                        <span className="text-sm text-gray-500">{isLoadingDestChats ? "Loading..." : "Select Target Chat..."}</span>
+                                                                                    )}
+                                                                                    <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                                </button>
+
+                                                                                <AnimatePresence>
+                                                                                    {isDestChatDropdownOpen && (
+                                                                                        <motion.div
+                                                                                            initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }}
+                                                                                            className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden"
+                                                                                        >
+                                                                                            <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                                <div className="relative">
+                                                                                                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                                                                                    <input
+                                                                                                        type="text"
+                                                                                                        value={destChatSearchQuery}
+                                                                                                        onChange={(e) => setDestChatSearchQuery(e.target.value)}
+                                                                                                        className="w-full pl-9 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-blue-500"
+                                                                                                        placeholder="Search chats..."
+                                                                                                        autoFocus
+                                                                                                    />
+                                                                                                </div>
+                                                                                            </div>
+                                                                                            <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                                {filteredDestTelegramChats.length > 0 ? (
+                                                                                                    filteredDestTelegramChats.map(c => (
+                                                                                                        <button
+                                                                                                            key={c.id}
+                                                                                                            type="button"
+                                                                                                            onClick={() => {
+                                                                                                                setTargetTelegramChatId(c.id);
+                                                                                                                setIsDestChatDropdownOpen(false);
+                                                                                                            }}
+                                                                                                            className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                                        >
+                                                                                                            <div className="flex-1 min-w-0">
+                                                                                                                <div className="text-sm text-gray-700 truncate font-medium">{c.title}</div>
+                                                                                                                <div className="text-[10px] text-gray-400 font-mono">ID: {c.id}</div>
+                                                                                                            </div>
+                                                                                                            {targetTelegramChatId === c.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                                                                                                        </button>
+                                                                                                    ))
+                                                                                                ) : (
+                                                                                                    <div className="p-4 text-center text-xs text-gray-500">No chats found</div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </motion.div>
+                                                                                    )}
+                                                                                </AnimatePresence>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <input
+                                                                                type="text"
+                                                                                value={targetTelegramChatId}
+                                                                                onChange={(e) => setTargetTelegramChatId(e.target.value)}
+                                                                                placeholder="-100123456789"
+                                                                                className="w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
+                                                                            />
+                                                                        )}
+                                                                    </div>
+                                                                    <p className="text-xs text-gray-500">
+                                                                        The bot must be an admin in this channel/group to post messages.
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                                                {/* Destination Account Context */}
+                                                                <div className="space-y-1.5">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Destination Account</label>
+                                                                    {localAccounts.length > 0 ? (
+                                                                        <div className="grid grid-cols-1 gap-2">
+                                                                            {localAccounts.map((acc: any) => (
+                                                                                <div
+                                                                                    key={acc.id}
+                                                                                    onClick={() => setSelectedDestAccountId(acc.id)}
+                                                                                    className={cn(
+                                                                                        "flex items-center gap-3 p-2.5 border rounded-lg cursor-pointer transition-all",
+                                                                                        selectedDestAccountId === acc.id ? "bg-white border-primary ring-1 ring-primary shadow-sm" : "bg-white/50 border-gray-200 hover:border-gray-300 hover:bg-white"
+                                                                                    )}
+                                                                                >
+                                                                                    {acc.avatar ? (
+                                                                                        <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={32} height={32} alt="" className="rounded-full bg-gray-200" unoptimized />
+                                                                                    ) : (
+                                                                                        <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500">
+                                                                                            {acc.username[0]}
+                                                                                        </div>
+                                                                                    )}
+                                                                                    <div className="flex-1 min-w-0">
+                                                                                        <div className="text-sm font-semibold text-gray-900 truncate">{acc.username}</div>
+                                                                                        <div className="text-[10px] text-gray-500 truncate">ID: {acc.discordId}</div>
+                                                                                    </div>
+                                                                                    {selectedDestAccountId === acc.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="text-center p-3 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 bg-white/50">
+                                                                            No Discord accounts linked.
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                {/* Target Guild Select */}
+                                                                <div className="space-y-1.5 relative">
+                                                                    <label className="text-xs font-medium text-gray-500 uppercase">Target Server</label>
+                                                                    <button type="button" onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary">
+                                                                        <span className="text-sm text-gray-900 font-medium">{targetGuild?.name || "Select Destination Server..."}</span>
+                                                                        <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                    </button>
+                                                                    <AnimatePresence>
+                                                                        {isTargetGuildDropdownOpen && (
+                                                                            <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto p-1">
+                                                                                {filteredTargetGuilds.map(g => (
+                                                                                    <button key={g.id} type="button" onClick={() => { setTargetGuild(g); setIsTargetGuildDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">{g.name}</button>
+                                                                                ))}
+                                                                            </motion.div>
+                                                                        )}
+                                                                    </AnimatePresence>
+                                                                </div>
+
+                                                                {/* Target Channel & Webhook */}
+                                                                {targetGuild && (
+                                                                    <div className="space-y-1.5 relative">
+                                                                        <label className="text-xs font-medium text-gray-500 uppercase">Target Channel</label>
+                                                                        <button type="button" onClick={() => setIsTargetChannelDropdownOpen(!isTargetChannelDropdownOpen)} disabled={isLoadingTargetChannels} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary disabled:opacity-50">
+                                                                            <span className={cn("text-sm", targetChannelId ? "text-gray-900 font-medium" : "text-gray-500")}>
+                                                                                {targetChannelId ? `#${selectedTargetChannel?.name || targetChannelId}` : (isLoadingTargetChannels ? "Loading..." : "Select Channel...")}
+                                                                            </span>
+                                                                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                                                                        </button>
+                                                                        <AnimatePresence>
+                                                                            {isTargetChannelDropdownOpen && (
+                                                                                <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden">
+                                                                                    <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                        <input
+                                                                                            type="text"
+                                                                                            value={targetChannelSearchQuery}
+                                                                                            onChange={(e) => setTargetChannelSearchQuery(e.target.value)}
+                                                                                            className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                            placeholder="Search channels..."
+                                                                                            autoFocus
+                                                                                        />
+                                                                                    </div>
+                                                                                    <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                        {filteredTargetChannels.length > 0 ? filteredTargetChannels.map(c => (
+                                                                                            <button key={c.id} type="button" onClick={() => { setTargetChannelId(c.id); setIsTargetChannelDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">#{c.name}</button>
+                                                                                        )) : (
+                                                                                            <div className="p-2 text-xs text-gray-400 text-center">No channels found</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </motion.div>
+                                                                            )}
+                                                                        </AnimatePresence>
+
+                                                                    </div>
+                                                                )}
+
+                                                                {/* Webhooks */}
+                                                                {targetChannelId && (
+                                                                    <div className="space-y-2 pt-2">
+                                                                        <label className="text-xs font-medium text-gray-500 uppercase">Webhook Configuration</label>
+                                                                        {isLoadingWebhooks ? (
+                                                                            <div className="text-xs text-gray-500 flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /> Loading webhooks...</div>
+                                                                        ) : webhookError ? (
+                                                                            <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg flex items-center gap-2 border border-red-100">
+                                                                                <AlertTriangle className="w-4 h-4 shrink-0" />
+                                                                                {webhookError}
+                                                                            </div>
+                                                                        ) : webhooks.length > 0 ? (
+                                                                            <div className="grid gap-2">
+                                                                                {webhooks.map((wh: any) => (
+                                                                                    <button key={wh.id} type="button" onClick={() => handleSelectWebhook(wh)} className={cn("w-full flex items-center gap-2 px-3 py-2 border rounded-lg transition-all", wh.url === webhookUrl ? "bg-blue-50 border-primary shadow-sm" : "bg-white border-gray-200 hover:bg-gray-50")}>
+                                                                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                                                                        <span className="text-sm font-medium text-gray-700 flex-1 text-left truncate">{wh.name}</span>
+                                                                                        {wh.url === webhookUrl && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                                                                                    </button>
+                                                                                ))}
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
+                                                                                <p className="text-xs text-gray-500 mb-2">No webhooks found.</p>
+                                                                                <button type="button" onClick={handleCreateWebhook} disabled={isCreatingWebhook} className="text-xs font-bold text-primary hover:underline disabled:opacity-50">Create New One</button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* BLUR ZONES (ELITE ONLY) */}
+                                                    <div className="pt-6 border-t border-gray-200">
+                                                        <div className="flex items-center justify-between mb-4">
+                                                            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                                                <ScanEye className="w-4 h-4 text-gray-400" />
+                                                                Visual Blur Selector
+                                                                <span className="text-[10px] bg-black text-[#00FFFF] px-1.5 py-0.5 font-bold uppercase tracking-wider">Elite</span>
+                                                            </h3>
+                                                        </div>
+
+                                                        {userPlan === 'ELITE' ? (
+                                                            <BlurAreaSelector
+                                                                value={blurRegions}
+                                                                onChange={setBlurRegions}
+                                                                maxRegions={3}
+                                                            />
+                                                        ) : (
+                                                            <div className="bg-gray-50 border border-gray-200 p-6 flex flex-col items-center justify-center text-center gap-3 relative overflow-hidden group">
+                                                                <div className="absolute inset-0 bg-gray-100/50 backdrop-blur-[1px] z-0" />
+                                                                <div className="z-10 flex flex-col items-center gap-3">
+                                                                    <div className="w-12 h-12 bg-gray-900 text-[#00FFFF] rounded-none flex items-center justify-center mb-1 shadow-sm">
+                                                                        <Lock className="w-5 h-5" />
+                                                                    </div>
+                                                                    <h4 className="font-bold text-gray-900">Elite Feature Locked</h4>
+                                                                    <p className="text-sm text-gray-500 max-w-xs mx-auto">
+                                                                        Smart privacy blur and region masking is exclusive to the Elite plan.
+                                                                    </p>
+                                                                    {/* Mock Upgrade Button - In real app would link to billing */}
+                                                                    <Link
+                                                                        href="/dashboard/settings"
+                                                                        className="text-xs font-bold text-gray-900 border border-gray-300 bg-white px-4 py-2 mt-1 hover:bg-gray-50 transition-colors shadow-sm block text-center"
+                                                                    >
+                                                                        Upgrade to Elite
+                                                                    </Link>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* BRANDING CONFIGURATION */}
+                                                    <div className="pt-6 border-t border-gray-200">
+                                                        <BrandingCustomizer
+                                                            userPlan={userPlan}
+                                                            config={{
+                                                                watermarkType,
+                                                                customWatermark,
+                                                                watermarkImageUrl,
+                                                                watermarkPosition,
+                                                                watermarkOpacity,
+                                                                brandColor
+                                                            }}
+                                                            onChange={(updates) => {
+                                                                if (updates.watermarkType !== undefined) setWatermarkType(updates.watermarkType);
+                                                                if (updates.customWatermark !== undefined) setCustomWatermark(updates.customWatermark);
+                                                                if (updates.watermarkImageUrl !== undefined) setWatermarkImageUrl(updates.watermarkImageUrl);
+                                                                if (updates.watermarkPosition !== undefined) setWatermarkPosition(updates.watermarkPosition);
+                                                                if (updates.watermarkOpacity !== undefined) setWatermarkOpacity(updates.watermarkOpacity);
+                                                                if (updates.brandColor !== undefined) setBrandColor(updates.brandColor);
+                                                            }}
+                                                        />
+                                                    </div>
+
+
+                                                    {error && (
+                                                        <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2 border border-red-100">
+                                                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                                                            {error}
+                                                        </div>
+                                                    )}
+
+                                                </form>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="p-6 border-t border-gray-100 flex justify-between gap-3 bg-gray-50 rounded-b-xl">
+                                    {step === 1 ? (
+                                        <>
+                                            <button
+                                                onClick={onClose}
+                                                className="px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors text-sm font-semibold"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={nextStep}
+                                                className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2"
+                                            >
+                                                Next Step <ArrowRight className="w-4 h-4" />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button
+                                                onClick={prevStep}
+                                                className="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2"
+                                            >
+                                                <ChevronLeft className="w-4 h-4" /> Back
+                                            </button>
+
+                                            <button
+                                                onClick={handleSubmit}
+                                                disabled={isSubmitting}
+                                                className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed ml-auto"
+                                            >
+                                                {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                                                {isEdit ? "Update Mirror" : "Create Mirror"}
+                                            </button>
+                                        </>
                                     )}
-                                </AnimatePresence>
-                            </div>
+                                </div>
 
-                            {/* Footer */}
-                            <div className="p-6 border-t border-gray-100 flex justify-between gap-3 bg-gray-50 rounded-b-xl">
-                                {step === 1 ? (
-                                    <>
-                                        <button
-                                            onClick={onClose}
-                                            className="px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors text-sm font-semibold"
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            onClick={nextStep}
-                                            className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2"
-                                        >
-                                            Next Step <ArrowRight className="w-4 h-4" />
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <button
-                                            onClick={prevStep}
-                                            className="px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 rounded-lg text-sm font-semibold transition-colors flex items-center gap-2"
-                                        >
-                                            <ChevronLeft className="w-4 h-4" /> Back
-                                        </button>
-
-                                        <button
-                                            onClick={handleSubmit}
-                                            disabled={isSubmitting}
-                                            className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-semibold shadow-sm transition-all flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed ml-auto"
-                                        >
-                                            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
-                                            {isEdit ? "Update Mirror" : "Create Mirror"}
-                                        </button>
-                                    </>
-                                )}
-                            </div>
-
-                        </motion.div>
-                    </div>
-                </>
-            )
-            }
-        </AnimatePresence >
+                            </motion.div>
+                        </div>
+                    </>
+                )
+                }
+            </AnimatePresence>
+            <UpgradeModal
+                isOpen={upgradeModalOpen}
+                onClose={() => setUpgradeModalOpen(false)}
+                reason={upgradeReason}
+            />
+        </>
     );
 }

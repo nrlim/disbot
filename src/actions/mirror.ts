@@ -675,14 +675,55 @@ export async function toggleMirrorConfig(id: string, active: boolean) {
     if (!session?.user) return { error: "Unauthorized" };
 
     try {
+        // If enabling, check plan restrictions
+        if (active) {
+            const config = await prisma.mirrorConfig.findUnique({
+                where: { id, userId: session.user.id },
+                include: { user: { select: { plan: true } } }
+            });
+
+            if (!config) return { error: "Configuration not found" };
+
+            const userPlan = config.user.plan || "FREE";
+
+            // 1. Source Check
+            const allowedSources = PLAN_PLATFORMS[userPlan] || PLAN_PLATFORMS.FREE;
+            if (!allowedSources.includes(config.sourcePlatform)) {
+                return { error: `Your ${userPlan} plan does not support ${config.sourcePlatform} mirroring.` };
+            }
+
+            // 2. Destination Check (D2T, T2T)
+            const allowedDestinations = PLAN_DESTINATION_PLATFORMS[userPlan] || ['DISCORD'];
+            const isTelegramDest = (config.sourcePlatform === 'DISCORD' && !!config.telegramChatId) ||
+                (config.sourcePlatform === 'TELEGRAM' && !!config.telegramChatId && !!config.sourceChannelId && config.telegramChatId !== config.sourceChannelId);
+
+            if (isTelegramDest && !allowedDestinations.includes('TELEGRAM')) {
+                return { error: `Your ${userPlan} plan does not support Telegram as a destination. Elite required.` };
+            }
+
+            // 3. Path Limit Check
+            const activeCount = await prisma.mirrorConfig.count({
+                where: { userId: session.user.id, active: true }
+            });
+            const limit = PLAN_LIMITS[userPlan] || 0;
+            if (activeCount >= limit) {
+                return { error: `You have reached your ${userPlan} plan limit of ${limit} active mirrors.` };
+            }
+        }
+
         await prisma.mirrorConfig.update({
             where: { id, userId: session.user.id },
-            data: { active }
+            data: {
+                active,
+                // If activating, reset status to ACTIVE
+                ...(active ? { status: "ACTIVE" } : {})
+            }
         });
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        return { error: "Failed to update" };
+        console.error("Toggle error:", e);
+        return { error: "Failed to update mirror status" };
     }
 }
 

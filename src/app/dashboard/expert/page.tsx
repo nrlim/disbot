@@ -47,10 +47,11 @@ export default async function ExpertDashboard() {
     });
 
     const userPlan = user?.plan || "FREE";
-    const usageCount = user?._count.configs || 0;
+    const totalThreads = user?._count.configs || 0;
+    const activeCount = allConfigs.filter(c => c.active).length;
     const limit = PLAN_LIMITS[userPlan] || PLAN_LIMITS.FREE;
-    const isLimitReached = usageCount >= limit;
-    const percentage = limit > 0 ? Math.min((usageCount / limit) * 100, 100) : (usageCount > 0 ? 100 : 0);
+    const isLimitReached = totalThreads >= limit;
+    const percentage = limit > 0 ? Math.min((activeCount / limit) * 100, 100) : (activeCount > 0 ? 100 : 0);
 
     return (
         <div className="max-w-7xl mx-auto space-y-8 px-4 sm:px-6 lg:px-8 py-8">
@@ -78,14 +79,15 @@ export default async function ExpertDashboard() {
                     <div className="relative z-10">
                         <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Active Threads</div>
                         <div className="flex items-baseline gap-2 mb-2">
-                            <span className={`text-3xl font-bold ${isLimitReached ? "text-amber-600" : "text-gray-900"}`}>
-                                {usageCount}
+                            <span className={`text-3xl font-bold ${activeCount >= limit ? "text-amber-600" : "text-gray-900"}`}>
+                                {activeCount}
                             </span>
                             <span className="text-gray-400 text-sm font-medium">/ {limit === 9999 ? "∞" : limit}</span>
                         </div>
-                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="text-xs text-gray-400 mt-1">Total Threads: {totalThreads}</div>
+                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden mt-2">
                             <div
-                                className={`h-full rounded-full transition-all duration-500 ${isLimitReached ? "bg-amber-500" : "bg-primary"}`}
+                                className={`h-full rounded-full transition-all duration-500 ${activeCount >= limit ? "bg-amber-500" : "bg-primary"}`}
                                 style={{ width: `${percentage}%` }}
                             />
                         </div>
@@ -100,7 +102,7 @@ export default async function ExpertDashboard() {
                     groups={groups}
                     accounts={accounts}
                     telegramAccounts={telegramAccounts}
-                    usageCount={usageCount}
+                    usageCount={activeCount}
                     isLimitReached={isLimitReached}
                     userPlan={userPlan}
                 />
