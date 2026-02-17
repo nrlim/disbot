@@ -101,6 +101,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [webhookUrl, setWebhookUrl] = useState("");
     const [userToken, setUserToken] = useState("");
     const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+    const [selectedDestAccountId, setSelectedDestAccountId] = useState<string | null>(null);
     const [useSavedAccount, setUseSavedAccount] = useState(true);
 
     // Target Lookup State
@@ -183,8 +184,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
     // UI State
     const [guilds, setGuilds] = useState<Guild[]>([]);
+    const [targetGuilds, setTargetGuilds] = useState<Guild[]>([]);
     const [channels, setChannels] = useState<Channel[]>([]);
     const [isLoadingGuilds, setIsLoadingGuilds] = useState(false);
+    const [isLoadingTargetGuilds, setIsLoadingTargetGuilds] = useState(false);
     const [isLoadingChannels, setIsLoadingChannels] = useState(false);
     const [isGuildDropdownOpen, setIsGuildDropdownOpen] = useState(false);
     const [isChannelDropdownOpen, setIsChannelDropdownOpen] = useState(false);
@@ -232,10 +235,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                     setTelegramChatId(config.telegramChatId || config.sourceChannelId || "");
                     setTelegramTopicId(config.telegramTopicId || "");
                     setSelectedTelegramSourceAccountId(config.telegramAccountId || null);
+
+                    if (config.discordAccountId) {
+                        setSelectedAccountId(config.discordAccountId);
+                        setSelectedDestAccountId(config.discordAccountId);
+                        setUseSavedAccount(true);
+                    }
                 } else {
                     setChannelId(config.sourceChannelId || "");
                     if (config.discordAccountId) {
                         setSelectedAccountId(config.discordAccountId);
+                        setSelectedDestAccountId(config.discordAccountId);
                         setUseSavedAccount(true);
                     } else if (config.userToken) {
                         setUserToken(config.userToken);
@@ -310,6 +320,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setChannels([]);
                 setBulkText("");
                 setSelectedAccountId(null);
+                setSelectedDestAccountId(null);
                 setUseSavedAccount(true);
 
                 // Reset Target/Destination State
@@ -396,21 +407,55 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
     }, [isOpen, sourcePlatform, useSavedAccount, selectedAccountId, config]);
 
+    // Fetch Target Guilds
+    useEffect(() => {
+        if (!isOpen || destinationPlatform !== 'DISCORD' || !selectedDestAccountId) {
+            if (!targetGuild) setTargetGuilds([]);
+            return;
+        }
+
+        const fetchTargetGuilds = async () => {
+            setIsLoadingTargetGuilds(true);
+            setTargetGuilds([]);
+
+            try {
+                const res = await getGuildsForAccount(selectedDestAccountId);
+                if (!res.error && Array.isArray(res)) {
+                    setTargetGuilds(res);
+                }
+            } catch (e) {
+                // silent
+            } finally {
+                setIsLoadingTargetGuilds(false);
+            }
+        };
+
+        fetchTargetGuilds();
+    }, [isOpen, destinationPlatform, selectedDestAccountId]);
+
+    // When Source Account changes, if Dest Account is not set or was same, sync it (Optional UX preference)
+    useEffect(() => {
+        if (selectedAccountId && !selectedDestAccountId && !config) {
+            setSelectedDestAccountId(selectedAccountId);
+        }
+    }, [selectedAccountId, selectedDestAccountId, config]);
+
     // Sync Source/Target Guilds when list loads
     useEffect(() => {
-        if (config && guilds.length > 0) {
+        if (config && (guilds.length > 0 || targetGuilds.length > 0)) {
             // Source Pre-fill
             if (!selectedGuild && (config.sourcePlatform === 'DISCORD' || !config.sourcePlatform)) {
                 const found = guilds.find(g => g.id === config.sourceGuildId || g.name === config.sourceGuildName);
                 if (found) setSelectedGuild(found);
             }
-            // Target Pre-fill
+            // Target Pre-fill (search in targetGuilds if available, else wait)
             if (!targetGuild && config.targetGuildId) {
-                const foundTarget = guilds.find(g => g.id === config.targetGuildId);
+                // We might find it in guilds if source=dest account, or we need to wait for targetGuilds
+                const foundTarget = targetGuilds.find(g => g.id === config.targetGuildId) || guilds.find(g => g.id === config.targetGuildId);
                 if (foundTarget) setTargetGuild(foundTarget);
             }
         }
-    }, [guilds, config, selectedGuild, targetGuild]);
+    }, [guilds, targetGuilds, config, selectedGuild, targetGuild]);
 
     // Fetch Channels
     useEffect(() => {
@@ -523,29 +568,29 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
     // --- Target Logic ---
     useEffect(() => {
-        if (targetMode === 'CHANNEL' && targetGuild && selectedAccountId) {
-            console.log("Fetching channels for guild:", targetGuild.name, "Account:", selectedAccountId);
+        if (targetMode === 'CHANNEL' && targetGuild && selectedDestAccountId) {
+            console.log("Fetching channels for guild:", targetGuild.name, "Account:", selectedDestAccountId);
             const fetchCh = async () => {
                 setIsLoadingTargetChannels(true);
                 try {
-                    const res = await getChannelsForGuild(selectedAccountId, targetGuild.id);
+                    const res = await getChannelsForGuild(selectedDestAccountId, targetGuild.id);
                     if (!res.error) setTargetChannels(res);
                 } catch (e) { console.error("Fetch Error:", e); }
                 finally { setIsLoadingTargetChannels(false); }
             };
             fetchCh();
         } else {
-            console.log("Target Channel fetch skipped:", { targetMode, targetGuild, selectedAccountId });
+            console.log("Target Channel fetch skipped:", { targetMode, targetGuild, selectedAccountId: selectedDestAccountId });
         }
-    }, [targetGuild, targetMode, selectedAccountId]);
+    }, [targetGuild, targetMode, selectedDestAccountId]);
 
     useEffect(() => {
-        if (targetMode === 'CHANNEL' && targetChannelId && selectedAccountId) {
+        if (targetMode === 'CHANNEL' && targetChannelId && selectedDestAccountId) {
             const fetchWh = async () => {
                 setIsLoadingWebhooks(true);
                 setWebhookError("");
                 try {
-                    const res = await getWebhooksForChannel(selectedAccountId, targetChannelId);
+                    const res = await getWebhooksForChannel(selectedDestAccountId, targetChannelId);
                     if ('error' in res) {
                         setWebhookError(res.error as string);
                         setWebhooks([]);
@@ -560,7 +605,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         } else {
             setWebhooks([]);
         }
-    }, [targetChannelId, targetMode, selectedAccountId]);
+    }, [targetChannelId, targetMode, selectedDestAccountId]);
 
     // Pre-fill Webhook selection when webhooks are loaded
     useEffect(() => {
@@ -609,11 +654,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     }, [targetGuild, config]);
 
     const handleCreateWebhook = async () => {
-        if (!targetChannelId || !selectedAccountId) return;
+        if (!targetChannelId || !selectedDestAccountId) return;
         setIsCreatingWebhook(true);
         setWebhookError("");
         try {
-            const res: any = await createWebhook(selectedAccountId, targetChannelId, "Disbot Mirror");
+            const res: any = await createWebhook(selectedDestAccountId, targetChannelId, "Disbot Mirror");
             if (res.error) {
                 setWebhookError(res.error);
             } else if (res.success && res.webhook) {
@@ -893,6 +938,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
             if (telegramTopicId) formData.append("telegramTopicId", telegramTopicId);
             if (telegramPhone) formData.append("telegramPhone", telegramPhone);
+
+            // T2D: Save the selected Discord Destination Account
+            if (!isTelegramDestination && selectedDestAccountId) {
+                formData.append("discordAccountId", selectedDestAccountId);
+            }
         }
 
 
@@ -921,7 +971,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     // Filter Logic
     const filteredGuilds = guilds.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
     const filteredChannels = channels.filter(c => c.name.toLowerCase().includes(channelSearchQuery.toLowerCase()));
-    const filteredTargetGuilds = guilds.filter(g => g.name.toLowerCase().includes(targetSearchQuery.toLowerCase()));
+    const filteredTargetGuilds = targetGuilds.filter(g => g.name.toLowerCase().includes(targetSearchQuery.toLowerCase()));
     const filteredTargetChannels = targetChannels.filter(c => c.name.toLowerCase().includes(targetChannelSearchQuery.toLowerCase()));
     const filteredTelegramChats = telegramChats.filter(c => c.title.toLowerCase().includes(telegramChatSearchQuery.toLowerCase()));
     const filteredDestTelegramChats = destinationTelegramChats.filter(c => c.title.toLowerCase().includes(destChatSearchQuery.toLowerCase()));
@@ -1814,6 +1864,41 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                         </div>
                                                     ) : (
                                                         <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                                            {/* Destination Account Context */}
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-xs font-medium text-gray-500 uppercase">Destination Account</label>
+                                                                {localAccounts.length > 0 ? (
+                                                                    <div className="grid grid-cols-1 gap-2">
+                                                                        {localAccounts.map((acc: any) => (
+                                                                            <div
+                                                                                key={acc.id}
+                                                                                onClick={() => setSelectedDestAccountId(acc.id)}
+                                                                                className={cn(
+                                                                                    "flex items-center gap-3 p-2.5 border rounded-lg cursor-pointer transition-all",
+                                                                                    selectedDestAccountId === acc.id ? "bg-white border-primary ring-1 ring-primary shadow-sm" : "bg-white/50 border-gray-200 hover:border-gray-300 hover:bg-white"
+                                                                                )}
+                                                                            >
+                                                                                {acc.avatar ? (
+                                                                                    <Image src={`https://cdn.discordapp.com/avatars/${acc.discordId}/${acc.avatar}.png`} width={32} height={32} alt="" className="rounded-full bg-gray-200" unoptimized />
+                                                                                ) : (
+                                                                                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500">
+                                                                                        {acc.username[0]}
+                                                                                    </div>
+                                                                                )}
+                                                                                <div className="flex-1 min-w-0">
+                                                                                    <div className="text-sm font-semibold text-gray-900 truncate">{acc.username}</div>
+                                                                                    <div className="text-[10px] text-gray-500 truncate">ID: {acc.discordId}</div>
+                                                                                </div>
+                                                                                {selectedDestAccountId === acc.id && <CheckCircle2 className="w-4 h-4 text-blue-500" />}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-center p-3 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 bg-white/50">
+                                                                        No Discord accounts linked.
+                                                                    </div>
+                                                                )}
+                                                            </div>
                                                             {/* Target Guild Select */}
                                                             <div className="space-y-1.5 relative">
                                                                 <label className="text-xs font-medium text-gray-500 uppercase">Target Server</label>
