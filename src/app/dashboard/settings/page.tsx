@@ -137,8 +137,6 @@ export default async function SettingsPage() {
             <Suspense fallback={<div>Loading pricing...</div>}>
                 <SettingsPricing
                     userPlan={userPlan}
-                    midtransClientKey={process.env.MIDTRANS_CLIENT_KEY || ""}
-                    isProduction={process.env.MIDTRANS_IS_PRODUCTION === 'true'}
                     paymentHistory={paymentHistory}
                 />
             </Suspense>

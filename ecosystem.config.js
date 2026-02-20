@@ -4,7 +4,7 @@ module.exports = {
             name: 'disbot-v2',
             script: './worker/dist/engine.js',
             interpreter: 'node',
-            node_args: '--max-old-space-size=512',
+            node_args: '--max-old-space-size=1024',
             env: {
                 NODE_ENV: 'production',
             },
