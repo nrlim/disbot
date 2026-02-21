@@ -89,8 +89,15 @@ export class Engine {
                 // getOrConnectClient(), which can't find it in the sessions map (keyed by decrypted strings).
                 if (resolvedTgSession && resolvedTgSession.includes(':')) {
                     const decrypted = decrypt(resolvedTgSession, process.env.ENCRYPTION_KEY || '');
-                    if (decrypted) {
+                    if (decrypted && decrypted.trim().length > 0) {
                         resolvedTgSession = decrypted;
+                    } else {
+                        logger.warn({
+                            configId: cfg.id,
+                            userId: cfg.userId,
+                            sessionPreview: resolvedTgSession.substring(0, 15) + '...',
+                        }, '[Sync] Telegram session decryption failed or returned empty — skipping. Check ENCRYPTION_KEY or re-link Telegram account.');
+                        resolvedTgSession = undefined; // Do not use the encrypted string
                     }
                 }
 

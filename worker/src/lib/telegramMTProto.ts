@@ -33,6 +33,7 @@ interface ActiveSession {
     configs: TelegramConfig[];
     lastActive: number;
     keepAliveInterval?: NodeJS.Timeout;
+    reconnectFailures: number;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -161,6 +162,18 @@ export class TelegramListener {
             } else {
                 logger.info({ configCount: sessionConfigs.length }, 'Starting new Telegram MTProto session');
                 try {
+                    // ── Validate session string BEFORE passing to StringSession ──
+                    // StringSession expects a hex-encoded string (or empty for new sessions).
+                    // If the string is corrupted/non-hex after decryption, it throws "Not a valid string".
+                    if (!this.isValidSessionString(token)) {
+                        logger.error({
+                            configCount: sessionConfigs.length,
+                            tokenPreview: token.substring(0, 20) + '...',
+                            tokenLength: token.length
+                        }, 'Skipping Telegram session: Invalid session string format (not valid hex). The stored session may be corrupted or the ENCRYPTION_KEY may have changed.');
+                        return;
+                    }
+
                     const client = new TelegramClient(
                         new StringSession(token),
                         this.apiId,
@@ -213,7 +226,8 @@ export class TelegramListener {
                     session = {
                         client,
                         configs: sessionConfigs,
-                        lastActive: Date.now()
+                        lastActive: Date.now(),
+                        reconnectFailures: 0
                     };
                     this.sessions.set(token, session);
                     logger.info('Telegram MTProto session established successfully');
@@ -226,37 +240,62 @@ export class TelegramListener {
             // Re-check session after setup
             if (session) {
                 if (!session.client.connected) {
-                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected immediately? Triggering fierce reconnect.');
-                    await session.client.connect(); // Await this time
+                    logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected immediately? Triggering reconnect.');
+                    try {
+                        await session.client.connect();
+                    } catch (e: any) {
+                        logger.error({ error: e.message }, 'Post-setup reconnect failed — session will be retried on next sync');
+                    }
                 }
+
+                // Reset reconnect failures on successful setup
+                session.reconnectFailures = 0;
 
                 // robust-keep-alive
                 if (session.keepAliveInterval) clearInterval(session.keepAliveInterval);
                 session.keepAliveInterval = setInterval(async () => {
+                    const MAX_RECONNECT_FAILURES = 3;
                     try {
                         if (!session.client.connected) {
-                            logger.warn({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Client disconnected, reconnecting...');
+                            logger.warn({ token: token.substring(0, 8) + '...', failures: session.reconnectFailures }, 'Active Keep-Alive: Client disconnected, reconnecting...');
                             await session.client.connect();
+                            session.reconnectFailures = 0; // Reset on success
                         } else {
                             // Active Ping to ensure socket is responsive
                             // We use getMe() as a reliable test of session validity + connectivity
                             // A timeout here means the socket is hung
                             const pingPromise = session.client.getMe();
-                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 10000));
+                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
 
                             await Promise.race([pingPromise, timeoutPromise]);
-                            // logger.debug({ token: token.substring(0, 8) + '...' }, 'Active Keep-Alive: Ping successful');
+                            session.reconnectFailures = 0; // Reset on successful ping
                         }
                     } catch (err: any) {
-                        logger.error({ error: err.message }, 'Active Keep-Alive: Ping failed, forcing reconnect');
+                        session.reconnectFailures++;
+                        logger.error({
+                            error: err.message,
+                            failures: session.reconnectFailures,
+                            maxFailures: MAX_RECONNECT_FAILURES
+                        }, 'Active Keep-Alive: Ping/reconnect failed');
+
+                        if (session.reconnectFailures >= MAX_RECONNECT_FAILURES) {
+                            logger.warn({ token: token.substring(0, 8) + '...' },
+                                `Active Keep-Alive: ${MAX_RECONNECT_FAILURES} consecutive failures — destroying session for clean re-creation on next sync`);
+                            await this.destroySession(token, session);
+                            return; // Stop the interval (it's cleared inside destroySession)
+                        }
+
+                        // Still under threshold — try disconnect+reconnect
                         try {
                             await session.client.disconnect();
+                            await new Promise(r => setTimeout(r, 2000)); // Wait 2s before reconnecting
                             await session.client.connect();
+                            session.reconnectFailures = 0; // Reset on success
                         } catch (e: any) {
-                            logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect failed');
+                            logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect attempt also failed');
                         }
                     }
-                }, 30_000); // Check every 30s
+                }, 45_000); // Check every 45s (was 30s — slightly less aggressive to reduce spam)
             }
         });
 
@@ -852,6 +891,27 @@ export class TelegramListener {
         return undefined;
     }
 
+    /**
+     * Validates that a session string is a proper format for StringSession.
+     * StringSession expects either an empty string or a hex-encoded string.
+     */
+    private isValidSessionString(token: string): boolean {
+        if (!token || token.trim().length === 0) return false;
+        // StringSession internally does base64/hex decoding.
+        // If the string contains characters outside the expected charset, it's invalid.
+        // The telegram library's StringSession uses base256 encoding (essentially raw bytes encoded in a custom format).
+        // A simple heuristic: it should only contain printable ASCII or be valid base64.
+        // The most common failure is when decryption produces garbage, which often contains
+        // null bytes, control characters, or non-ASCII bytes.
+        try {
+            // Try constructing the session — if it throws, it's invalid
+            new StringSession(token);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
         if (session.keepAliveInterval) {
             clearInterval(session.keepAliveInterval);
@@ -860,6 +920,7 @@ export class TelegramListener {
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
         this.sessions.delete(token);
+        logger.info('Telegram session destroyed and removed from pool');
     }
 
     public async shutdown(): Promise<void> {
