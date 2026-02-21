@@ -50,6 +50,22 @@ export class Engine {
         logger.info('Starting sync cycle...');
 
         try {
+            // 0. Re-activate Telegram configs that were wrongly auto-disabled
+            // Previous sync cycles set active=false when sessions were invalid (double-encrypted).
+            // Now that decryption is fixed, re-enable them so they can connect.
+            const reactivated = await prisma.mirrorConfig.updateMany({
+                where: {
+                    active: false,
+                    status: 'CONFIGURATION_ERROR',
+                    telegramAccountId: { not: null }, // Has a linked Telegram account
+                    sourcePlatform: 'TELEGRAM'
+                },
+                data: { active: true, status: 'ACTIVE' }
+            });
+            if (reactivated.count > 0) {
+                logger.info({ count: reactivated.count }, '[Sync] Re-activated previously disabled Telegram configs with linked accounts');
+            }
+
             // 1. Fetch Active Configs with Relations
             const activeConfigsRaw = await prisma.mirrorConfig.findMany({
                 where: { active: true },
@@ -260,18 +276,14 @@ export class Engine {
                             });
                         }
                     } else if (cfg.sourcePlatform === 'TELEGRAM') {
-                        // Log and disable if strictly Telegram source but missing session
+                        // Skip this cycle — do NOT auto-disable.
+                        // The session may become available after user re-links or fixes encryption.
                         logger.warn({
                             configId: cfg.id,
                             userId: cfg.userId,
                             reason: 'NO_SESSION',
                             platform: cfg.sourcePlatform
-                        }, '[Sync] Skipping invalid Telegram config - Auto-disabling');
-
-                        prisma.mirrorConfig.update({
-                            where: { id: cfg.id },
-                            data: { active: false, status: 'CONFIGURATION_ERROR' }
-                        }).catch(() => { });
+                        }, '[Sync] Skipping Telegram config — no valid session this cycle');
                     }
                 }
 
