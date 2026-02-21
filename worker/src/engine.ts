@@ -151,6 +151,20 @@ export class Engine {
                     }, '[Sync] Session has no colon — using raw value');
                 }
 
+                // Final validation: Telegram StringSession MUST start with "1" and be 100+ chars.
+                // This catches Discord tokens (start with "M", ~72 chars) or other garbage
+                // that ended up in the telegramSession legacy field.
+                if (resolvedTgSession && (resolvedTgSession[0] !== '1' || resolvedTgSession.length < 100)) {
+                    logger.warn({
+                        configId: cfg.id,
+                        userId: cfg.userId,
+                        firstChar: resolvedTgSession[0],
+                        length: resolvedTgSession.length,
+                        looksLikeDiscordToken: resolvedTgSession.includes('.') && resolvedTgSession.length < 100,
+                    }, '[Sync] Resolved session is NOT a valid Telegram session — skipping. User needs to re-link Telegram account.');
+                    resolvedTgSession = undefined;
+                }
+
                 let resolvedTgChatId = undefined;
                 if (platform === 'TELEGRAM') {
                     // For Telegram source: sourceChannelId stores the source chat ID
