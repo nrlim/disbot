@@ -6,9 +6,29 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { encrypt, decrypt } from "@/lib/encryption";
 
+// Simple TTL Cache to prevent rapid 429s from UI re-renders
+const discordCache = new Map<string, { data: any, timestamp: number }>();
+const CACHE_TTL = 5000; // 5 seconds
+
+function getCached(key: string) {
+    const cached = discordCache.get(key);
+    if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+        return cached.data;
+    }
+    return null;
+}
+
+function setCache(key: string, data: any) {
+    discordCache.set(key, { data, timestamp: Date.now() });
+}
+
 export async function getGuildsForAccount(accountId: string) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return { error: "Unauthorized" };
+
+    const cacheKey = `guilds_${accountId}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
 
     const account = await prisma.discordAccount.findUnique({
         where: { id: accountId, userId: session.user.id }
@@ -18,29 +38,37 @@ export async function getGuildsForAccount(accountId: string) {
 
     try {
         const token = decrypt(account.token);
-        const res = await fetch("https://discord.com/api/v9/users/@me/guilds", {
-            headers: { Authorization: token }
+        const res = await fetch("https://discord.com/api/v10/users/@me/guilds", {
+            headers: { Authorization: token },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
+            console.error(`[getGuildsForAccount] Error: ${res.status} ${res.statusText} for account ${accountId}`);
             if (res.status === 401) {
-                // Mark invalid?
                 await prisma.discordAccount.update({
                     where: { id: accountId },
                     data: { valid: false }
                 });
                 return { error: "Token expired or invalid" };
             }
-            return { error: "Failed to fetch guilds" };
+            if (res.status === 429) {
+                return { error: "Rate limited by Discord. Please wait a few seconds." };
+            }
+            return { error: `Failed to fetch guilds (${res.status})` };
         }
 
         const guilds = await res.json();
-        return guilds.map((g: any) => ({
+        const result = guilds.map((g: any) => ({
             id: g.id,
             name: g.name,
             icon: g.icon ? `https://cdn.discordapp.com/icons/${g.id}/${g.icon}.png` : null,
             permissions: g.permissions
         }));
+
+        setCache(cacheKey, result);
+        console.log(`[getGuildsForAccount] Fetched ${guilds.length} guilds for account ${accountId}`);
+        return result;
 
     } catch (e) {
         return { error: "Internal Error" };
@@ -64,13 +92,15 @@ export async function addDiscordAccount(token: string) {
 
     // Verify Token
     try {
-        const res = await fetch("https://discord.com/api/v9/users/@me", {
-            headers: { Authorization: token }
+        const res = await fetch("https://discord.com/api/v10/users/@me", {
+            headers: { Authorization: token },
+            cache: 'no-store'
         });
 
         if (!res.ok) {
+            console.error(`[addDiscordAccount] Error: ${res.status} ${res.statusText}`);
             if (res.status === 401) return { error: "Invalid Discord Token" };
-            return { error: "Failed to verify token with Discord" };
+            return { error: `Failed to verify token with Discord (${res.status})` };
         }
 
         const data = await res.json();
@@ -179,8 +209,9 @@ export async function getDiscordAccounts() {
             if (!hasExpAccount) {
                 // Auto-create an expert-mode record for the login account 
                 // Note: OAuth tokens are shorter-lived, but this provides a better first-time experience
-                const res = await fetch("https://discord.com/api/v9/users/@me", {
-                    headers: { Authorization: `Bearer ${oauthAccount.access_token}` }
+                const res = await fetch("https://discord.com/api/v10/users/@me", {
+                    headers: { Authorization: `Bearer ${oauthAccount.access_token}` },
+                    cache: 'no-store'
                 });
 
                 if (res.ok) {
@@ -225,6 +256,7 @@ export async function deleteDiscordAccount(id: string) {
             where: { id, userId: session.user.id }
         });
         revalidatePath("/dashboard/settings");
+        revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
         return { error: "Failed to delete account" };
@@ -235,6 +267,10 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return { error: "Unauthorized" };
 
+    const cacheKey = `channels_${accountId}_${guildId}`;
+    const cached = getCached(cacheKey);
+    if (cached) return cached;
+
     const account = await prisma.discordAccount.findUnique({
         where: { id: accountId, userId: session.user.id }
     });
@@ -243,20 +279,31 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
 
     try {
         const token = decrypt(account.token);
-        const res = await fetch(`https://discord.com/api/v9/guilds/${guildId}/channels`, {
+        const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
             headers: { Authorization: token },
             cache: 'no-store'
         });
 
         if (!res.ok) {
-            return { error: "Failed to fetch channels" };
+            console.error(`[getChannelsForGuild] Error: ${res.status} ${res.statusText} for guild ${guildId}`);
+            if (res.status === 401) {
+                await prisma.discordAccount.update({
+                    where: { id: accountId },
+                    data: { valid: false }
+                });
+                return { error: "Token expired or invalid" };
+            }
+            if (res.status === 429) return { error: "Rate limited. Please wait." };
+            if (res.status === 403) return { error: "Access Denied (Not in Server?)" };
+            if (res.status === 404) return { error: "Server Not Found" };
+            return { error: `Failed to fetch channels (${res.status})` };
         }
 
         const channels = await res.json();
-        console.log(`[getChannelsForGuild] Fetched ${channels.length} channels for guild ${guildId}`);
-        // Filter for text and news channels (0: GUILD_TEXT, 5: GUILD_ANNOUNCEMENT)
-        return channels
-            .filter((c: any) => c.type === 0 || c.type === 5)
+        // Filter for text, news and forum channels 
+        // (0: GUILD_TEXT, 5: GUILD_ANNOUNCEMENT, 15: GUILD_FORUM)
+        const result = channels
+            .filter((c: any) => c.type === 0 || c.type === 5 || c.type === 15)
             .map((c: any) => ({
                 id: c.id,
                 name: c.name,
@@ -265,6 +312,10 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
                 parentId: c.parent_id
             }))
             .sort((a: any, b: any) => a.position - b.position);
+
+        setCache(cacheKey, result);
+        console.log(`[getChannelsForGuild] Fetched ${channels.length} channels for guild ${guildId}`);
+        return result;
 
     } catch (e) {
         return { error: "Internal Error" };
@@ -283,12 +334,20 @@ export async function getWebhooksForChannel(accountId: string, channelId: string
 
     try {
         const token = decrypt(account.token);
-        const res = await fetch(`https://discord.com/api/v9/channels/${channelId}/webhooks`, {
+        const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/webhooks`, {
             headers: { Authorization: token },
             cache: 'no-store'
         });
 
         if (!res.ok) {
+            console.error(`[getWebhooksForChannel] Error: ${res.status} ${res.statusText} for channel ${channelId}`);
+            if (res.status === 401) {
+                await prisma.discordAccount.update({
+                    where: { id: accountId },
+                    data: { valid: false }
+                });
+                return { error: "Token expired or invalid" };
+            }
             // If they don't have manage webhooks permission, this will fail
             return { error: "Failed to fetch webhooks (Missing Permissions?)" };
         }
@@ -329,17 +388,19 @@ export async function createWebhook(accountId: string, channelId: string, name: 
 
     try {
         const token = decrypt(account.token);
-        const res = await fetch(`https://discord.com/api/v9/channels/${channelId}/webhooks`, {
+        const res = await fetch(`https://discord.com/api/v10/channels/${channelId}/webhooks`, {
             method: "POST",
             headers: {
                 "Authorization": token,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ name: name || "Disbot Mirror" })
+            body: JSON.stringify({ name: name || "Disbot Mirror" }),
+            cache: 'no-store'
         });
 
         if (!res.ok) {
-            return { error: "Failed to create webhook (Missing Permissions?)" };
+            console.error(`[createWebhook] Error: ${res.status} ${res.statusText} for channel ${channelId}`);
+            return { error: `Failed to create webhook (${res.status})` };
         }
 
         const webhook = await res.json();

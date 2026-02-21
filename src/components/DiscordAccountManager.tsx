@@ -7,6 +7,7 @@ import { addDiscordAccount, deleteDiscordAccount } from "@/actions/discord-accou
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { toast } from "react-hot-toast";
 
 interface Account {
     id: string;
@@ -58,8 +59,13 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
     const handleDelete = async (id: string) => {
         if (!confirm("Remove this account? This may break active mirrors using it.")) return;
         setIsDeleting(id);
-        await deleteDiscordAccount(id);
-        router.refresh();
+        const res: any = await deleteDiscordAccount(id);
+        if (res.error) {
+            toast.error(res.error);
+        } else {
+            toast.success("Account removed");
+            router.refresh();
+        }
         setIsDeleting(null);
     };
 
@@ -112,7 +118,7 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
                         <button
                             onClick={() => handleDelete(acc.id)}
                             disabled={!!isDeleting}
-                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100 disabled:opacity-50"
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-100 disabled:opacity-50"
                         >
                             {isDeleting === acc.id ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <Trash2 className="w-4 h-4" />}
                         </button>

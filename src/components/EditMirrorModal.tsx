@@ -8,7 +8,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@/lib/utils";
 import { createMirrorConfig, updateMirrorConfig, bulkCreateMirrorConfig } from "@/actions/mirror";
-import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook } from "@/actions/discord-account";
+import { getGuildsForAccount, addDiscordAccount, getChannelsForGuild, getWebhooksForChannel, createWebhook, deleteDiscordAccount } from "@/actions/discord-account";
+import { toast } from "react-hot-toast";
 import { sendTelegramCode, loginTelegram, getTelegramChatsAction, getTelegramTopicsAction, getTelegramChatsForAccount, getTelegramMeAction, getTelegramTopicsForAccount } from "@/actions/telegramAuth";
 import { PLAN_PLATFORMS, PLAN_DESTINATION_PLATFORMS, PLAN_LIMITS } from "@/lib/constants";
 import { BrandingCustomizer } from "@/components/BrandingCustomizer";
@@ -197,6 +198,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [authError, setAuthError] = useState(false);
+    const [targetGuildsError, setTargetGuildsError] = useState<string | null>(null);
 
     // Upgrade Modal State
     const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
@@ -348,6 +350,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setTargetTelegramChatId("");
                 setSelectedTelegramDestAccountId(null);
                 setDestinationPlatform('DISCORD');
+                setTargetGuildsError(null);
             }
         } else {
             // Reset when closing
@@ -415,28 +418,41 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     // Fetch Target Guilds
     useEffect(() => {
         if (!isOpen || destinationPlatform !== 'DISCORD' || !selectedDestAccountId) {
-            if (!targetGuild) setTargetGuilds([]);
+            setTargetGuilds([]);
             return;
         }
 
         const fetchTargetGuilds = async () => {
+            // Optimization: If source and dest account are same, and we already have guilds, just copy them
+            if (sourcePlatform === 'DISCORD' && selectedAccountId === selectedDestAccountId && guilds.length > 0) {
+                setTargetGuilds(guilds);
+                setIsLoadingTargetGuilds(false);
+                setTargetGuildsError(null);
+                return;
+            }
+
             setIsLoadingTargetGuilds(true);
             setTargetGuilds([]);
+            setTargetGuildsError(null);
 
             try {
-                const res = await getGuildsForAccount(selectedDestAccountId);
+                const res: any = await getGuildsForAccount(selectedDestAccountId);
                 if (!res.error && Array.isArray(res)) {
                     setTargetGuilds(res);
+                } else if (res.error) {
+                    console.error("Fetch Target Guilds Error:", res.error);
+                    setTargetGuildsError(res.error);
                 }
             } catch (e) {
-                // silent
+                console.error("Fetch Target Guilds Exception:", e);
+                setTargetGuildsError("Failed to load servers");
             } finally {
                 setIsLoadingTargetGuilds(false);
             }
         };
 
         fetchTargetGuilds();
-    }, [isOpen, destinationPlatform, selectedDestAccountId]);
+    }, [isOpen, destinationPlatform, selectedDestAccountId, selectedAccountId, sourcePlatform, guilds]);
 
     // When Source Account changes, if Dest Account is not set or was same, sync it (Optional UX preference)
     useEffect(() => {
@@ -477,11 +493,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
 
         const fetchChannels = async () => {
+            setChannels([]);
             setIsLoadingChannels(true);
             try {
-                const res = await getChannelsForGuild(selectedAccountId, selectedGuild.id);
-                if (!res.error) {
+                const res: any = await getChannelsForGuild(selectedAccountId, selectedGuild.id);
+                if (!res.error && Array.isArray(res)) {
                     setChannels(res);
+                } else if (res.error) {
+                    console.error("Fetch Channels Error:", res.error);
                 }
             } catch (e) {
                 console.error(e);
@@ -491,7 +510,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         };
 
         fetchChannels();
-    }, [selectedGuild, selectedAccountId, useSavedAccount, isOpen]);
+    }, [selectedGuild?.id, selectedAccountId, useSavedAccount, isOpen]);
 
 
     // Auth Handlers
@@ -582,42 +601,65 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     };
 
+    const handleDeleteAccount = async (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!confirm("Are you sure you want to remove this account? This will not log you out, but it will disconnect any active mirrors using this profile.")) return;
+
+        try {
+            const res: any = await deleteDiscordAccount(id);
+            if (res.error) {
+                toast.error(res.error);
+            } else {
+                setLocalAccounts(prev => prev.filter(a => a.id !== id));
+                if (selectedAccountId === id) setSelectedAccountId(null);
+                if (selectedDestAccountId === id) setSelectedDestAccountId(null);
+                toast.success("Account removed");
+            }
+        } catch (e) {
+            toast.error("Failed to remove account");
+        }
+    };
+
     // --- Target Logic ---
     useEffect(() => {
         if (targetMode === 'CHANNEL' && targetGuild && selectedDestAccountId) {
-            console.log("Fetching channels for guild:", targetGuild.name, "Account:", selectedDestAccountId);
             const fetchCh = async () => {
+                setTargetChannels([]);
                 setIsLoadingTargetChannels(true);
                 try {
-                    const res = await getChannelsForGuild(selectedDestAccountId, targetGuild.id);
-                    if (!res.error) setTargetChannels(res);
+                    const res: any = await getChannelsForGuild(selectedDestAccountId, targetGuild.id);
+                    if (!res.error && Array.isArray(res)) {
+                        setTargetChannels(res);
+                    }
                 } catch (e) { console.error("Fetch Error:", e); }
                 finally { setIsLoadingTargetChannels(false); }
             };
             fetchCh();
         } else {
-            console.log("Target Channel fetch skipped:", { targetMode, targetGuild, selectedAccountId: selectedDestAccountId });
+            setTargetChannels([]);
         }
-    }, [targetGuild, targetMode, selectedDestAccountId]);
+    }, [targetGuild?.id, targetMode, selectedDestAccountId]);
 
     useEffect(() => {
         if (targetMode === 'CHANNEL' && targetChannelId && selectedDestAccountId) {
             const fetchWh = async () => {
+                setWebhooks([]);
                 setIsLoadingWebhooks(true);
                 setWebhookError("");
                 try {
-                    const res = await getWebhooksForChannel(selectedDestAccountId, targetChannelId);
-                    if ('error' in res) {
-                        setWebhookError(res.error as string);
-                        setWebhooks([]);
-                    } else {
+                    const res: any = await getWebhooksForChannel(selectedDestAccountId, targetChannelId);
+                    if (!res.error && Array.isArray(res)) {
                         setWebhooks(res);
+                    } else if (res.error) {
+                        setWebhookError(res.error);
                     }
-                } catch (e) { setWebhookError("Failed to fetch"); }
-                finally { setIsLoadingWebhooks(false); }
+                } catch (e) {
+                    setWebhookError("Failed to load webhooks");
+                } finally {
+                    setIsLoadingWebhooks(false);
+                }
             };
             fetchWh();
-            console.log("Fetching webhooks for channel:", targetChannelId);
         } else {
             setWebhooks([]);
         }
@@ -1267,7 +1309,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                     {localAccounts.map((acc: any) => (
                                                                         <div
                                                                             key={acc.id}
-                                                                            onClick={() => setSelectedAccountId(acc.id)}
+                                                                            onClick={() => {
+                                                                                setSelectedAccountId(acc.id);
+                                                                                if (!config || acc.id !== config.discordAccountId) {
+                                                                                    setSelectedGuild(null);
+                                                                                    setChannelId("");
+                                                                                    setChannels([]);
+                                                                                }
+                                                                            }}
                                                                             className={cn(
                                                                                 "flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-all",
                                                                                 selectedAccountId === acc.id ? "bg-blue-50 border-primary ring-1 ring-primary" : "bg-white border-gray-200 hover:border-gray-300"
@@ -1284,7 +1333,16 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                 <div className="text-sm font-semibold text-gray-900">{acc.username}</div>
                                                                                 <div className="text-xs text-gray-500">ID: {acc.discordId}</div>
                                                                             </div>
-                                                                            {selectedAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                                                                            <div className="flex items-center gap-2">
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={(e) => handleDeleteAccount(acc.id, e)}
+                                                                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                                                                                >
+                                                                                    <Trash2 className="w-4 h-4" />
+                                                                                </button>
+                                                                                {selectedAccountId === acc.id && <CheckCircle2 className="w-5 h-5 text-primary" />}
+                                                                            </div>
                                                                         </div>
                                                                     ))}
                                                                 </div>
@@ -1386,7 +1444,12 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                             <button
                                                                                                 key={g.id}
                                                                                                 type="button"
-                                                                                                onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
+                                                                                                onClick={() => {
+                                                                                                    setSelectedGuild(g);
+                                                                                                    setIsGuildDropdownOpen(false);
+                                                                                                    setChannelId("");
+                                                                                                    setChannels([]);
+                                                                                                }}
                                                                                                 className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
                                                                                             >
                                                                                                 {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{(g.name || "").substring(0, 2)}</div>}
@@ -1906,7 +1969,14 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                             {localAccounts.map((acc: any) => (
                                                                                 <div
                                                                                     key={acc.id}
-                                                                                    onClick={() => setSelectedDestAccountId(acc.id)}
+                                                                                    onClick={() => {
+                                                                                        setSelectedDestAccountId(acc.id);
+                                                                                        if (!config || acc.id !== config.discordAccountId) {
+                                                                                            setTargetGuild(null);
+                                                                                            setTargetChannelId("");
+                                                                                            setTargetChannels([]);
+                                                                                        }
+                                                                                    }}
                                                                                     className={cn(
                                                                                         "flex items-center gap-3 p-2.5 border rounded-lg cursor-pointer transition-all",
                                                                                         selectedDestAccountId === acc.id ? "bg-white border-primary ring-1 ring-primary shadow-sm" : "bg-white/50 border-gray-200 hover:border-gray-300 hover:bg-white"
@@ -1973,16 +2043,61 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                 {/* Target Guild Select */}
                                                                 <div className="space-y-1.5 relative">
                                                                     <label className="text-xs font-medium text-gray-500 uppercase">Target Server</label>
-                                                                    <button type="button" onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)} className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:border-primary">
-                                                                        <span className="text-sm text-gray-900 font-medium">{targetGuild?.name || "Select Destination Server..."}</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setIsTargetGuildDropdownOpen(!isTargetGuildDropdownOpen)}
+                                                                        className="w-full bg-white border border-gray-300 px-3 py-2.5 rounded-lg flex items-center justify-between text-left focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all disabled:opacity-50"
+                                                                        disabled={isLoadingTargetGuilds && targetGuilds.length === 0}
+                                                                    >
+                                                                        <span className={cn("text-sm", targetGuild ? "text-gray-900 font-medium" : "text-gray-500")}>
+                                                                            {targetGuild?.name || (isLoadingTargetGuilds ? "Loading Servers..." : "Select Destination Server...")}
+                                                                        </span>
                                                                         <ChevronDown className="w-4 h-4 text-gray-400" />
                                                                     </button>
                                                                     <AnimatePresence>
                                                                         {isTargetGuildDropdownOpen && (
-                                                                            <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto p-1">
-                                                                                {filteredTargetGuilds.map(g => (
-                                                                                    <button key={g.id} type="button" onClick={() => { setTargetGuild(g); setIsTargetGuildDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">{g.name}</button>
-                                                                                ))}
+                                                                            <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 5 }} className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 flex flex-col overflow-hidden">
+                                                                                <div className="p-2 border-b border-gray-100 bg-gray-50">
+                                                                                    <div className="relative">
+                                                                                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                                                                        <input
+                                                                                            type="text"
+                                                                                            value={targetSearchQuery}
+                                                                                            onChange={(e) => setTargetSearchQuery(e.target.value)}
+                                                                                            className="w-full pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary"
+                                                                                            placeholder="Search..."
+                                                                                            autoFocus
+                                                                                        />
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
+                                                                                    {isLoadingTargetGuilds && targetGuilds.length === 0 ? (
+                                                                                        <div className="p-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-400" /></div>
+                                                                                    ) : targetGuildsError ? (
+                                                                                        <div className="p-3 text-center text-xs text-red-500 font-medium bg-red-50 rounded-md m-1 border border-red-100">
+                                                                                            {targetGuildsError}
+                                                                                        </div>
+                                                                                    ) : filteredTargetGuilds.length > 0 ? (
+                                                                                        filteredTargetGuilds.map(g => (
+                                                                                            <button
+                                                                                                key={g.id}
+                                                                                                type="button"
+                                                                                                onClick={() => {
+                                                                                                    setTargetGuild(g);
+                                                                                                    setIsTargetGuildDropdownOpen(false);
+                                                                                                    setTargetChannelId("");
+                                                                                                    setTargetChannels([]);
+                                                                                                }}
+                                                                                                className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
+                                                                                            >
+                                                                                                {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{(g.name || "").substring(0, 2)}</div>}
+                                                                                                <span className="text-sm text-gray-700 truncate">{g.name}</span>
+                                                                                            </button>
+                                                                                        ))
+                                                                                    ) : (
+                                                                                        <div className="p-3 text-center text-xs text-gray-500">No servers found</div>
+                                                                                    )}
+                                                                                </div>
                                                                             </motion.div>
                                                                         )}
                                                                     </AnimatePresence>

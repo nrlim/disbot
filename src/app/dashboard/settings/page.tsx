@@ -7,6 +7,8 @@ import Image from "next/image";
 import { Shield, Zap, Settings as SettingsIcon } from "lucide-react";
 import { PLAN_LIMITS } from "@/lib/constants";
 import SettingsPricing from "@/components/SettingsPricing";
+import DiscordAccountManager from "@/components/DiscordAccountManager";
+import { getDiscordAccounts } from "@/actions/discord-account";
 
 export default async function SettingsPage() {
     const session = await getServerSession(authOptions);
@@ -31,6 +33,8 @@ export default async function SettingsPage() {
         where: { userId: session.user.id },
         orderBy: { createdAt: 'desc' }
     });
+
+    const discordAccounts = await getDiscordAccounts();
 
     return (
         <div className="max-w-5xl mx-auto space-y-8 px-4 sm:px-6 lg:px-8 py-8">
@@ -131,6 +135,11 @@ export default async function SettingsPage() {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* Linked Accounts */}
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+                <DiscordAccountManager accounts={discordAccounts} currentUser={session.user} />
             </div>
 
             {/* Upgrade Options */}
