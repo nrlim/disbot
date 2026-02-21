@@ -445,6 +445,13 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         }
     }, [selectedAccountId, selectedDestAccountId, config]);
 
+    // For T2D: Default destination account to first available
+    useEffect(() => {
+        if (sourcePlatform === 'TELEGRAM' && destinationPlatform === 'DISCORD' && localAccounts.length > 0 && !selectedDestAccountId && !config) {
+            setSelectedDestAccountId(localAccounts[0].id);
+        }
+    }, [sourcePlatform, destinationPlatform, localAccounts, selectedDestAccountId, config]);
+
     // Sync Source/Target Guilds when list loads
     useEffect(() => {
         if (config && (guilds.length > 0 || targetGuilds.length > 0)) {
@@ -561,6 +568,10 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                     return [newAcc, ...prev];
                 });
                 setSelectedAccountId(newAcc.id);
+                // Also set as destination account if we're configuring destination
+                if (sourcePlatform === 'TELEGRAM' || !selectedDestAccountId) {
+                    setSelectedDestAccountId(newAcc.id);
+                }
                 setIsAddingAccount(false);
                 setNewAccountToken("");
             }
@@ -991,12 +1002,12 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     };
 
     // Filter Logic
-    const filteredGuilds = guilds.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
-    const filteredChannels = channels.filter(c => c.name.toLowerCase().includes(channelSearchQuery.toLowerCase()));
-    const filteredTargetGuilds = targetGuilds.filter(g => g.name.toLowerCase().includes(targetSearchQuery.toLowerCase()));
-    const filteredTargetChannels = targetChannels.filter(c => c.name.toLowerCase().includes(targetChannelSearchQuery.toLowerCase()));
-    const filteredTelegramChats = telegramChats.filter(c => c.title.toLowerCase().includes(telegramChatSearchQuery.toLowerCase()));
-    const filteredDestTelegramChats = destinationTelegramChats.filter(c => c.title.toLowerCase().includes(destChatSearchQuery.toLowerCase()));
+    const filteredGuilds = guilds.filter(g => (g.name || "").toLowerCase().includes(searchQuery.toLowerCase()));
+    const filteredChannels = channels.filter(c => (c.name || "").toLowerCase().includes(channelSearchQuery.toLowerCase()));
+    const filteredTargetGuilds = targetGuilds.filter(g => (g.name || "").toLowerCase().includes(targetSearchQuery.toLowerCase()));
+    const filteredTargetChannels = targetChannels.filter(c => (c.name || "").toLowerCase().includes(targetChannelSearchQuery.toLowerCase()));
+    const filteredTelegramChats = telegramChats.filter(c => (c.title || "").toLowerCase().includes(telegramChatSearchQuery.toLowerCase()));
+    const filteredDestTelegramChats = destinationTelegramChats.filter(c => (c.title || "").toLowerCase().includes(destChatSearchQuery.toLowerCase()));
 
     const selectedChannel = channels.find(c => c.id === channelId);
     const selectedTargetChannel = targetChannels.find(c => c.id === targetChannelId);
@@ -1339,7 +1350,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                 {selectedGuild.icon ? (
                                                                                     <Image src={selectedGuild.icon} width={20} height={20} alt="" className="rounded-full" unoptimized />
                                                                                 ) : (
-                                                                                    <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">{selectedGuild.name.substring(0, 2)}</div>
+                                                                                    <div className="w-5 h-5 bg-gray-100 rounded-full flex items-center justify-center text-[9px] font-bold text-gray-500">{(selectedGuild.name || "").substring(0, 2)}</div>
                                                                                 )}
                                                                                 <span className="text-sm text-gray-900 truncate font-medium">{selectedGuild.name}</span>
                                                                             </div>
@@ -1378,7 +1389,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                                 onClick={() => { setSelectedGuild(g); setIsGuildDropdownOpen(false); }}
                                                                                                 className="w-full flex items-center gap-3 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
                                                                                             >
-                                                                                                {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{g.name.substring(0, 2)}</div>}
+                                                                                                {g.icon ? <Image src={g.icon} width={24} height={24} alt="" className="rounded-full" unoptimized /> : <div className="w-6 h-6 bg-gray-200 rounded-full flex items-center justify-center text-[10px] font-bold">{(g.name || "").substring(0, 2)}</div>}
                                                                                                 <span className="text-sm text-gray-700 truncate">{g.name}</span>
                                                                                             </button>
                                                                                         ))
@@ -1427,7 +1438,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                                     <button key={c.id} type="button" onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md text-left text-sm text-gray-700">
                                                                                                         <span className="text-gray-400">#</span>
                                                                                                         <span className="truncate flex-1">{c.name}</span>
-                                                                                                        <span className="text-xs text-gray-400 font-mono">{c.id.substring(0, 4)}...</span>
+                                                                                                        <span className="text-xs text-gray-400 font-mono">{(c.id || "").substring(0, 4)}...</span>
                                                                                                     </button>
                                                                                                 ))}
                                                                                             </div>
@@ -1607,7 +1618,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                                     onClick={() => {
                                                                                                         setTelegramChatId(c.id);
                                                                                                         setIsTelegramChatDropdownOpen(false);
-                                                                                                        if (!mirrorTitle.trim()) setMirrorTitle(c.title);
+                                                                                                        if (!mirrorTitle.trim()) setMirrorTitle(c.title || "");
                                                                                                     }}
                                                                                                     className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md transition-colors text-left"
                                                                                                 >
@@ -1705,7 +1716,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                             <span className="text-sm text-gray-700 font-medium">All Topics / General</span>
                                                                                             {!telegramTopicId && <CheckCircle2 className="w-4 h-4 text-primary ml-auto" />}
                                                                                         </button>
-                                                                                        {telegramTopics.filter(t => t.title.toLowerCase().includes(topicSearchQuery.toLowerCase())).map(t => (
+                                                                                        {telegramTopics.filter(t => (t.title || "").toLowerCase().includes(topicSearchQuery.toLowerCase())).map(t => (
                                                                                             <button
                                                                                                 key={t.id}
                                                                                                 type="button"
@@ -1921,6 +1932,43 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                             No Discord accounts linked.
                                                                         </div>
                                                                     )}
+
+                                                                    {/* Add Account UI for Destination */}
+                                                                    <div className="mt-2">
+                                                                        {!isAddingAccount ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setIsAddingAccount(true)}
+                                                                                className="w-full py-2 border border-dashed border-gray-300 rounded-lg text-xs text-gray-600 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-400 transition-all flex items-center justify-center gap-2"
+                                                                            >
+                                                                                <UserPlus className="w-3.5 h-3.5" /> Link Another Account
+                                                                            </button>
+                                                                        ) : (
+                                                                            <div className="p-3 bg-white rounded-lg border border-gray-200 space-y-2.5 shadow-sm">
+                                                                                <div className="flex justify-between items-center">
+                                                                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Manual Token Setup</span>
+                                                                                    <button onClick={() => setIsAddingAccount(false)}><X className="w-4 h-4 text-gray-400" /></button>
+                                                                                </div>
+                                                                                <input
+                                                                                    type="password"
+                                                                                    value={newAccountToken}
+                                                                                    onChange={(e) => setNewAccountToken(e.target.value)}
+                                                                                    placeholder="Paste User Token Here"
+                                                                                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm outline-none focus:border-primary transition-all font-mono"
+                                                                                />
+                                                                                {addAccountError && <p className="text-[10px] text-red-500 font-medium">{addAccountError}</p>}
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={handleAddNewAccount}
+                                                                                    disabled={isAddingAccountLoading || !newAccountToken}
+                                                                                    className="w-full py-2 bg-primary text-white text-xs font-bold rounded-md hover:bg-primary/90 transition-all flex justify-center gap-2 shadow-sm"
+                                                                                >
+                                                                                    {isAddingAccountLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                                                                    Verify & Select Account
+                                                                                </button>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                                 {/* Target Guild Select */}
                                                                 <div className="space-y-1.5 relative">

@@ -308,7 +308,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 sourceGuildId: validated.data.sourceGuildId,
 
                 // Relations
-                discordAccountId: sourcePlatform === "DISCORD" ? discordAccountId : null,
+                discordAccountId: discordAccountId || null,
                 telegramAccountId: (sourcePlatform === "TELEGRAM" || destinationPlatform === "TELEGRAM") ? telegramAccountIdToLink : null,
 
                 telegramChatId: validated.data.telegramChatId, // Store Telegram Chat ID (Source for T2D, Dest for D2T/T2T)
@@ -606,8 +606,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
 
             updateData.telegramChatId = telegramChatId; // Ensure updated
 
-            // Clear discord fields (only if dest is not Discord? But source is Telegram, so Discord Account ID is not needed unless we support T2D with account... which we do via Webhook, so no account needed)
-            updateData.discordAccountId = null;
+            if (discordAccountId) {
+                updateData.discordAccountId = discordAccountId;
+            }
         }
 
         // Account Logic for Destination Telegram (D2T)

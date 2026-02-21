@@ -165,10 +165,10 @@ export async function getTelegramTopics(sessionString: string, chatId: string): 
 
         if (result && result.topics) {
             return result.topics.map((t: any) => ({
-                id: t.id.toString(),
-                title: t.title,
-                color: t.iconColor,
-                iconEmojiId: t.iconEmojiId?.toString()
+                id: t.id?.toString() || "",
+                title: t.title || "Untitled",
+                color: typeof t.iconColor === 'bigint' ? Number(t.iconColor) : t.iconColor,
+                iconEmojiId: t.iconEmojiId?.toString() || null
             }));
         }
         return [];
@@ -201,7 +201,7 @@ export async function getTelegramMe(sessionString: string): Promise<{ id: string
 
         // Basic info
         const result = {
-            id: me.id.toString(),
+            id: me.id?.toString() || "",
             username: me.username || "",
             firstName: me.firstName || "",
             lastName: me.lastName || "",

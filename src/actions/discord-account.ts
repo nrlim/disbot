@@ -151,7 +151,8 @@ export async function getDiscordAccounts() {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return [];
 
-    return await prisma.discordAccount.findMany({
+    // 1. Get existing expert-mode accounts
+    const accounts = await prisma.discordAccount.findMany({
         where: { userId: session.user.id },
         orderBy: { createdAt: 'desc' },
         select: {
@@ -164,6 +165,55 @@ export async function getDiscordAccounts() {
             valid: true
         }
     });
+
+    // 2. Try to "Discover" the login account if no expert accounts exist or if it's missing
+    // This helps with the "linked from akun login" issue
+    try {
+        const oauthAccount = await prisma.account.findFirst({
+            where: { userId: session.user.id, provider: 'discord' }
+        });
+
+        if (oauthAccount && oauthAccount.access_token) {
+            const hasExpAccount = accounts.some(a => a.discordId === oauthAccount.providerAccountId);
+
+            if (!hasExpAccount) {
+                // Auto-create an expert-mode record for the login account 
+                // Note: OAuth tokens are shorter-lived, but this provides a better first-time experience
+                const res = await fetch("https://discord.com/api/v9/users/@me", {
+                    headers: { Authorization: `Bearer ${oauthAccount.access_token}` }
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    const newAcc = await prisma.discordAccount.create({
+                        data: {
+                            userId: session.user.id,
+                            discordId: data.id,
+                            username: data.username,
+                            discriminator: data.discriminator,
+                            avatar: data.avatar,
+                            token: encrypt(`Bearer ${oauthAccount.access_token}`),
+                            valid: true
+                        },
+                        select: {
+                            id: true,
+                            username: true,
+                            discriminator: true,
+                            avatar: true,
+                            discordId: true,
+                            createdAt: true,
+                            valid: true
+                        }
+                    });
+                    return [newAcc, ...accounts];
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Auto-sync OAuth account error:", e);
+    }
+
+    return accounts;
 }
 
 export async function deleteDiscordAccount(id: string) {
