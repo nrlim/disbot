@@ -110,6 +110,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [targetMode, setTargetMode] = useState<'CHANNEL'>('CHANNEL');
     const [targetGuild, setTargetGuild] = useState<Guild | null>(null);
     const [targetChannels, setTargetChannels] = useState<Channel[]>([]);
+    const [targetChannelsError, setTargetChannelsError] = useState<string | null>(null);
     const [targetChannelId, setTargetChannelId] = useState("");
     const [targetSearchQuery, setTargetSearchQuery] = useState("");
     const [targetChannelSearchQuery, setTargetChannelSearchQuery] = useState("");
@@ -188,6 +189,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [guilds, setGuilds] = useState<Guild[]>([]);
     const [targetGuilds, setTargetGuilds] = useState<Guild[]>([]);
     const [channels, setChannels] = useState<Channel[]>([]);
+    const [channelsError, setChannelsError] = useState<string | null>(null);
     const [isLoadingGuilds, setIsLoadingGuilds] = useState(false);
     const [isLoadingTargetGuilds, setIsLoadingTargetGuilds] = useState(false);
     const [isLoadingChannels, setIsLoadingChannels] = useState(false);
@@ -495,15 +497,18 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         const fetchChannels = async () => {
             setChannels([]);
             setIsLoadingChannels(true);
+            setChannelsError(null);
             try {
                 const res: any = await getChannelsForGuild(selectedAccountId, selectedGuild.id);
                 if (!res.error && Array.isArray(res)) {
                     setChannels(res);
                 } else if (res.error) {
                     console.error("Fetch Channels Error:", res.error);
+                    setChannelsError(res.error);
                 }
             } catch (e) {
                 console.error(e);
+                setChannelsError("Failed to fetch channels");
             } finally {
                 setIsLoadingChannels(false);
             }
@@ -611,8 +616,18 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 toast.error(res.error);
             } else {
                 setLocalAccounts(prev => prev.filter(a => a.id !== id));
-                if (selectedAccountId === id) setSelectedAccountId(null);
-                if (selectedDestAccountId === id) setSelectedDestAccountId(null);
+                if (selectedAccountId === id) {
+                    setSelectedAccountId(null);
+                    setSelectedGuild(null);
+                    setChannelId("");
+                    setChannels([]);
+                }
+                if (selectedDestAccountId === id) {
+                    setSelectedDestAccountId(null);
+                    setTargetGuild(null);
+                    setTargetChannelId("");
+                    setTargetChannels([]);
+                }
                 toast.success("Account removed");
             }
         } catch (e) {
@@ -626,17 +641,25 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             const fetchCh = async () => {
                 setTargetChannels([]);
                 setIsLoadingTargetChannels(true);
+                setTargetChannelsError(null);
                 try {
                     const res: any = await getChannelsForGuild(selectedDestAccountId, targetGuild.id);
                     if (!res.error && Array.isArray(res)) {
                         setTargetChannels(res);
+                    } else if (res.error) {
+                        setTargetChannelsError(res.error);
                     }
-                } catch (e) { console.error("Fetch Error:", e); }
-                finally { setIsLoadingTargetChannels(false); }
+                } catch (e) {
+                    console.error("Fetch Error:", e);
+                    setTargetChannelsError("Failed to load target channels");
+                } finally {
+                    setIsLoadingTargetChannels(false);
+                }
             };
             fetchCh();
         } else {
             setTargetChannels([]);
+            setTargetChannelsError(null);
         }
     }, [targetGuild?.id, targetMode, selectedDestAccountId]);
 
@@ -767,16 +790,22 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
     // Fetch Telegram Topics (short-lived connection — unavoidable for per-chat data)
     useEffect(() => {
-        if (sourcePlatform === 'TELEGRAM' && (telegramSession || selectedTelegramSourceAccountId) && telegramChatId) {
+        const isTgSource = sourcePlatform === 'TELEGRAM' && (telegramSession || selectedTelegramSourceAccountId);
+        const isTgDest = isTelegramDestination && selectedTelegramDestAccountId;
+
+        if ((isTgSource || isTgDest) && telegramChatId) {
             const fetchTopics = async () => {
                 setIsLoadingTopics(true);
                 try {
                     let res;
-                    if (selectedTelegramSourceAccountId) {
-                        res = await getTelegramTopicsForAccount(selectedTelegramSourceAccountId, telegramChatId);
+                    const activeAccountId = isTgDest ? selectedTelegramDestAccountId : selectedTelegramSourceAccountId;
+
+                    if (activeAccountId) {
+                        res = await getTelegramTopicsForAccount(activeAccountId, telegramChatId);
                     } else if (telegramSession) {
                         res = await getTelegramTopicsAction(telegramSession, telegramChatId);
                     }
+
                     if (res?.success && res.topics) {
                         setTelegramTopics(res.topics);
                     } else {
@@ -793,7 +822,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         } else {
             setTelegramTopics([]);
         }
-    }, [telegramChatId, telegramSession, selectedTelegramSourceAccountId, sourcePlatform]);
+    }, [telegramChatId, telegramSession, selectedTelegramSourceAccountId, selectedTelegramDestAccountId, sourcePlatform, isTelegramDestination]);
 
 
     // Fetch Destination Telegram Chats when Account changes (uses cached data)
@@ -1497,14 +1526,22 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                                 <input type="text" value={channelSearchQuery} onChange={(e) => setChannelSearchQuery(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-md text-sm outline-none focus:border-primary" placeholder="Search..." autoFocus />
                                                                                             </div>
                                                                                             <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                                {filteredChannels.map(c => (
+                                                                                                {isLoadingChannels ? (
+                                                                                                    <div className="p-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div>
+                                                                                                ) : channelsError ? (
+                                                                                                    <div className="p-3 text-center text-xs text-red-500 font-medium bg-red-50 rounded-md m-1 border border-red-100">{channelsError}</div>
+                                                                                                ) : filteredChannels.map(c => (
                                                                                                     <button key={c.id} type="button" onClick={() => { setChannelId(c.id); setIsChannelDropdownOpen(false); }} className="w-full flex items-center gap-2 p-2 hover:bg-gray-50 rounded-md text-left text-sm text-gray-700">
                                                                                                         <span className="text-gray-400">#</span>
                                                                                                         <span className="truncate flex-1">{c.name}</span>
                                                                                                         <span className="text-xs text-gray-400 font-mono">{(c.id || "").substring(0, 4)}...</span>
                                                                                                     </button>
                                                                                                 ))}
+                                                                                                {!isLoadingChannels && !channelsError && filteredChannels.length === 0 && (
+                                                                                                    <div className="p-3 text-center text-xs text-gray-400">No channels found</div>
+                                                                                                )}
                                                                                             </div>
+
                                                                                         </motion.div>
                                                                                     )}
                                                                                 </AnimatePresence>
@@ -2127,12 +2164,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                         />
                                                                                     </div>
                                                                                     <div className="overflow-y-auto p-1 max-h-48 custom-scrollbar">
-                                                                                        {filteredTargetChannels.length > 0 ? filteredTargetChannels.map(c => (
+                                                                                        {isLoadingTargetChannels ? (
+                                                                                            <div className="p-4 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div>
+                                                                                        ) : targetChannelsError ? (
+                                                                                            <div className="p-3 text-center text-xs text-red-500 font-medium bg-red-50 rounded-md m-1 border border-red-100">{targetChannelsError}</div>
+                                                                                        ) : filteredTargetChannels.length > 0 ? filteredTargetChannels.map(c => (
                                                                                             <button key={c.id} type="button" onClick={() => { setTargetChannelId(c.id); setIsTargetChannelDropdownOpen(false); }} className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-md truncate">#{c.name}</button>
                                                                                         )) : (
                                                                                             <div className="p-2 text-xs text-gray-400 text-center">No channels found</div>
                                                                                         )}
                                                                                     </div>
+
                                                                                 </motion.div>
                                                                             )}
                                                                         </AnimatePresence>

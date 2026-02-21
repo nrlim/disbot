@@ -57,7 +57,7 @@ export default function DiscordAccountManager({ accounts, currentUser }: Props) 
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm("Remove this account? This may break active mirrors using it.")) return;
+        if (!confirm("Remove this account? Any active mirrors using this profile will be disconnected and stopped.")) return;
         setIsDeleting(id);
         const res: any = await deleteDiscordAccount(id);
         if (res.error) {

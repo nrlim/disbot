@@ -252,6 +252,12 @@ export async function deleteDiscordAccount(id: string) {
     if (!session?.user?.id) return { error: "Unauthorized" };
 
     try {
+        // Deactivate any mirrors currently using this account before deleting
+        await prisma.mirrorConfig.updateMany({
+            where: { discordAccountId: id, userId: session.user.id },
+            data: { active: false, status: "Account Deleted", discordAccountId: null }
+        });
+
         await prisma.discordAccount.delete({
             where: { id, userId: session.user.id }
         });
