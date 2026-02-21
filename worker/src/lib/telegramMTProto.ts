@@ -163,14 +163,18 @@ export class TelegramListener {
                 logger.info({ configCount: sessionConfigs.length }, 'Starting new Telegram MTProto session');
                 try {
                     // ── Validate session string BEFORE passing to StringSession ──
-                    // StringSession expects a hex-encoded string (or empty for new sessions).
-                    // If the string is corrupted/non-hex after decryption, it throws "Not a valid string".
+                    // StringSession requires: first char must be "1" (version), rest is base64.
+                    // If the string is still encrypted (iv:tag:data) or corrupted, it will fail.
                     if (!this.isValidSessionString(token)) {
+                        const looksEncrypted = (token.match(/:/g) || []).length === 2;
                         logger.error({
                             configCount: sessionConfigs.length,
-                            tokenPreview: token.substring(0, 20) + '...',
-                            tokenLength: token.length
-                        }, 'Skipping Telegram session: Invalid session string format (not valid hex). The stored session may be corrupted or the ENCRYPTION_KEY may have changed.');
+                            tokenLength: token.length,
+                            firstChar: token[0],
+                            expectedFirstChar: '1',
+                            looksStillEncrypted: looksEncrypted,
+                            tokenPreview: token.substring(0, 30) + '...',
+                        }, `Skipping Telegram session: StringSession requires first char "1" but got "${token[0]}". ${looksEncrypted ? 'Session appears still encrypted (contains 2 colons) — decryption may have been skipped or ENCRYPTION_KEY is wrong.' : 'Session may be corrupted — user should re-link their Telegram account.'}`);
                         return;
                     }
 

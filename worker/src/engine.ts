@@ -76,11 +76,30 @@ export class Engine {
                     resolvedUserToken = cfg.userToken;
                 }
 
-                let resolvedTgSession = undefined;
+                let resolvedTgSession: string | undefined = undefined;
+                const sessionSource = cfg.telegramAccount?.sessionString
+                    ? 'TelegramAccount'
+                    : cfg.telegramSession
+                        ? 'MirrorConfig (legacy)'
+                        : 'NONE';
+
                 if (cfg.telegramAccount && cfg.telegramAccount.sessionString) {
                     resolvedTgSession = cfg.telegramAccount.sessionString;
                 } else if (cfg.telegramSession) {
                     resolvedTgSession = cfg.telegramSession; // Legacy fallback
+                }
+
+                // DEBUG: Log raw session info before decryption
+                if (resolvedTgSession) {
+                    logger.info({
+                        configId: cfg.id,
+                        sessionSource,
+                        rawLength: resolvedTgSession.length,
+                        rawFirstChar: resolvedTgSession[0],
+                        rawPreview: resolvedTgSession.substring(0, 30) + '...',
+                        containsColon: resolvedTgSession.includes(':'),
+                        colonCount: (resolvedTgSession.match(/:/g) || []).length,
+                    }, '[Sync][DEBUG] Raw Telegram session from DB');
                 }
 
                 // Decrypt session early so both discordConfigs (for D2T delivery) and
@@ -90,6 +109,14 @@ export class Engine {
                 if (resolvedTgSession && resolvedTgSession.includes(':')) {
                     const decrypted = decrypt(resolvedTgSession, process.env.ENCRYPTION_KEY || '');
                     if (decrypted && decrypted.trim().length > 0) {
+                        // DEBUG: Log decrypted session info
+                        logger.info({
+                            configId: cfg.id,
+                            decryptedLength: decrypted.length,
+                            decryptedFirstChar: decrypted[0],
+                            decryptedPreview: decrypted.substring(0, 30) + '...',
+                            startsWithOne: decrypted[0] === '1',
+                        }, '[Sync][DEBUG] Decrypted Telegram session');
                         resolvedTgSession = decrypted;
                     } else {
                         logger.warn({
@@ -99,6 +126,15 @@ export class Engine {
                         }, '[Sync] Telegram session decryption failed or returned empty — skipping. Check ENCRYPTION_KEY or re-link Telegram account.');
                         resolvedTgSession = undefined; // Do not use the encrypted string
                     }
+                } else if (resolvedTgSession) {
+                    // Session does NOT contain ':' — meaning it's NOT encrypted
+                    // This could be a raw session or a legacy unencrypted value
+                    logger.info({
+                        configId: cfg.id,
+                        sessionLength: resolvedTgSession.length,
+                        firstChar: resolvedTgSession[0],
+                        startsWithOne: resolvedTgSession[0] === '1',
+                    }, '[Sync][DEBUG] Session has no colon — NOT encrypted, using raw value');
                 }
 
                 let resolvedTgChatId = undefined;
