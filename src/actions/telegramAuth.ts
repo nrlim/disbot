@@ -261,7 +261,8 @@ export async function getTelegramAccounts() {
             id: true,
             username: true,
             phone: true,
-            sessionString: true,
+            // NOTE: Do NOT return sessionString to the frontend.
+            // It caused double-encryption: frontend sent it back → mirror.ts encrypted again.
             createdAt: true,
             valid: true,
             firstName: true,

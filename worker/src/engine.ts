@@ -89,52 +89,66 @@ export class Engine {
                     resolvedTgSession = cfg.telegramSession; // Legacy fallback
                 }
 
-                // DEBUG: Log raw session info before decryption
+                // Log raw session info before decryption
                 if (resolvedTgSession) {
-                    logger.info({
+                    logger.debug({
                         configId: cfg.id,
                         sessionSource,
                         rawLength: resolvedTgSession.length,
                         rawFirstChar: resolvedTgSession[0],
-                        rawPreview: resolvedTgSession.substring(0, 30) + '...',
                         containsColon: resolvedTgSession.includes(':'),
-                        colonCount: (resolvedTgSession.match(/:/g) || []).length,
-                    }, '[Sync][DEBUG] Raw Telegram session from DB');
+                    }, '[Sync] Raw Telegram session from DB');
                 }
 
-                // Decrypt session early so both discordConfigs (for D2T delivery) and
-                // telegramConfigs (for Listener) use the same decrypted key.
-                // Without this, TelegramDeliveryService passes the encrypted session to
-                // getOrConnectClient(), which can't find it in the sessions map (keyed by decrypted strings).
+                // Decrypt session — may need multiple rounds if double-encrypted.
+                // BUG: The dashboard's getTelegramAccounts() returns encrypted sessionString
+                // to the frontend. When the user creates/updates a mirror, the frontend sends
+                // this encrypted value back as `telegramSession`, and mirror.ts calls
+                // encrypt(telegramSession) again — double-encrypting it. 
+                // The worker must peel ALL encryption layers to get the raw session.
                 if (resolvedTgSession && resolvedTgSession.includes(':')) {
-                    const decrypted = decrypt(resolvedTgSession, process.env.ENCRYPTION_KEY || '');
-                    if (decrypted && decrypted.trim().length > 0) {
-                        // DEBUG: Log decrypted session info
-                        logger.info({
-                            configId: cfg.id,
-                            decryptedLength: decrypted.length,
-                            decryptedFirstChar: decrypted[0],
-                            decryptedPreview: decrypted.substring(0, 30) + '...',
-                            startsWithOne: decrypted[0] === '1',
-                        }, '[Sync][DEBUG] Decrypted Telegram session');
-                        resolvedTgSession = decrypted;
-                    } else {
+                    let decryptionRound = 0;
+                    const MAX_ROUNDS = 3; // Safety limit
+
+                    while (resolvedTgSession && decryptionRound < MAX_ROUNDS) {
+                        // Check if current value looks encrypted (iv:tag:data = exactly 3 colon-separated hex parts)
+                        const parts = resolvedTgSession.split(':');
+                        if (parts.length !== 3) break; // Not our encryption format
+
+                        decryptionRound++;
+                        const decrypted = decrypt(resolvedTgSession, process.env.ENCRYPTION_KEY || '');
+                        if (decrypted && decrypted.trim().length > 0) {
+                            logger.debug({
+                                configId: cfg.id,
+                                round: decryptionRound,
+                                resultLength: decrypted.length,
+                                resultFirstChar: decrypted[0],
+                                stillEncrypted: decrypted.split(':').length === 3,
+                            }, '[Sync] Decryption round complete');
+                            resolvedTgSession = decrypted;
+                        } else {
+                            logger.warn({
+                                configId: cfg.id,
+                                userId: cfg.userId,
+                                round: decryptionRound,
+                            }, '[Sync] Telegram session decryption failed — skipping. Check ENCRYPTION_KEY or re-link Telegram account.');
+                            resolvedTgSession = undefined;
+                            break;
+                        }
+                    }
+
+                    if (resolvedTgSession && decryptionRound > 1) {
                         logger.warn({
                             configId: cfg.id,
-                            userId: cfg.userId,
-                            sessionPreview: resolvedTgSession.substring(0, 15) + '...',
-                        }, '[Sync] Telegram session decryption failed or returned empty — skipping. Check ENCRYPTION_KEY or re-link Telegram account.');
-                        resolvedTgSession = undefined; // Do not use the encrypted string
+                            totalRounds: decryptionRound,
+                        }, '[Sync] Session was multi-encrypted — peeled all layers successfully');
                     }
                 } else if (resolvedTgSession) {
-                    // Session does NOT contain ':' — meaning it's NOT encrypted
-                    // This could be a raw session or a legacy unencrypted value
-                    logger.info({
+                    logger.debug({
                         configId: cfg.id,
                         sessionLength: resolvedTgSession.length,
                         firstChar: resolvedTgSession[0],
-                        startsWithOne: resolvedTgSession[0] === '1',
-                    }, '[Sync][DEBUG] Session has no colon — NOT encrypted, using raw value');
+                    }, '[Sync] Session has no colon — using raw value');
                 }
 
                 let resolvedTgChatId = undefined;
