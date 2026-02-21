@@ -29,15 +29,15 @@ export class Engine {
     public async start() {
         logger.info({
             pathLimits: PLAN_PATH_LIMITS,
-            syncInterval: '5 minutes',
+            syncInterval: '30 seconds',
             mode: 'OPTIMIZED_STREAMING'
         }, 'DISBOT Mirroring Engine Started');
 
         // Initial Sync
         await this.sync();
 
-        // Schedule Sync
-        this.syncInterval = setInterval(() => this.sync(), 5 * 60 * 1000);
+        // Schedule Sync (every 30 seconds for faster updates)
+        this.syncInterval = setInterval(() => this.sync(), 30 * 1000);
 
         // Signal Handlers
         process.on('SIGINT', () => this.shutdown());
