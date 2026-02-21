@@ -6,6 +6,7 @@ import { enforcePathLimits, validatePlanConfig, PLAN_PATH_LIMITS } from './lib/p
 import { decrypt, validateEncryptionConfig } from './lib/crypto';
 import { TelegramListener } from './lib/telegramMTProto';
 import { DiscordMirror } from './lib/discordMirror';
+import { TelegramDeliveryService } from './lib/TelegramDeliveryService';
 import { BackgroundTaskManager } from './lib/backgroundTask';
 import { MirrorActiveConfig, TelegramConfig } from './lib/types';
 import { prisma } from './lib/prisma';
@@ -375,6 +376,8 @@ export class Engine {
         logger.info('Shutting down engine...');
 
         await backgroundTasks.shutdown();
+        // Flush the delivery retry queue BEFORE destroying Telegram connections
+        await TelegramDeliveryService.getInstance().shutdown();
         await telegramListener.shutdown();
         await discordMirror.shutdown();
         await prisma.$disconnect();
