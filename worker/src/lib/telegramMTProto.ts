@@ -152,10 +152,10 @@ export class TelegramListener {
                 session.lastActive = Date.now();
                 logger.debug({ configCount: sessionConfigs.length }, 'Updated existing Telegram session configs');
 
-                // 2. Ensure client is still connected
-                if (!session.client.connected) {
+                // 2. Ensure client is still connected (prevent spamming connect() if already attempting)
+                if (!session.client.connected && session.reconnectFailures < 3) {
                     logger.warn({ token: token.substring(0, 10) + '...' }, 'Telegram client disconnected — attempting auto-reconnect');
-                    session.client.connect().catch(e => {
+                    session.client.connect().then(() => { session!.reconnectFailures = 0; }).catch(e => {
                         logger.error({ error: e.message }, 'Failed to reconnect Telegram client during sync');
                     });
                 }
@@ -241,65 +241,63 @@ export class TelegramListener {
                 }
             }
 
-            // Re-check session after setup
             if (session) {
                 if (!session.client.connected) {
                     logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected immediately? Triggering reconnect.');
                     try {
                         await session.client.connect();
+                        session.reconnectFailures = 0;
                     } catch (e: any) {
                         logger.error({ error: e.message }, 'Post-setup reconnect failed — session will be retried on next sync');
                     }
                 }
 
-                // Reset reconnect failures on successful setup
-                session.reconnectFailures = 0;
-
-                // robust-keep-alive
-                if (session.keepAliveInterval) clearInterval(session.keepAliveInterval);
-                session.keepAliveInterval = setInterval(async () => {
-                    const MAX_RECONNECT_FAILURES = 3;
-                    try {
-                        if (!session.client.connected) {
-                            logger.warn({ token: token.substring(0, 8) + '...', failures: session.reconnectFailures }, 'Active Keep-Alive: Client disconnected, reconnecting...');
-                            await session.client.connect();
-                            session.reconnectFailures = 0; // Reset on success
-                        } else {
-                            // Active Ping to ensure socket is responsive
-                            // We use getMe() as a reliable test of session validity + connectivity
-                            // A timeout here means the socket is hung
-                            const pingPromise = session.client.getMe();
-                            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
-
-                            await Promise.race([pingPromise, timeoutPromise]);
-                            session.reconnectFailures = 0; // Reset on successful ping
-                        }
-                    } catch (err: any) {
-                        session.reconnectFailures++;
-                        logger.error({
-                            error: err.message,
-                            failures: session.reconnectFailures,
-                            maxFailures: MAX_RECONNECT_FAILURES
-                        }, 'Active Keep-Alive: Ping/reconnect failed');
-
-                        if (session.reconnectFailures >= MAX_RECONNECT_FAILURES) {
-                            logger.warn({ token: token.substring(0, 8) + '...' },
-                                `Active Keep-Alive: ${MAX_RECONNECT_FAILURES} consecutive failures — destroying session for clean re-creation on next sync`);
-                            await this.destroySession(token, session);
-                            return; // Stop the interval (it's cleared inside destroySession)
-                        }
-
-                        // Still under threshold — try disconnect+reconnect
+                // robust-keep-alive - Setup ONLY once
+                if (!session.keepAliveInterval) {
+                    session.keepAliveInterval = setInterval(async () => {
+                        const MAX_RECONNECT_FAILURES = 3;
                         try {
-                            await session.client.disconnect();
-                            await new Promise(r => setTimeout(r, 2000)); // Wait 2s before reconnecting
-                            await session.client.connect();
-                            session.reconnectFailures = 0; // Reset on success
-                        } catch (e: any) {
-                            logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect attempt also failed');
+                            if (!session.client.connected) {
+                                logger.warn({ token: token.substring(0, 8) + '...', failures: session.reconnectFailures }, 'Active Keep-Alive: Client disconnected, reconnecting...');
+                                await session.client.connect();
+                                session.reconnectFailures = 0; // Reset on success
+                            } else {
+                                // Active Ping to ensure socket is responsive
+                                // We use getMe() as a reliable test of session validity + connectivity
+                                // A timeout here means the socket is hung
+                                const pingPromise = session.client.getMe();
+                                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
+
+                                await Promise.race([pingPromise, timeoutPromise]);
+                                session.reconnectFailures = 0; // Reset on successful ping
+                            }
+                        } catch (err: any) {
+                            session.reconnectFailures++;
+                            logger.error({
+                                error: err.message,
+                                failures: session.reconnectFailures,
+                                maxFailures: MAX_RECONNECT_FAILURES
+                            }, 'Active Keep-Alive: Ping/reconnect failed');
+
+                            if (session.reconnectFailures >= MAX_RECONNECT_FAILURES) {
+                                logger.warn({ token: token.substring(0, 8) + '...' },
+                                    `Active Keep-Alive: ${MAX_RECONNECT_FAILURES} consecutive failures — destroying session for clean re-creation on next sync`);
+                                await this.destroySession(token, session);
+                                return; // Stop the interval (it's cleared inside destroySession)
+                            }
+
+                            // Still under threshold — try disconnect+reconnect
+                            try {
+                                await session.client.disconnect();
+                                await new Promise(r => setTimeout(r, 2000)); // Wait 2s before reconnecting
+                                await session.client.connect();
+                                session.reconnectFailures = 0; // Reset on success
+                            } catch (e: any) {
+                                logger.error({ error: e.message }, 'Active Keep-Alive: Reconnect attempt also failed');
+                            }
                         }
-                    }
-                }, 45_000); // Check every 45s (was 30s — slightly less aggressive to reduce spam)
+                    }, 45_000); // Check every 45s
+                }
             }
         });
 
@@ -319,12 +317,22 @@ export class TelegramListener {
         if (!session) return;
 
         const chatId = chat.id.toString();
+
+        logger.info({
+            incomingChatId: chatId,
+            messageId: message.id,
+            configsCount: session.configs.length,
+            configuredChatIds: session.configs.map(c => c.telegramChatId)
+        }, '[Telegram] Received message');
+
         const matchedConfigs = session.configs.filter(c => {
             if (!c.telegramChatId) return false;
             return this.matchChatId(c.telegramChatId, chatId);
         });
 
-        if (matchedConfigs.length === 0) return;
+        if (matchedConfigs.length === 0) {
+            return;
+        }
 
         // Resolve Topic ID (Forum thread ID)
         const replyHeader = message.replyTo as any;
