@@ -2222,7 +2222,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                             </div>
                                                                         )}
 
-                                                                        {!isLoadingWebhooks && !webhookError && (
+                                                                        {!isLoadingWebhooks && !webhookError && webhooks.length === 0 && (
                                                                             <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-2">
                                                                                 <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Create New Webhook</label>
                                                                                 <div className="flex items-center gap-2">
