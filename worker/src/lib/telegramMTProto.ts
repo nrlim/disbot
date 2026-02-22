@@ -296,23 +296,27 @@ export class TelegramListener {
         const message = event.message;
         if (!message) return;
 
-        const chat = await message.getChat();
-        if (!chat) return;
+        const peerId = message.peerId as any;
+        const msgId = message.id;
+
+        const chat = await message.getChat().catch((e: any) => {
+            logger.warn({ msgId, peerId, error: e.message }, "[Telegram] Failed to get chat for message");
+            return null;
+        });
+
+        if (!chat) {
+            logger.debug({ msgId, peerId }, "[Telegram] message.getChat() returned null, skipping");
+            return;
+        }
 
         const session = this.sessions.get(token);
         if (!session) return;
 
         // ── Resolve Chat ID ──
-        // GramJS can return different ID formats depending on the source:
-        //   - getDialogs().id (setup) -> marked ID like "-1002131903946"
-        //   - getChat().id (event)   -> raw peer ID like "2131903946" (no -100 prefix)
-        //   - message.peerId         -> structured { channelId } for channels
-        //
-        // We normalize ALL IDs to multiple candidate forms for reliable matching.
+        // GramJS can return different ID formats depending on the source
         const rawChatId = chat.id.toString();
 
         // Also extract from peerId for cross-reference
-        const peerId = message.peerId as any;
         const peerChannelId = peerId?.channelId?.toString();
         const peerChatId = peerId?.chatId?.toString();
         const peerUserId = peerId?.userId?.toString();
@@ -333,6 +337,16 @@ export class TelegramListener {
         }
 
         const incomingChatTitle = (chat as any).title || (chat as any).firstName || 'Unknown';
+
+        // DEBUG: specifically looking for "Meme Coin Indonesia" messages
+        if (chatId.includes('2131903946') || incomingChatTitle.includes('Meme')) {
+            logger.info({
+                chatId, rawChatId, peerChannelId, peerChatId, msgId,
+                senderId: message.sender?.id?.toString(),
+                textLen: message.text?.length,
+                messageLen: message.message?.length
+            }, "[Telegram] MEEEE COIN DEBUG: Message arriving at target chat!");
+        }
 
         logger.info({
             incomingChatId: chatId,
