@@ -272,8 +272,19 @@ export class TelegramListener {
                                 await this.destroySession(token, session);
                                 return;
                             } else {
-                                // Active Ping to ensure socket is responsive
-                                const pingPromise = session.client.getMe();
+                                // Active Ping to ensure socket is responsive + channel activity heartbeat
+                                // By periodically touching the configured chats, we signal to Telegram's 
+                                // server that this session is still reading these channels, preventing 
+                                // it from silencing incoming events for busy supergroups.
+                                const getChatsPromises = session.configs
+                                    .filter((c) => c.telegramChatId)
+                                    .map((c) => session.client.getEntity(parseInt(c.telegramChatId!)).catch(() => null));
+
+                                const pingPromise = Promise.all([
+                                    session.client.getMe(),
+                                    ...getChatsPromises
+                                ]);
+
                                 const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
 
                                 await Promise.race([pingPromise, timeoutPromise]);
@@ -488,8 +499,30 @@ export class TelegramListener {
         const avatarBuffer = await this.getAvatarBuffer(session.client, sender).catch(() => null);
 
         // Bots and rich media messages often use message.message instead of message.text
-        const messageText = message.text || message.message || '';
-        const content = messageText.trim();
+        let messageText = message.text || message.message || '';
+
+        // Extract inline buttons (Bot UI) if they exist
+        let botButtons = '';
+        try {
+            const markup = message.replyMarkup as any;
+            if (markup && markup.rows) {
+                for (const row of markup.rows) {
+                    const rowButtons = [];
+                    for (const btn of row.buttons) {
+                        if (btn.text) {
+                            rowButtons.push(`[🔘 ${btn.text}]${btn.url ? `(${btn.url})` : ''}`);
+                        }
+                    }
+                    if (rowButtons.length > 0) {
+                        botButtons += `\n${rowButtons.join('  ')}`;
+                    }
+                }
+            }
+        } catch (e) {
+            logger.debug({ error: e instanceof Error ? e.message : String(e) }, 'Failed to parse bot inline buttons');
+        }
+
+        const content = (messageText.trim() + botButtons).trim();
         const finalContent = `${replyContext}${forwardContext}${content}`.trim();
 
         const normalizedChatId = chatId.replace(/^-100/, '');
