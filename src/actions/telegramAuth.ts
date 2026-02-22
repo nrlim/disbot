@@ -4,7 +4,8 @@ import { sendAuthCode as protoSendCode, completeAuth as protoCompleteAuth, getTe
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
-import { decrypt } from "@/lib/encryption";
+import { decrypt, encrypt } from "@/lib/encryption";
+import { revalidatePath } from "next/cache";
 
 // ──────────────────────────────────────────────────────────────
 //  Cache Duration: How long before we consider cached chats stale
@@ -312,5 +313,119 @@ export async function cacheTelegramChatsForAccount(accountId: string) {
         });
     } catch (e: any) {
         console.error("Cache Telegram chats error:", e?.message);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Delete Telegram Account
+// ──────────────────────────────────────────────────────────────
+
+export async function deleteTelegramAccount(id: string) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) return { error: "Unauthorized" };
+
+    try {
+        // 1. Deactivate any mirrors currently using this Telegram account
+        await prisma.mirrorConfig.updateMany({
+            where: { telegramAccountId: id, userId: session.user.id },
+            data: { active: false, status: "Account Deleted", telegramAccountId: null }
+        });
+
+        // 2. Delete the Telegram account record
+        await prisma.telegramAccount.delete({
+            where: { id, userId: session.user.id }
+        });
+
+        revalidatePath("/dashboard/settings");
+        revalidatePath("/dashboard/expert");
+        return { success: true };
+    } catch (e: any) {
+        console.error("Delete Telegram account error:", e?.message);
+        return { error: "Failed to delete Telegram account" };
+    }
+}
+
+// ──────────────────────────────────────────────────────────────
+//  Save (Link) a New Telegram Account
+// ──────────────────────────────────────────────────────────────
+
+export async function saveTelegramAccount(params: {
+    phone: string;
+    sessionString: string;
+}) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) return { error: "Unauthorized" };
+
+    const { phone, sessionString } = params;
+    if (!phone || !sessionString) return { error: "Phone and session are required" };
+
+    try {
+        // Check limit (Max 5 Telegram accounts)
+        const count = await prisma.telegramAccount.count({
+            where: { userId: session.user.id }
+        });
+
+        if (count >= 5) {
+            return { error: "Telegram account limit reached (Max 5)." };
+        }
+
+        // Check for duplicate by phone number
+        const existing = await prisma.telegramAccount.findFirst({
+            where: { userId: session.user.id, phone }
+        });
+
+        if (existing) {
+            // Update session string if re-adding the same phone
+            await prisma.telegramAccount.update({
+                where: { id: existing.id },
+                data: {
+                    sessionString: encrypt(sessionString),
+                    valid: true
+                }
+            });
+
+            // Refresh profile + cache in background
+            cacheTelegramChatsForAccount(existing.id).catch(() => { });
+
+            revalidatePath("/dashboard/settings");
+            revalidatePath("/dashboard/expert");
+            return { success: true, accountId: existing.id, updated: true };
+        }
+
+        // Fetch profile info before saving
+        let profileData: any = {};
+        try {
+            const me = await getTelegramMe(sessionString);
+            profileData = {
+                username: me.username || null,
+                telegramId: me.id || null,
+                firstName: me.firstName || null,
+                lastName: me.lastName || null,
+                photoUrl: me.photoUrl || null,
+            };
+        } catch (e) {
+            console.error("Failed to fetch Telegram profile during save:", e);
+        }
+
+        // Create new account
+        const newAccount = await prisma.telegramAccount.create({
+            data: {
+                userId: session.user.id,
+                phone,
+                sessionString: encrypt(sessionString),
+                valid: true,
+                ...profileData
+            }
+        });
+
+        // Cache chats in background
+        cacheTelegramChatsForAccount(newAccount.id).catch(() => { });
+
+        revalidatePath("/dashboard/settings");
+        revalidatePath("/dashboard/expert");
+        return { success: true, accountId: newAccount.id };
+    } catch (e: any) {
+        console.error("Save Telegram account error:", e?.message);
+        return { error: "Failed to save Telegram account: " + (e.message || "Unknown") };
     }
 }
