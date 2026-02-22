@@ -302,10 +302,41 @@ export class TelegramListener {
         const session = this.sessions.get(token);
         if (!session) return;
 
-        const chatId = chat.id.toString();
+        // ── Resolve Chat ID ──
+        // GramJS can return different ID formats depending on the source:
+        //   - getDialogs().id (setup) -> marked ID like "-1002131903946"
+        //   - getChat().id (event)   -> raw peer ID like "2131903946" (no -100 prefix)
+        //   - message.peerId         -> structured { channelId } for channels
+        //
+        // We normalize ALL IDs to multiple candidate forms for reliable matching.
+        const rawChatId = chat.id.toString();
+        
+        // Also extract from peerId for cross-reference
+        const peerId = message.peerId as any;
+        const peerChannelId = peerId?.channelId?.toString();
+        const peerChatId = peerId?.chatId?.toString();
+        const peerUserId = peerId?.userId?.toString();
+        
+        // Build the canonical chat ID — prefer the format that matches getDialogs() output
+        // For channels/supergroups: getDialogs returns -100{channelId}
+        // For regular groups: getDialogs returns -{chatId}
+        // For DMs: getDialogs returns {userId}
+        let chatId = rawChatId;
+        if (peerChannelId) {
+            // It's a channel/supergroup — use -100 prefix format (matches getDialogs)
+            chatId = `-100${peerChannelId}`;
+        } else if (peerChatId) {
+            // It's a regular group — use negative format
+            chatId = `-${peerChatId}`;
+        } else if (peerUserId) {
+            chatId = peerUserId;
+        }
 
         logger.info({
             incomingChatId: chatId,
+            rawChatId,
+            peerChannelId: peerChannelId || null,
+            peerChatId: peerChatId || null,
             messageId: message.id,
             configsCount: session.configs.length,
             configuredChatIds: session.configs.map(c => c.telegramChatId)
@@ -809,13 +840,24 @@ export class TelegramListener {
     // ────────────── HELPERS ──────────────
 
     private matchChatId(configChatId: string, messageChatId: string): boolean {
+        // Normalize Telegram chat IDs to a canonical bare number for comparison.
+        // Telegram supergroups/channels use "-100{id}" marking format.
+        // Regular groups use "-{id}" format.
+        // We strip these prefixes to get the bare peer ID for matching.
         const normalize = (id: string) => {
-            const s = id.replace(/^-/, '');
-            return s.startsWith('100') ? s.substring(3) : s;
+            // Remove the -100 prefix (supergroup/channel marker)
+            if (id.startsWith('-100')) return id.substring(4);
+            // Remove the - prefix (regular group marker)  
+            if (id.startsWith('-')) return id.substring(1);
+            return id;
         };
+
+        // 1. Exact match (both in same format)
         if (configChatId === messageChatId) return true;
+        // 2. One has -100 prefix, the other doesn't
         if (configChatId === `-100${messageChatId}`) return true;
         if (messageChatId === `-100${configChatId}`) return true;
+        // 3. Normalized comparison (strips all prefixes)
         return normalize(configChatId) === normalize(messageChatId);
     }
 
