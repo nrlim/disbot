@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Edit3, Search, Activity, AlertCircle, CheckCircle2, AlertTriangle, X, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Search, Activity, AlertCircle, CheckCircle2, AlertTriangle, X, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -404,12 +404,6 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                                 </td>
                                                                 <td className="px-6 py-4 text-right">
                                                                     <div className="flex items-center justify-end gap-2">
-                                                                        <button
-                                                                            onClick={() => { setEditingConfig(config); setIsModalOpen(true); }}
-                                                                            className="p-1.5 text-gray-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-all"
-                                                                        >
-                                                                            <Edit3 className="w-4 h-4" />
-                                                                        </button>
                                                                         <button
                                                                             onClick={() => handleDelete(config.id)}
                                                                             disabled={deletingId === config.id}
