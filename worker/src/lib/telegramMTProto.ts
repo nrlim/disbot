@@ -440,7 +440,9 @@ export class TelegramListener {
         // Fetch avatar buffer - used for Embed Author Icon via attachment
         const avatarBuffer = await this.getAvatarBuffer(session.client, sender).catch(() => null);
 
-        const content = (message.text || '').trim();
+        // Bots and rich media messages often use message.message instead of message.text
+        const messageText = message.text || message.message || '';
+        const content = messageText.trim();
         const finalContent = `${replyContext}${forwardContext}${content}`.trim();
 
         const normalizedChatId = chatId.replace(/^-100/, '');
@@ -497,6 +499,11 @@ export class TelegramListener {
             });
         } else {
             // Text only
+            // Fallback for completely empty messages (e.g., bot messages with only inline keyboards and no text)
+            if (!webhookContent) {
+                webhookContent = '-# *(Media or Interactive Message)*';
+            }
+
             this.handleMessageDelivery(
                 targetConfigs,
                 username,
