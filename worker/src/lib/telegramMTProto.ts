@@ -200,7 +200,19 @@ export class TelegramListener {
                         connectResult = await Promise.race([
                             (async () => {
                                 await client.connect();
-                                return await client.checkAuthorization();
+                                const isAuth = await client.checkAuthorization();
+                                if (isAuth) {
+                                    // CRITICAL WAKE-UP: Telethon/GramJS user sessions often don't receive
+                                    // UpdateNewChannelMessage events in busy supergroups unless the server 
+                                    // considers the session "active". Fetching dialogs primes the pts state.
+                                    try {
+                                        await client.getDialogs({ limit: 10 });
+                                        logger.debug('Primed Telegram session dialogs to ensure channel updates');
+                                    } catch (e) {
+                                        logger.warn('Failed to prime dialogs, channel updates might be delayed');
+                                    }
+                                }
+                                return isAuth;
                             })(),
                             new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 60000))
                         ]);
@@ -425,7 +437,11 @@ export class TelegramListener {
         });
 
         if (targetConfigs.length === 0) {
-            logger.debug({ messageTopicId }, '[Telegram] No configs matched the topic ID');
+            logger.warn({
+                incomingChatId: chatId,
+                incomingChatTitle,
+                messageTopicId
+            }, '[Telegram] ⚠️ TOPIC MISMATCH — Message received in correct chat, but wrong topic (thread). Configs require a different topic ID.');
             return;
         }
 
