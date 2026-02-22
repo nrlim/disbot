@@ -65,7 +65,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
     const [deletingGroupId, setDeletingGroupId] = useState<string | null>(null);
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
     const [groupPages, setGroupPages] = useState<Record<string, number>>({});
-    const ITEMS_PER_PAGE = 5;
+    const [ITEMS_PER_PAGE, setItemsPerPage] = useState(5);
 
     const router = useRouter();
 
@@ -212,6 +212,22 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                 <option key={g.id} value={g.id}>{g.name}</option>
                             ))}
                             {ungroupedConfigs.length > 0 && <option value="none">Unorganized</option>}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                    <div className="relative">
+                        <select
+                            value={ITEMS_PER_PAGE}
+                            onChange={(e) => {
+                                setItemsPerPage(Number(e.target.value));
+                                setGroupPages({}); // Reset to first page when changing page size
+                            }}
+                            className="pl-3 pr-10 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all appearance-none font-medium text-gray-600"
+                        >
+                            <option value={5}>5 per page</option>
+                            <option value={10}>10 per page</option>
+                            <option value={15}>15 per page</option>
+                            <option value={20}>20 per page</option>
                         </select>
                         <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                     </div>

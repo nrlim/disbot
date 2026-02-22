@@ -202,19 +202,111 @@ export class TelegramListener {
                                 await client.connect();
                                 const isAuth = await client.checkAuthorization();
                                 if (isAuth) {
-                                    // CRITICAL WAKE-UP: Telethon/GramJS user sessions often don't receive
-                                    // UpdateNewChannelMessage events in busy supergroups unless the server 
-                                    // considers the session "active". Fetching dialogs primes the pts state.
+                                    // ═══════════════════════════════════════════════
+                                    //  CRITICAL: PTS Priming & Entity Pre-Caching
+                                    // ═══════════════════════════════════════════════
+                                    // GramJS user sessions will NOT receive UpdateNewChannelMessage
+                                    // for incoming messages unless TWO conditions are met:
+                                    //
+                                    // 1. The session's PTS (Persistent Tracking State) is synced
+                                    //    with the server. getDialogs() forces this sync.
+                                    //
+                                    // 2. The channel's access_hash is in GramJS's internal entity
+                                    //    cache. Without it, GramJS SILENTLY DROPS incoming updates
+                                    //    for that channel — they never reach addEventHandler.
+                                    //    getEntity() for each monitored channel populates this cache.
+
+                                    // Step 1: Dialog priming — sync PTS state with server
+                                    // Use limit=100 to cover more channels (user may have many chats)
                                     try {
-                                        await client.getDialogs({ limit: 10 });
-                                        logger.debug('Primed Telegram session dialogs to ensure channel updates');
+                                        const dialogs = await client.getDialogs({ limit: 100 });
+                                        logger.info({
+                                            dialogCount: dialogs.length
+                                        }, '[Telegram] PTS Priming: Fetched dialogs to sync session state');
                                     } catch (e) {
-                                        logger.warn('Failed to prime dialogs, channel updates might be delayed');
+                                        logger.warn('[Telegram] PTS Priming: Failed to fetch dialogs — incoming updates may be delayed');
+                                    }
+
+                                    // Step 2: Entity pre-caching — force access_hash for each monitored channel
+                                    // Without this, GramJS drops UpdateNewChannelMessage for unknown channels
+                                    const uniqueChatIds = [...new Set(
+                                        sessionConfigs
+                                            .map(c => c.telegramChatId)
+                                            .filter((id): id is string => !!id)
+                                    )];
+
+                                    if (uniqueChatIds.length > 0) {
+                                        logger.info({
+                                            chatIds: uniqueChatIds,
+                                            count: uniqueChatIds.length
+                                        }, '[Telegram] Entity Pre-Cache: Priming access_hash for monitored channels');
+
+                                        for (const chatId of uniqueChatIds) {
+                                            try {
+                                                // Try multiple ID formats since DB might store -100{id} or just {id}
+                                                let entity = null;
+                                                const formats = [chatId];
+
+                                                // Add alternate formats for matching
+                                                if (chatId.startsWith('-100')) {
+                                                    formats.push(chatId.substring(4)); // bare number
+                                                } else if (!chatId.startsWith('-')) {
+                                                    formats.push(`-100${chatId}`); // prefixed format
+                                                }
+
+                                                for (const fmt of formats) {
+                                                    if (entity) break;
+                                                    try {
+                                                        entity = await client.getEntity(fmt);
+                                                    } catch {
+                                                        // Try next format
+                                                    }
+                                                }
+
+                                                if (entity) {
+                                                    // Additionally fetch recent messages to force per-channel PTS sync
+                                                    try {
+                                                        await client.getMessages(entity, { limit: 1 });
+                                                    } catch {
+                                                        // Non-critical, entity cache is already populated
+                                                    }
+
+                                                    logger.info({
+                                                        chatId,
+                                                        entityTitle: (entity as any).title || (entity as any).firstName || '(unknown)',
+                                                        entityId: (entity as any).id?.toString(),
+                                                        entityClass: (entity as any).className
+                                                    }, '[Telegram] Entity Pre-Cache: ✓ Channel cached successfully');
+                                                } else {
+                                                    logger.warn({
+                                                        chatId,
+                                                        triedFormats: formats
+                                                    }, '[Telegram] Entity Pre-Cache: ✗ Failed to cache channel — incoming updates from this channel may be dropped');
+                                                }
+                                            } catch (err: any) {
+                                                logger.warn({
+                                                    chatId,
+                                                    error: err?.message || 'Unknown error'
+                                                }, '[Telegram] Entity Pre-Cache: ✗ Error caching channel entity');
+                                            }
+                                        }
+                                    }
+
+                                    // Step 3: Force catch-up on any missed updates
+                                    // This tells GramJS to request any updates from the server
+                                    // that arrived while the session was offline/disconnected
+                                    try {
+                                        if (typeof (client as any).catchUp === 'function') {
+                                            await (client as any).catchUp();
+                                            logger.info('[Telegram] CatchUp: Requested pending updates from server');
+                                        }
+                                    } catch (e) {
+                                        logger.debug('[Telegram] CatchUp: Not available or failed (non-critical)');
                                     }
                                 }
                                 return isAuth;
                             })(),
-                            new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 60000))
+                            new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 90000))
                         ]);
                     } catch (err: any) {
                         logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
@@ -347,12 +439,15 @@ export class TelegramListener {
                                 await this.destroySession(token, session);
                                 return;
                             } else {
-                                // Active Ping to ensure socket is responsive
-                                const pingPromise = session.client.getMe();
+                                // Active Ping + PTS re-prime
+                                // Use getDialogs instead of getMe to also re-sync PTS state,
+                                // preventing the session from going stale for incoming updates.
+                                const pingPromise = session.client.getDialogs({ limit: 5 });
                                 const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
 
                                 await Promise.race([pingPromise, timeoutPromise]);
                                 session.reconnectFailures = 0; // Reset on successful ping
+                                logger.debug('[Telegram] Keep-Alive: Ping + PTS re-prime successful');
                             }
                         } catch (err: any) {
                             session.reconnectFailures++;

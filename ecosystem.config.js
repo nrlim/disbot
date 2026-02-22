@@ -1,10 +1,10 @@
 module.exports = {
     apps: [
         {
-            name: 'disbot-v2',
+            name: 'disbot-worker',
             script: './worker/dist/engine.js',
             interpreter: 'node',
-            node_args: '--max-old-space-size=1024',
+            node_args: '--max-old-space-size=2048',
             env: {
                 NODE_ENV: 'production',
             },
