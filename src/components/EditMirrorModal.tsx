@@ -122,6 +122,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [isLoadingWebhooks, setIsLoadingWebhooks] = useState(false);
     const [isCreatingWebhook, setIsCreatingWebhook] = useState(false);
     const [webhookError, setWebhookError] = useState("");
+    const [newWebhookName, setNewWebhookName] = useState("");
 
     // Account Management State (Local)
     const [localAccounts, setLocalAccounts] = useState<any[]>(accounts || []);
@@ -739,7 +740,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         setIsCreatingWebhook(true);
         setWebhookError("");
         try {
-            const res: any = await createWebhook(selectedDestAccountId, targetChannelId, "Disbot Mirror");
+            const hookName = newWebhookName.trim() || "Disbot Mirror";
+            const res: any = await createWebhook(selectedDestAccountId, targetChannelId, hookName);
             if (res.error) {
                 setWebhookError(res.error);
             } else if (res.success && res.webhook) {
@@ -2205,7 +2207,7 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                 {webhookError}
                                                                             </div>
                                                                         ) : webhooks.length > 0 ? (
-                                                                            <div className="grid gap-2">
+                                                                            <div className="grid gap-2 mb-3">
                                                                                 {webhooks.map((wh: any) => (
                                                                                     <button key={wh.id} type="button" onClick={() => handleSelectWebhook(wh)} className={cn("w-full flex items-center gap-2 px-3 py-2 border rounded-lg transition-all", wh.url === webhookUrl ? "bg-blue-50 border-primary shadow-sm" : "bg-white border-gray-200 hover:bg-gray-50")}>
                                                                                         <div className="w-2 h-2 rounded-full bg-green-500"></div>
@@ -2215,9 +2217,31 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                                                 ))}
                                                                             </div>
                                                                         ) : (
-                                                                            <div className="text-center py-4 bg-white rounded-lg border border-dashed border-gray-300">
-                                                                                <p className="text-xs text-gray-500 mb-2">No webhooks found.</p>
-                                                                                <button type="button" onClick={handleCreateWebhook} disabled={isCreatingWebhook} className="text-xs font-bold text-primary hover:underline disabled:opacity-50">Create New One</button>
+                                                                            <div className="text-center py-4 mb-3 bg-white rounded-lg border border-dashed border-gray-300">
+                                                                                <p className="text-xs text-gray-500">No webhooks found in this channel.</p>
+                                                                            </div>
+                                                                        )}
+
+                                                                        {!isLoadingWebhooks && !webhookError && (
+                                                                            <div className="flex flex-col gap-2 pt-2 border-t border-gray-100 mt-2">
+                                                                                <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Create New Webhook</label>
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <input
+                                                                                        type="text"
+                                                                                        placeholder="Webhook Name (e.g. Disbot Mirror)"
+                                                                                        value={newWebhookName}
+                                                                                        onChange={e => setNewWebhookName(e.target.value)}
+                                                                                        className="flex-1 text-xs px-3 py-2 bg-gray-50 border border-gray-200 rounded-md outline-none focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                                                                                    />
+                                                                                    <button type="button" onClick={handleCreateWebhook} disabled={isCreatingWebhook || !newWebhookName.trim()} className="px-4 py-2 bg-gray-900 border border-black hover:bg-gray-800 text-white text-xs font-bold rounded-md disabled:opacity-50 transition-all flex items-center justify-center min-w-[100px] shadow-sm">
+                                                                                        {isCreatingWebhook ? (
+                                                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                                        ) : (
+                                                                                            "Create"
+                                                                                        )}
+                                                                                    </button>
+                                                                                </div>
+                                                                                <p className="text-[10px] text-gray-400">Give your webhook a name, then click create.</p>
                                                                             </div>
                                                                         )}
                                                                     </div>
