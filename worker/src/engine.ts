@@ -205,6 +205,7 @@ export class Engine {
                     telegramSession: resolvedTgSession,
                     telegramChatId: resolvedTgChatId,
                     telegramTopicId: cfg.telegramTopicId || undefined,
+                    telegramAccountId: cfg.telegramAccountId || undefined,
                     targetWebhookUrl: cfg.targetWebhookUrl,
                     type: cfg.type as 'CUSTOM_HOOK' | 'MANAGED_BOT',
                     targetChannelId: cfg.targetChannelId || undefined,
@@ -295,8 +296,12 @@ export class Engine {
                             configId: cfg.id,
                             userId: cfg.userId,
                             reason: 'NO_SESSION',
-                            platform: cfg.sourcePlatform
-                        }, '[Sync] Skipping Telegram config — no valid session this cycle');
+                            platform: cfg.sourcePlatform,
+                            hasTelegramAccountId: !!cfg.telegramAccountId,
+                            telegramAccountId: cfg.telegramAccountId || '(none)',
+                            hasLegacySession: !!cfg.telegramSession,
+                            sessionResolutionFailed: !cfg.telegramSession,
+                        }, '[Sync] Skipping Telegram config — no valid session this cycle. User may need to re-link their Telegram account.');
                     }
                 }
 

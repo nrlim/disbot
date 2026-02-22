@@ -638,6 +638,27 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         updateData.active = true;
         updateData.status = "ACTIVE";
 
+        // Debug log: trace what we received vs what we're saving
+        console.log("[UpdateMirror] Debug:", JSON.stringify({
+            configId: id,
+            formValues: {
+                sourcePlatform,
+                destinationPlatform,
+                telegramChatId: telegramChatId || "(empty)",
+                sourceChannelId: validated.data.sourceChannelId || "(empty)",
+                telegramAccountId: validated.data.telegramAccountId || "(empty)",
+                discordAccountId: discordAccountId || "(empty)",
+                targetWebhookUrl: validated.data.targetWebhookUrl ? "✓" : "✗",
+            },
+            savingToDb: {
+                sourceChannelId: updateData.sourceChannelId || "(empty)",
+                telegramChatId: updateData.telegramChatId || "(empty)",
+                telegramAccountId: updateData.telegramAccountId || "(empty/unchanged)",
+                discordAccountId: updateData.discordAccountId || "(empty/unchanged)",
+                targetWebhookUrl: updateData.targetWebhookUrl ? "✓" : "✗",
+            }
+        }, null, 2));
+
         await prisma.mirrorConfig.update({
             where: { id },
             data: updateData
