@@ -231,12 +231,32 @@ export class TelegramListener {
                         return;
                     }
 
-                    client.addEventHandler((event: NewMessageEvent) => {
+                    // DIAGNOSTIC FIREHOSE -> PRODUCTION INTERCEPTOR
+                    // Instead of relying on GramJS's NewMessage struct (which filters events if 
+                    // its internal chat cache isn't perfectly synced), we trap the raw MTProto 
+                    // UpdateNewChannelMessage event directly from the socket and force it through our pipeline.
+                    client.addEventHandler((update: any) => {
                         if (this.isShuttingDown) return;
-                        this.handleNewMessage(event, token).catch((err: any) => {
-                            logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram message handler');
-                        });
-                    }, new NewMessage({}));
+
+                        // We only care about brand new messages
+                        if (update && (update.className === 'UpdateNewChannelMessage' || update.className === 'UpdateNewMessage')) {
+
+                            logger.debug({
+                                className: update.className,
+                                msgId: update.message?.id,
+                                peerId: update.message?.peerId ? JSON.stringify(update.message.peerId) : 'unknown'
+                            }, '[Telegram] RAW MTProto Update trapped');
+
+                            // Map the raw event to a mock NewMessageEvent so our existing code handles it
+                            const mockEvent = {
+                                message: update.message
+                            };
+
+                            this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
+                                logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram raw message handler');
+                            });
+                        }
+                    });
 
                     session = {
                         client,
@@ -339,18 +359,32 @@ export class TelegramListener {
         const peerId = message.peerId as any;
         const msgId = message.id;
 
-        const chat = await message.getChat().catch((e: any) => {
-            logger.warn({ msgId, peerId, error: e.message }, "[Telegram] Failed to get chat for message");
-            return null;
-        });
-
-        if (!chat) {
-            logger.debug({ msgId, peerId }, "[Telegram] message.getChat() returned null, skipping");
-            return;
-        }
-
         const session = this.sessions.get(token);
         if (!session) return;
+
+        // Raw MTProto events don't naturally have .getChat() attached to them
+        // like the friendly GramJS events do. We must fetch the entity manually.
+        let chat: any = null;
+
+        if (typeof message.getChat === 'function') {
+            chat = await message.getChat().catch(() => null);
+        }
+
+        if (!chat) {
+            // If it's a raw event, we resolve the entity through the client connection directly
+            if (peerId) {
+                try {
+                    chat = await session.client.getEntity(peerId);
+                } catch (e: any) {
+                    logger.warn({ msgId, peerId, error: e.message }, "[Telegram] Failed to get entity for raw message");
+                }
+            }
+        }
+
+        if (!chat) {
+            logger.debug({ msgId, peerId }, "[Telegram] chat resolution failed everywhere, skipping");
+            return;
+        }
 
         // ── Resolve Chat ID ──
         // GramJS can return different ID formats depending on the source
@@ -492,7 +526,18 @@ export class TelegramListener {
         }
 
         // Build sender info
-        const sender = await message.getSender().catch(() => null);
+        let sender: any = null;
+        if (typeof message.getSender === 'function') {
+            sender = await message.getSender().catch(() => null);
+        }
+        if (!sender && message.fromId) {
+            try {
+                sender = await session.client.getEntity(message.fromId);
+            } catch (e) {
+                logger.debug({ msgId, fromId: message.fromId }, "[Telegram] Failed to find sender entity manually");
+            }
+        }
+
         const username = this.extractUsername(sender);
 
         // Fetch avatar buffer - used for Embed Author Icon via attachment
