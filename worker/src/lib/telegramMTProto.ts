@@ -293,7 +293,24 @@ export class TelegramListener {
     // ────────────── MESSAGE HANDLER ──────────────
 
     private async handleNewMessage(event: NewMessageEvent, token: string) {
+        // ALWAYS LOG FIRST, BEFORE ANY RETURNS
         const message = event.message;
+        const rawPeerId = message?.peerId ? (message.peerId as any).channelId?.toString() || (message.peerId as any).chatId?.toString() || (message.peerId as any).userId?.toString() : 'unknown';
+
+        // Log brief tracking info for every single event
+        if (message) {
+            logger.info({
+                msgId: message.id,
+                rawPeerId,
+                isBot: message.sender?.id, // check if sender exists
+                hasText: !!message.text,
+                hasMsgObj: !!message.message,
+                className: message.className
+            }, "[Telegram] RAW EVENT RECEIVED");
+        } else {
+            logger.debug("[Telegram] Received NewMessageEvent with no message object");
+        }
+
         if (!message) return;
 
         const peerId = message.peerId as any;
