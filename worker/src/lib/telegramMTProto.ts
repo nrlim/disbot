@@ -310,13 +310,13 @@ export class TelegramListener {
         //
         // We normalize ALL IDs to multiple candidate forms for reliable matching.
         const rawChatId = chat.id.toString();
-        
+
         // Also extract from peerId for cross-reference
         const peerId = message.peerId as any;
         const peerChannelId = peerId?.channelId?.toString();
         const peerChatId = peerId?.chatId?.toString();
         const peerUserId = peerId?.userId?.toString();
-        
+
         // Build the canonical chat ID — prefer the format that matches getDialogs() output
         // For channels/supergroups: getDialogs returns -100{channelId}
         // For regular groups: getDialogs returns -{chatId}
@@ -332,14 +332,20 @@ export class TelegramListener {
             chatId = peerUserId;
         }
 
+        const incomingChatTitle = (chat as any).title || (chat as any).firstName || 'Unknown';
+
         logger.info({
             incomingChatId: chatId,
+            incomingChatTitle,
             rawChatId,
             peerChannelId: peerChannelId || null,
             peerChatId: peerChatId || null,
             messageId: message.id,
             configsCount: session.configs.length,
-            configuredChatIds: session.configs.map(c => c.telegramChatId)
+            configuredChats: session.configs.map(c => ({
+                chatId: c.telegramChatId,
+                name: c.sourceChannelName || '(unnamed)',
+            }))
         }, '[Telegram] Received message');
 
         const matchedConfigs = session.configs.filter(c => {
@@ -348,6 +354,24 @@ export class TelegramListener {
         });
 
         if (matchedConfigs.length === 0) {
+            // Detailed mismatch diagnostic — helps identify wrong config IDs
+            const uniqueConfiguredIds = [...new Set(session.configs.map(c => c.telegramChatId).filter(Boolean))];
+            const configsWithoutChatId = session.configs.filter(c => !c.telegramChatId).length;
+            logger.warn({
+                incomingChatId: chatId,
+                incomingChatTitle,
+                rawChatId,
+                peerChannelId: peerChannelId || null,
+                configuredSourceChats: session.configs.map(c => ({
+                    id: c.id,
+                    chatId: c.telegramChatId || '(empty)',
+                    chatName: c.sourceChannelName || '(unnamed)',
+                    hasWebhook: c.targetWebhookUrl ? '✓' : '✗',
+                    hasTelegramTarget: c.targetTelegramChatId ? '✓' : '✗',
+                })),
+                configsWithoutChatId,
+                totalConfigsInSession: session.configs.length,
+            }, '[Telegram] ⚠️ NO CONFIG MATCH — Message from "' + incomingChatTitle + '" (' + chatId + ') but no config is listening to this chat. Check if the correct source chat was selected when creating the mirror.');
             return;
         }
 

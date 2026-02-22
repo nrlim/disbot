@@ -259,10 +259,21 @@ export class Engine {
                         const hasTarget = !!cfg.targetTelegramChatId;
 
                         if (hasSource || hasTarget) {
+                            const resolvedSourceChatId = cfg.sourcePlatform === 'TELEGRAM' ? cfg.telegramChatId : undefined;
+                            logger.info({
+                                configId: cfg.id,
+                                sourcePlatform: cfg.sourcePlatform,
+                                sourceChannelName: cfg.sourceChannelName || '(unnamed)',
+                                dbSourceChannelId: cfg.sourceChannelId || '(empty)',
+                                dbTelegramChatId: cfg.telegramChatId || '(empty)',
+                                resolvedSourceChatId: resolvedSourceChatId || '(none)',
+                                hasTarget,
+                            }, '[Sync] Telegram config → listener mapping');
+
                             telegramConfigs.push({
                                 id: cfg.id,
                                 telegramSession: sessionString,
-                                telegramChatId: cfg.sourcePlatform === 'TELEGRAM' ? cfg.telegramChatId : undefined,
+                                telegramChatId: resolvedSourceChatId,
                                 telegramTopicId: cfg.telegramTopicId,
                                 targetWebhookUrl: cfg.targetWebhookUrl,
                                 targetTelegramChatId: cfg.targetTelegramChatId,
@@ -273,7 +284,8 @@ export class Engine {
                                 watermarkPosition: cfg.watermarkPosition,
                                 watermarkOpacity: cfg.watermarkOpacity ?? 100,
                                 brandColor: cfg.brandColor,
-                                blurRegions: cfg.blurRegions
+                                blurRegions: cfg.blurRegions,
+                                sourceChannelName: cfg.sourceChannelName,
                             });
                         }
                     } else if (cfg.sourcePlatform === 'TELEGRAM') {

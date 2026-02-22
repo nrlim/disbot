@@ -112,7 +112,7 @@ export async function getTelegramChats(sessionString: string): Promise<any[]> {
         const result = await Promise.race([
             (async () => {
                 await client.connect();
-                const dialogs = await client.getDialogs({ limit: 40 }); // Only fetch recent 40 dialogs
+                const dialogs = await client.getDialogs({ limit: 100 }); // Fetch up to 100 dialogs to reduce chance of missing target chat
                 return dialogs.map(d => ({
                     id: d.id?.toString() || '',
                     title: d.title || 'Untitled',

@@ -55,4 +55,5 @@ export interface TelegramConfig {
     watermarkOpacity?: number; // 0-100
     brandColor?: string;
     blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
+    sourceChannelName?: string; // For diagnostic logging
 }
