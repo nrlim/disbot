@@ -234,11 +234,17 @@ export class TelegramListener {
                     // DIAGNOSTIC FIREHOSE -> PRODUCTION INTERCEPTOR
                     // Instead of relying on GramJS's NewMessage struct (which filters events if 
                     // its internal chat cache isn't perfectly synced), we trap the raw MTProto 
-                    // UpdateNewChannelMessage event directly from the socket and force it through our pipeline.
+                    // update events directly from the socket and force them through our pipeline.
+                    //
+                    // Trapped event types:
+                    //   - UpdateNewChannelMessage: messages in channels/supergroups (most common)
+                    //   - UpdateNewMessage:       messages in regular groups/private chats
+                    //   - UpdateShortMessage:      compact 1:1 / bot DM updates (high-frequency bots)
+                    //   - UpdateShortChatMessage:   compact group chat updates (some bot frameworks)
                     client.addEventHandler((update: any) => {
                         if (this.isShuttingDown) return;
 
-                        // We only care about brand new messages
+                        // ── Standard message updates (contain nested message object) ──
                         if (update && (update.className === 'UpdateNewChannelMessage' || update.className === 'UpdateNewMessage')) {
 
                             logger.debug({
@@ -247,13 +253,62 @@ export class TelegramListener {
                                 peerId: update.message?.peerId ? JSON.stringify(update.message.peerId) : 'unknown'
                             }, '[Telegram] RAW MTProto Update trapped');
 
-                            // Map the raw event to a mock NewMessageEvent so our existing code handles it
                             const mockEvent = {
                                 message: update.message
                             };
 
                             this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
                                 logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram raw message handler');
+                            });
+                        }
+
+                        // ── Short message updates (flat structure, no nested message object) ──
+                        // Telegram sends UpdateShortMessage for 1:1 DMs and UpdateShortChatMessage
+                        // for group messages when the server optimizes for bandwidth.
+                        // High-frequency bots (e.g. SOL INSIDER AI) often trigger these.
+                        if (update && (update.className === 'UpdateShortMessage' || update.className === 'UpdateShortChatMessage')) {
+
+                            logger.debug({
+                                className: update.className,
+                                msgId: update.id,
+                                userId: update.userId?.toString(),
+                                chatId: update.chatId?.toString(),
+                                out: update.out
+                            }, '[Telegram] RAW MTProto ShortMessage trapped');
+
+                            // Synthesize a mock message object from the flat update fields
+                            // so handleNewMessage can process it uniformly.
+                            const isChat = update.className === 'UpdateShortChatMessage';
+                            const syntheticMessage: any = {
+                                id: update.id,
+                                message: update.message || '',
+                                text: update.message || '',
+                                out: update.out || false,
+                                date: update.date,
+                                replyTo: update.replyTo || null,
+                                fwdFrom: update.fwdFrom || null,
+                                entities: update.entities || [],
+                                // Construct peerId from available fields
+                                peerId: isChat
+                                    ? { className: 'PeerChat', chatId: update.chatId }
+                                    : { className: 'PeerUser', userId: update.userId },
+                                // fromId: for short chat messages, fromId is the sender
+                                fromId: isChat && update.fromId
+                                    ? { className: 'PeerUser', userId: update.fromId }
+                                    : update.out
+                                        ? null  // Our own outgoing message
+                                        : { className: 'PeerUser', userId: update.userId },
+                                media: null,
+                                replyMarkup: null,
+                                className: 'Message'
+                            };
+
+                            const mockEvent = {
+                                message: syntheticMessage
+                            };
+
+                            this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
+                                logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram short message handler');
                             });
                         }
                     });
@@ -387,6 +442,25 @@ export class TelegramListener {
             logger.debug({ msgId, peerClass: peerId?.className }, '[Telegram] Raw message lacks peerId IDs, skipping');
             return;
         }
+
+        // ── PRE-FILTER DIAGNOSTIC LOG ──
+        // Print raw peer fields + final normalized ID + all configured IDs BEFORE filtering.
+        // This is the single most important log line for debugging ID mismatches.
+        const normalizedBareChatId = this.normalizeChatId(chatId);
+        const configuredIds = session.configs.map(c => ({
+            configId: c.id,
+            raw: c.telegramChatId || '(empty)',
+            normalized: c.telegramChatId ? this.normalizeChatId(c.telegramChatId) : '(empty)',
+            name: c.sourceChannelName || '(unnamed)',
+        }));
+
+        logger.info({
+            msgId,
+            rawPeerFields: { channelId: peerChannelId || null, chatId: peerChatId || null, userId: peerUserId || null },
+            finalChatId: chatId,
+            normalizedChatId: normalizedBareChatId,
+            configuredChats: configuredIds,
+        }, '[Telegram] PRE-FILTER: Raw Peer ID → Normalized ID vs Configured IDs');
 
         // ── Match configs using peerId (NOT fromId) to ensure we capture all senders ──
         const replyHeader = message.replyTo as any;
@@ -995,26 +1069,32 @@ export class TelegramListener {
 
     // ────────────── HELPERS ──────────────
 
-    private matchChatId(configChatId: string, messageChatId: string): boolean {
-        // Normalize Telegram chat IDs to a canonical bare number for comparison.
-        // Telegram supergroups/channels use "-100{id}" marking format.
-        // Regular groups use "-{id}" format.
-        // We strip these prefixes to get the bare peer ID for matching.
-        const normalize = (id: string) => {
-            // Remove the -100 prefix (supergroup/channel marker)
-            if (id.startsWith('-100')) return id.substring(4);
-            // Remove the - prefix (regular group marker)  
-            if (id.startsWith('-')) return id.substring(1);
-            return id;
-        };
+    /**
+     * Normalize a Telegram chat ID to its bare numeric form (no prefix).
+     * Strips -100 (supergroup/channel) and - (regular group) prefixes.
+     * Public so it can be reused for diagnostic logging.
+     */
+    private normalizeChatId(id: string): string {
+        if (id.startsWith('-100')) return id.substring(4);
+        if (id.startsWith('-')) return id.substring(1);
+        return id;
+    }
 
+    /**
+     * Prefix-agnostic chat ID matching.
+     * Handles all Telegram ID format variations:
+     *   DB: "-1001234567890" vs Event: "1234567890" → MATCH
+     *   DB: "1234567890"     vs Event: "-1001234567890" → MATCH
+     *   DB: "-1234567890"    vs Event: "1234567890" → MATCH
+     */
+    private matchChatId(configChatId: string, messageChatId: string): boolean {
         // 1. Exact match (both in same format)
         if (configChatId === messageChatId) return true;
         // 2. One has -100 prefix, the other doesn't
         if (configChatId === `-100${messageChatId}`) return true;
         if (messageChatId === `-100${configChatId}`) return true;
-        // 3. Normalized comparison (strips all prefixes)
-        return normalize(configChatId) === normalize(messageChatId);
+        // 3. Normalized comparison (strips all prefixes to bare number)
+        return this.normalizeChatId(configChatId) === this.normalizeChatId(messageChatId);
     }
 
     private extractUsername(sender: any): string {
