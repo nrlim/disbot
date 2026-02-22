@@ -964,6 +964,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
 
             formData.append("telegramChatId", targetTelegramChatId);
             formData.append("telegramAccountId", selectedTelegramDestAccountId);
+
+            const destChat = destinationTelegramChats.find(c => c.id === targetTelegramChatId);
+            if (destChat) formData.append("targetChannelName", destChat.title);
         } else {
             formData.append("targetWebhookUrl", webhookUrl);
         }
@@ -1038,9 +1041,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             }
 
             const srcChat = telegramChats.find(c => c.id === telegramChatId);
-            if (srcChat) formData.append("sourceChannelName", srcChat.title);
+            let channelName = srcChat ? srcChat.title : undefined;
 
-            if (telegramTopicId) formData.append("telegramTopicId", telegramTopicId);
+            if (telegramTopicId) {
+                formData.append("telegramTopicId", telegramTopicId);
+                const srcTopic = telegramTopics.find(t => t.id === telegramTopicId);
+                if (srcTopic && srcTopic.title) {
+                    channelName = srcTopic.title;
+                }
+            }
+
+            if (channelName) formData.append("sourceChannelName", channelName);
             if (telegramPhone) formData.append("telegramPhone", telegramPhone);
 
             // T2D: Save the selected Discord Destination Account

@@ -268,7 +268,8 @@ export async function getTelegramAccounts() {
             valid: true,
             firstName: true,
             lastName: true,
-            photoUrl: true
+            photoUrl: true,
+            cachedTopics: true
         }
     });
 

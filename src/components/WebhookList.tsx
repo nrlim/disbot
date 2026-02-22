@@ -360,7 +360,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                         <tr>
                                                             <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
                                                             <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Source Channel</th>
-                                                            <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Target Webhook</th>
+                                                            <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Target Channel</th>
                                                             <th className="px-6 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-right">Actions</th>
                                                         </tr>
                                                     </thead>
@@ -390,15 +390,33 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-gray-400 font-mono text-xs">#</span>
                                                                         <span className="text-sm font-semibold text-gray-700 font-mono">
-                                                                            {config.sourceChannelName || config.telegramChatId || config.sourceChannelId || "Unknown"}
+                                                                            {(() => {
+                                                                                if (config.sourcePlatform === 'TELEGRAM' && config.telegramTopicId && telegramAccounts) {
+                                                                                    for (const account of telegramAccounts) {
+                                                                                        if (account?.cachedTopics) {
+                                                                                            const chatId = config.telegramChatId;
+                                                                                            if (chatId) {
+                                                                                                const topicsCache = typeof account.cachedTopics === 'string' ? JSON.parse(account.cachedTopics) : account.cachedTopics;
+                                                                                                const chatTopics = topicsCache[chatId]?.topics;
+                                                                                                if (Array.isArray(chatTopics)) {
+                                                                                                    const topic = chatTopics.find((t: any) => String(t.id) === String(config.telegramTopicId));
+                                                                                                    if (topic && topic.title) return topic.title;
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                                // Fallback to saved name or ID if no topic, or if topic lookup fails
+                                                                                return config.sourceChannelName || config.telegramChatId || config.sourceChannelId || "Unknown";
+                                                                            })()}
                                                                         </span>
                                                                     </div>
                                                                 </td>
                                                                 <td className="px-6 py-4">
-                                                                    <div className="flex items-center gap-2 font-mono text-xs text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 max-w-[200px]">
-                                                                        <CheckCircle2 className="w-3 h-3 text-green-500" />
-                                                                        <span className="truncate" title={config.targetWebhookUrl || ""}>
-                                                                            {config.targetWebhookName || maskWebhook(config.targetWebhookUrl || "")}
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-gray-400 font-mono text-xs">#</span>
+                                                                        <span className="text-sm font-semibold text-gray-700 font-mono">
+                                                                            {config.targetChannelName || "Unknown"}
                                                                         </span>
                                                                     </div>
                                                                 </td>
