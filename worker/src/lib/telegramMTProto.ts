@@ -292,19 +292,8 @@ export class TelegramListener {
                                 await this.destroySession(token, session);
                                 return;
                             } else {
-                                // Active Ping to ensure socket is responsive + channel activity heartbeat
-                                // By periodically touching the configured chats, we signal to Telegram's 
-                                // server that this session is still reading these channels, preventing 
-                                // it from silencing incoming events for busy supergroups.
-                                const getChatsPromises = session.configs
-                                    .filter((c) => c.telegramChatId)
-                                    .map((c) => session.client.getEntity(parseInt(c.telegramChatId!)).catch(() => null));
-
-                                const pingPromise = Promise.all([
-                                    session.client.getMe(),
-                                    ...getChatsPromises
-                                ]);
-
+                                // Active Ping to ensure socket is responsive
+                                const pingPromise = session.client.getMe();
                                 const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Ping Timeout')), 15000));
 
                                 await Promise.race([pingPromise, timeoutPromise]);
@@ -342,19 +331,32 @@ export class TelegramListener {
 
         // Log brief tracking info for every single event
         if (message) {
+            // NOTE: On raw MTProto updates, message.sender is NOT hydrated.
+            // Use message.fromId for sender identification instead.
+            const fromIdVal = message.fromId
+                ? (message.fromId as any).userId?.toString()
+                || (message.fromId as any).channelId?.toString()
+                || 'structured'
+                : null;
+
             logger.info({
                 msgId: message.id,
                 rawPeerId,
-                isBot: message.sender?.id, // check if sender exists
+                fromId: fromIdVal,
+                hasFromId: !!message.fromId,
+                isOutgoing: !!message.out,
                 hasText: !!message.text,
                 hasMsgObj: !!message.message,
                 className: message.className
-            }, "[Telegram] RAW EVENT RECEIVED");
+            }, '[Telegram] RAW EVENT RECEIVED');
         } else {
-            logger.debug("[Telegram] Received NewMessageEvent with no message object");
+            logger.debug('[Telegram] Received NewMessageEvent with no message object');
         }
 
         if (!message) return;
+
+        // ── CRITICAL: Do NOT filter by message.out ──
+        // We process ALL messages (incoming + outgoing) to mirror bot & other user messages.
 
         const peerId = message.peerId as any;
         const msgId = message.id;
@@ -362,64 +364,67 @@ export class TelegramListener {
         const session = this.sessions.get(token);
         if (!session) return;
 
-        // Raw MTProto events don't naturally have .getChat() attached to them
-        // like the friendly GramJS events do. We must fetch the entity manually.
-        let chat: any = null;
-
-        if (typeof message.getChat === 'function') {
-            chat = await message.getChat().catch(() => null);
-        }
-
-        if (!chat) {
-            // If it's a raw event, we resolve the entity through the client connection directly
-            if (peerId) {
-                try {
-                    chat = await session.client.getEntity(peerId);
-                } catch (e: any) {
-                    logger.warn({ msgId, peerId, error: e.message }, "[Telegram] Failed to get entity for raw message");
-                }
-            }
-        }
-
-        if (!chat) {
-            logger.debug({ msgId, peerId }, "[Telegram] chat resolution failed everywhere, skipping");
-            return;
-        }
-
-        // ── Resolve Chat ID ──
-        // GramJS can return different ID formats depending on the source
-        const rawChatId = chat.id.toString();
-
-        // Also extract from peerId for cross-reference
+        // ── Fast Chat ID Extraction (Bypass Network Calls) ──
+        // Raw MTProto updates often lack access_hash, so calling client.getEntity() 
+        // will fail or hang for unknown users. We MUST extract the ID directly and 
+        // match it BEFORE attempting to fetch the full entity.
         const peerChannelId = peerId?.channelId?.toString();
         const peerChatId = peerId?.chatId?.toString();
         const peerUserId = peerId?.userId?.toString();
 
-        // Build the canonical chat ID — prefer the format that matches getDialogs() output
-        // For channels/supergroups: getDialogs returns -100{channelId}
-        // For regular groups: getDialogs returns -{chatId}
-        // For DMs: getDialogs returns {userId}
-        let chatId = rawChatId;
+        let chatId = '';
+        let rawChatId = '';
         if (peerChannelId) {
-            // It's a channel/supergroup — use -100 prefix format (matches getDialogs)
             chatId = `-100${peerChannelId}`;
+            rawChatId = peerChannelId;
         } else if (peerChatId) {
-            // It's a regular group — use negative format
             chatId = `-${peerChatId}`;
+            rawChatId = peerChatId;
         } else if (peerUserId) {
             chatId = peerUserId;
+            rawChatId = peerUserId;
+        } else {
+            logger.debug({ msgId, peerClass: peerId?.className }, '[Telegram] Raw message lacks peerId IDs, skipping');
+            return;
         }
 
-        const incomingChatTitle = (chat as any).title || (chat as any).firstName || 'Unknown';
+        // ── Match configs using peerId (NOT fromId) to ensure we capture all senders ──
+        const replyHeader = message.replyTo as any;
+        let messageTopicId: string | null = null;
+        if (replyHeader) {
+            // In forum groups: replyToTopId = thread root msg id, replyToMsgId = specific reply target
+            // For topic matching, prefer replyToTopId (the thread ID), fallback to replyToMsgId
+            messageTopicId = (replyHeader.replyToTopId || replyHeader.replyToMsgId)?.toString() || null;
+        }
+        // EDGE CASE: In forum-enabled groups, the "General" topic has topicId = 1.
+        // Messages in General have NO replyTo header at all. If a config targets topic "1",
+        // we treat a null messageTopicId as belonging to the General topic.
 
-        // DEBUG: specifically looking for "Meme Coin Indonesia" messages
-        if (chatId.includes('2131903946') || incomingChatTitle.includes('Meme')) {
-            logger.info({
-                chatId, rawChatId, peerChannelId, peerChatId, msgId,
-                senderId: message.sender?.id?.toString(),
-                textLen: message.text?.length,
-                messageLen: message.message?.length
-            }, "[Telegram] MEEEE COIN DEBUG: Message arriving at target chat!");
+        const matchedConfigs = session.configs.filter(c => {
+            if (!c.telegramChatId) return false;
+            return this.matchChatId(c.telegramChatId, chatId);
+        });
+
+        if (matchedConfigs.length === 0) {
+            // Not mirroring this chat, skip entirely (silently to save logs)
+            return;
+        }
+
+        // ── Try resolving full entity (For name) ONLY for matched chats ──
+        let incomingChatTitle = 'Unknown Chat';
+        let chat: any = null;
+        try {
+            if (typeof message.getChat === 'function') {
+                chat = await message.getChat().catch(() => null);
+            }
+            if (!chat) {
+                chat = await session.client.getEntity(peerId).catch(() => null);
+            }
+            if (chat) {
+                incomingChatTitle = chat.title || chat.firstName || incomingChatTitle;
+            }
+        } catch (e) {
+            // Ignore failure, we only use it for logging anyway
         }
 
         logger.info({
@@ -428,48 +433,17 @@ export class TelegramListener {
             rawChatId,
             peerChannelId: peerChannelId || null,
             peerChatId: peerChatId || null,
-            messageId: message.id,
+            messageId: msgId,
+            isOutgoing: !!message.out,
+            hasFromId: !!message.fromId,
             configsCount: session.configs.length,
             configuredChats: session.configs.map(c => ({
                 chatId: c.telegramChatId,
                 name: c.sourceChannelName || '(unnamed)',
             }))
-        }, '[Telegram] Received message');
+        }, '[Telegram] Received message matching a known chat configuration');
 
-        const matchedConfigs = session.configs.filter(c => {
-            if (!c.telegramChatId) return false;
-            return this.matchChatId(c.telegramChatId, chatId);
-        });
-
-        if (matchedConfigs.length === 0) {
-            // Detailed mismatch diagnostic — helps identify wrong config IDs
-            const uniqueConfiguredIds = [...new Set(session.configs.map(c => c.telegramChatId).filter(Boolean))];
-            const configsWithoutChatId = session.configs.filter(c => !c.telegramChatId).length;
-            logger.warn({
-                incomingChatId: chatId,
-                incomingChatTitle,
-                rawChatId,
-                peerChannelId: peerChannelId || null,
-                configuredSourceChats: session.configs.map(c => ({
-                    id: c.id,
-                    chatId: c.telegramChatId || '(empty)',
-                    chatName: c.sourceChannelName || '(unnamed)',
-                    hasWebhook: c.targetWebhookUrl ? '✓' : '✗',
-                    hasTelegramTarget: c.targetTelegramChatId ? '✓' : '✗',
-                })),
-                configsWithoutChatId,
-                totalConfigsInSession: session.configs.length,
-            }, '[Telegram] ⚠️ NO CONFIG MATCH — Message from "' + incomingChatTitle + '" (' + chatId + ') but no config is listening to this chat. Check if the correct source chat was selected when creating the mirror.');
-            return;
-        }
-
-        // Resolve Topic ID (Forum thread ID)
-        const replyHeader = message.replyTo as any;
-        let messageTopicId: string | null = null;
-        if (replyHeader) {
-            messageTopicId = (replyHeader.replyToTopId || replyHeader.replyToMsgId)?.toString() || null;
-        }
-
+        // ── Topic Filtering ──
         logger.info({
             chatId,
             messageTopicId,
@@ -477,7 +451,13 @@ export class TelegramListener {
         }, '[Telegram] Checking topic filters');
 
         const targetConfigs = matchedConfigs.filter(c => {
-            if (!c.telegramTopicId) return true; // Matches everything if no filter set
+            // No topic filter set → match all messages in this chat
+            if (!c.telegramTopicId) return true;
+
+            // Config targets General topic (id "1") and message has no replyTo → match
+            if (c.telegramTopicId === '1' && !messageTopicId) return true;
+
+            // Standard topic match
             return c.telegramTopicId === messageTopicId;
         });
 
@@ -485,7 +465,8 @@ export class TelegramListener {
             logger.warn({
                 incomingChatId: chatId,
                 incomingChatTitle,
-                messageTopicId
+                messageTopicId,
+                configuredTopics: matchedConfigs.map(c => c.telegramTopicId).filter(Boolean)
             }, '[Telegram] ⚠️ TOPIC MISMATCH — Message received in correct chat, but wrong topic (thread). Configs require a different topic ID.');
             return;
         }
@@ -498,10 +479,13 @@ export class TelegramListener {
 
         try {
             // Handle Replies
-            if (message.replyTo) {
+            if (message.replyTo && typeof message.getReplyMessage === 'function') {
                 const replyMsg = await message.getReplyMessage().catch(() => null);
                 if (replyMsg) {
-                    const replySender = await replyMsg.getSender().catch(() => null);
+                    let replySender: any = null;
+                    if (typeof replyMsg.getSender === 'function') {
+                        replySender = await replyMsg.getSender().catch(() => null);
+                    }
                     const replyUser = this.extractUsername(replySender);
                     const snippet = replyMsg.text
                         ? (replyMsg.text.substring(0, 60).replace(/\n/g, ' ') + (replyMsg.text.length > 60 ? '...' : ''))
@@ -525,17 +509,33 @@ export class TelegramListener {
             logger.debug({ err }, 'Metadata resolution failed/timed out - skipping headers');
         }
 
-        // Build sender info
+        // ── Build sender info ──
+        // CRITICAL for bot/other-user messages:
+        // - In channels: fromId is null. The channel itself is the "sender".
+        // - For bots: fromId points to the bot user.
+        // - For regular users: fromId points to the user.
+        // We try multiple resolution paths to maximize attribution accuracy.
         let sender: any = null;
+
+        // Path 1: GramJS hydrated sender (works if cache is primed)
         if (typeof message.getSender === 'function') {
             sender = await message.getSender().catch(() => null);
         }
+
+        // Path 2: Manual entity lookup via fromId (for user/bot messages)
         if (!sender && message.fromId) {
             try {
                 sender = await session.client.getEntity(message.fromId);
             } catch (e) {
-                logger.debug({ msgId, fromId: message.fromId }, "[Telegram] Failed to find sender entity manually");
+                logger.debug({ msgId, fromId: JSON.stringify(message.fromId) }, '[Telegram] Failed to find sender entity from fromId');
             }
+        }
+
+        // Path 3: Channel broadcast — fromId is null, use the chat entity as sender
+        // This ensures channel name appears instead of "Unknown Telegram User"
+        if (!sender && !message.fromId && chat) {
+            sender = chat;
+            logger.debug({ msgId, chatTitle: incomingChatTitle }, '[Telegram] Using chat entity as sender (broadcast channel message)');
         }
 
         const username = this.extractUsername(sender);
@@ -543,8 +543,22 @@ export class TelegramListener {
         // Fetch avatar buffer - used for Embed Author Icon via attachment
         const avatarBuffer = await this.getAvatarBuffer(session.client, sender).catch(() => null);
 
-        // Bots and rich media messages often use message.message instead of message.text
+        // ── Text Extraction ──
+        // Bots and rich media messages often use message.message instead of message.text.
+        // Some messages also have rawText or embedded web page descriptions.
         let messageText = message.text || message.message || '';
+
+        // Fallback: extract text from web page preview (common in bot messages)
+        if (!messageText && message.media) {
+            const webpage = (message.media as any)?.webpage;
+            if (webpage) {
+                const parts: string[] = [];
+                if (webpage.title) parts.push(`**${webpage.title}**`);
+                if (webpage.description) parts.push(webpage.description);
+                if (webpage.url) parts.push(webpage.url);
+                if (parts.length > 0) messageText = parts.join('\n');
+            }
+        }
 
         // Extract inline buttons (Bot UI) if they exist
         let botButtons = '';
@@ -590,23 +604,9 @@ export class TelegramListener {
             // Lazy load service to avoid circular dependency
             import('./TelegramDeliveryService').then(({ TelegramDeliveryService }) => {
                 const service = TelegramDeliveryService.getInstance();
-
-                // For T2T, we might ideally forward the message object directly?
-                // But our service interface expects content/files.
-                // We'll mimic the download flow or implement direct forward later.
-                // For now, reuse download if media exists, or send text.
-
-                // NOTE: Proper T2T usually forwards the message object (retaining original sender etc).
-                // But if we want to apply watermarks/blur, we MUST download and re-upload.
-                // The requirement says: "Ensure 'customWatermark' and 'blurRegions'... are applied".
-                // So we CANNOT use native forward. We must download-edit-upload.
-
-                // We'll hook into the downloadAndForward flow below, but enable it to target Telegram Delivery.
+                // Download flow is handled by downloadAndForward below for all targets
             });
         }
-
-        // We will modify downloadAndForward to accept mixed targets or split logic.
-        // Actually, let's just make downloadAndForward handle both.
 
         if (mediaInfo.shouldDownload && mediaInfo.fileName) {
             logger.info({ fileName: mediaInfo.fileName }, '[Telegram] Media detected - attempting download');
