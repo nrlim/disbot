@@ -60,6 +60,8 @@ export interface MirrorConfig {
     watermarkImageUrl?: string | null;
     watermarkPosition?: string | null;
     watermarkOpacity?: number | null;
+    antiSpamEnabled?: boolean;
+    blacklistedUsers?: any;
 }
 
 interface EditMirrorModalProps {
@@ -181,6 +183,11 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
     const [selectedTelegramDestAccountId, setSelectedTelegramDestAccountId] = useState<string | null>(null);
     const [selectedTelegramSourceAccountId, setSelectedTelegramSourceAccountId] = useState<string | null>(null);
 
+    // Anti-Spam State (ELITE)
+    const [antiSpamEnabled, setAntiSpamEnabled] = useState(true);
+    const [blacklistedUsers, setBlacklistedUsers] = useState<string[]>([]);
+    const [newBlacklistId, setNewBlacklistId] = useState("");
+
     // Group Context
     const currentGroup = groups?.find(g => (config?.groupId && g.id === config.groupId) || (initialTitle && g.name === initialTitle));
     const isTelegramDestination = (currentGroup?.type === 'DISCORD_TO_TELEGRAM' || currentGroup?.type === 'TELEGRAM_TO_TELEGRAM') || destinationPlatform === 'TELEGRAM';
@@ -285,6 +292,17 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                     setBlurRegions([]);
                 }
 
+                setAntiSpamEnabled(config.antiSpamEnabled ?? true);
+                if (config.blacklistedUsers) {
+                    try {
+                        setBlacklistedUsers(typeof config.blacklistedUsers === 'string' ? JSON.parse(config.blacklistedUsers) : config.blacklistedUsers);
+                    } catch (e) {
+                        setBlacklistedUsers([]);
+                    }
+                } else {
+                    setBlacklistedUsers([]);
+                }
+
                 setIsBulkMode(false);
 
                 // Telegram Destination Logic
@@ -354,6 +372,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                 setSelectedTelegramDestAccountId(null);
                 setDestinationPlatform('DISCORD');
                 setTargetGuildsError(null);
+                setAntiSpamEnabled(true);
+                setBlacklistedUsers([]);
             }
         } else {
             // Reset when closing
@@ -369,6 +389,8 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
             setWatermarkPosition("southeast");
             setWatermarkOpacity(100);
             setBlurRegions([]);
+            setAntiSpamEnabled(true);
+            setBlacklistedUsers([]);
         }
     }, [isOpen, config, groups, initialTitle]); // Added groups and initialTitle for smart pre-fill
 
@@ -988,6 +1010,9 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
         if (customWatermark) formData.append("customWatermark", customWatermark);
         if (brandColor) formData.append("brandColor", brandColor);
         if (blurRegions.length > 0) formData.append("blurRegions", JSON.stringify(blurRegions));
+
+        formData.append("antiSpamEnabled", antiSpamEnabled.toString());
+        formData.append("blacklistedUsers", JSON.stringify(blacklistedUsers));
 
         formData.append("watermarkType", watermarkType);
         if (watermarkImageUrl) formData.append("watermarkImageUrl", watermarkImageUrl);
@@ -2288,6 +2313,77 @@ export default function EditMirrorModal({ isOpen, onClose, onSuccess, config, ac
                                                             </div>
                                                         )}
                                                     </div>
+
+                                                    {/* ELITE ANTI-SPAM */}
+                                                    {userPlan === 'ELITE' && (
+                                                        <div className="pt-6 border-t border-gray-200">
+                                                            <div className="flex items-center justify-between mb-4">
+                                                                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                                                                    <ScanEye className="w-4 h-4 text-gray-400" />
+                                                                    Anti-Spam Shield
+                                                                    <span className="text-[10px] bg-black text-[#00FFFF] px-1.5 py-0.5 font-bold uppercase tracking-wider">Elite</span>
+                                                                </h3>
+                                                                <label className="flex items-center gap-2 cursor-pointer">
+                                                                    <span className="text-xs text-gray-500 font-medium uppercase">Active</span>
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        className="sr-only peer"
+                                                                        checked={antiSpamEnabled}
+                                                                        onChange={(e) => setAntiSpamEnabled(e.target.checked)}
+                                                                    />
+                                                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 relative"></div>
+                                                                </label>
+                                                            </div>
+
+                                                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+                                                                <p className="text-xs text-gray-500">
+                                                                    Automatically locks out senders who flood the channel (5 messages in 10s) and allows manual whitelisting/blacklisting.
+                                                                </p>
+
+                                                                <div className="space-y-2">
+                                                                    <label className="text-xs font-semibold text-gray-700 uppercase">Blacklisted Sender IDs</label>
+                                                                    <div className="flex gap-2">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={newBlacklistId}
+                                                                            onChange={(e) => setNewBlacklistId(e.target.value)}
+                                                                            placeholder="Enter Discord or Telegram User ID"
+                                                                            className="flex-1 px-3 py-2 border rounded-md text-sm outline-none focus:border-primary font-mono"
+                                                                        />
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                if (newBlacklistId.trim() && !blacklistedUsers.includes(newBlacklistId.trim())) {
+                                                                                    setBlacklistedUsers([...blacklistedUsers, newBlacklistId.trim()]);
+                                                                                    setNewBlacklistId("");
+                                                                                }
+                                                                            }}
+                                                                            className="px-4 py-2 bg-gray-900 text-white text-xs font-bold rounded-md hover:bg-gray-800 transition"
+                                                                        >
+                                                                            Add
+                                                                        </button>
+                                                                    </div>
+
+                                                                    {blacklistedUsers.length > 0 && (
+                                                                        <div className="mt-2 bg-white border rounded-md divide-y custom-scrollbar max-h-40 overflow-y-auto">
+                                                                            {blacklistedUsers.map((id) => (
+                                                                                <div key={id} className="flex justify-between items-center px-3 py-2 text-sm font-mono text-gray-700">
+                                                                                    <span>{id}</span>
+                                                                                    <button
+                                                                                        type="button"
+                                                                                        onClick={() => setBlacklistedUsers(blacklistedUsers.filter(u => u !== id))}
+                                                                                        className="text-red-500 hover:text-red-700 text-xs font-bold"
+                                                                                    >
+                                                                                        Remove
+                                                                                    </button>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
 
                                                     {/* BRANDING CONFIGURATION */}
                                                     <div className="pt-6 border-t border-gray-200">

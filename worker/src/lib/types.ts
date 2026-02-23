@@ -34,6 +34,9 @@ export interface MirrorActiveConfig {
     brandColor?: string;
     // Privacy — Blur regions (Elite only)
     blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
+    // Elite Anti-Spam (Frontend Managed)
+    antiSpamEnabled?: boolean;
+    blacklistedUsers?: string[];
     // New fields for D2T/T2T
     targetTelegramChatId?: string;
     targetTelegramTopicId?: string;
@@ -57,4 +60,7 @@ export interface TelegramConfig {
     brandColor?: string;
     blurRegions?: Array<{ id: string; x: number; y: number; width: number; height: number }>;
     sourceChannelName?: string; // For diagnostic logging
+    tier?: string; // Extracted userPlan for feature gatekeeping
+    antiSpamEnabled?: boolean;
+    blacklistedUsers?: string[];
 }

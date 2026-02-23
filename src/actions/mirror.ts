@@ -53,6 +53,14 @@ const mirrorSchema = z.object({
     watermarkImageUrl: z.string().url().optional().or(z.literal("")),
     watermarkPosition: z.string().optional(),
     watermarkOpacity: z.coerce.number().min(0).max(100).optional().default(100),
+    antiSpamEnabled: z.string().optional().transform(val => val === "true"),
+    blacklistedUsers: z.string().optional().transform(val => {
+        try {
+            return val ? JSON.parse(val) : undefined;
+        } catch {
+            return undefined;
+        }
+    }),
 }).superRefine((data, ctx) => {
     // --- Source Platform Validation ---
     if (data.sourcePlatform === "DISCORD") {
@@ -179,6 +187,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         watermarkImageUrl: (formData.get("watermarkImageUrl") as string) || undefined,
         watermarkPosition: (formData.get("watermarkPosition") as string) || undefined,
         watermarkOpacity: formData.get("watermarkOpacity") || undefined,
+        antiSpamEnabled: (formData.get("antiSpamEnabled") as string) || undefined,
+        blacklistedUsers: (formData.get("blacklistedUsers") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -330,6 +340,8 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
                 watermarkImageUrl: validated.data.watermarkImageUrl || null,
                 watermarkPosition: validated.data.watermarkPosition || "southeast",
                 watermarkOpacity: validated.data.watermarkOpacity ?? 100,
+                antiSpamEnabled: validated.data.antiSpamEnabled ?? true,
+                blacklistedUsers: validated.data.blacklistedUsers ?? undefined,
             }
         });
 
@@ -466,6 +478,8 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         watermarkImageUrl: (formData.get("watermarkImageUrl") as string) || undefined,
         watermarkPosition: (formData.get("watermarkPosition") as string) || undefined,
         watermarkOpacity: formData.get("watermarkOpacity") || undefined,
+        antiSpamEnabled: (formData.get("antiSpamEnabled") as string) || undefined,
+        blacklistedUsers: (formData.get("blacklistedUsers") as string) || undefined,
     };
 
     const validated = mirrorSchema.safeParse(rawData);
@@ -548,6 +562,8 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
             watermarkImageUrl: validated.data.watermarkImageUrl || null,
             watermarkPosition: validated.data.watermarkPosition || "southeast",
             watermarkOpacity: validated.data.watermarkOpacity ?? 100,
+            antiSpamEnabled: validated.data.antiSpamEnabled ?? true,
+            blacklistedUsers: validated.data.blacklistedUsers ?? undefined,
         };
 
         if (sourcePlatform === "DISCORD") {
@@ -746,6 +762,26 @@ export async function toggleMirrorConfig(id: string, active: boolean) {
     } catch (e) {
         console.error("Toggle error:", e);
         return { error: "Failed to update mirror status" };
+    }
+}
+
+export async function updateAntiSpamConfig(id: string, active: boolean, blacklistedUsers: string[]) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return { error: "Unauthorized" };
+
+    try {
+        await prisma.mirrorConfig.update({
+            where: { id, userId: session.user.id },
+            data: {
+                antiSpamEnabled: active,
+                blacklistedUsers: JSON.stringify(blacklistedUsers)
+            }
+        });
+        revalidatePath("/dashboard/expert");
+        return { success: true };
+    } catch (e) {
+        console.error("Anti-spam update error:", e);
+        return { error: "Failed to update anti-spam settings" };
     }
 }
 

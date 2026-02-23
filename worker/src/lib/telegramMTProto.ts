@@ -57,6 +57,29 @@ const ACTIVE_SYNC_CHANNEL_DELAY_MS = 500;
  *  for ALL messages, not just replies/mentions. */
 const READ_HISTORY_EVERY_N_CYCLES = 1;
 
+// ──────────────────────────────────────────────────────────────
+//  ELITE Anti-Spam Protection
+// ──────────────────────────────────────────────────────────────
+const spamTracker = new Map<string, number[]>();
+const spamBlacklist = new Map<string, number>();
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [senderId, timestamps] of spamTracker.entries()) {
+        const valid = timestamps.filter(t => now - t < 10000);
+        if (valid.length === 0) {
+            spamTracker.delete(senderId);
+        } else {
+            spamTracker.set(senderId, valid);
+        }
+    }
+    for (const [senderId, expiry] of spamBlacklist.entries()) {
+        if (now > expiry) {
+            spamBlacklist.delete(senderId);
+        }
+    }
+}, 60000).unref();
+
 interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
@@ -987,6 +1010,67 @@ export class TelegramListener {
         if (matchedConfigs.length === 0) {
             // Not mirroring this chat, skip entirely (silently to save logs)
             return;
+        }
+
+        // ── ELITE Anti-Spam Gatekeeping ──
+        const isElite = matchedConfigs.some(c => c.tier === 'ELITE');
+        if (isElite) {
+            const senderId = fromIdVal || rawChatId;
+            const now = Date.now();
+
+            // 1. Check Frontend-managed Blacklist directly
+            const isBlacklisted = matchedConfigs.some(c => c.tier === 'ELITE' && c.blacklistedUsers?.includes(senderId));
+            if (isBlacklisted) {
+                logger.warn(`[Anti-Spam] Sender ${senderId} blocked by User-Managed Blacklist.`);
+                return; // drop message IMMEDIATELY
+            }
+
+            // Memory-managed temporary locked check
+            if (spamBlacklist.has(senderId)) {
+                if (now < spamBlacklist.get(senderId)!) {
+                    return; // Auto-ignore, sender is locked inside worker RAM
+                } else {
+                    spamBlacklist.delete(senderId); // Expired
+                }
+            }
+
+            const antiSpamEnabledConfigs = matchedConfigs.filter(c => c.tier === 'ELITE' && c.antiSpamEnabled);
+            if (antiSpamEnabledConfigs.length > 0) {
+                // 2. Sliding Window Calculation
+                let timestamps = spamTracker.get(senderId) || [];
+                timestamps = timestamps.filter(t => now - t < 10000); // 10s sliding window
+                timestamps.push(now);
+
+                if (timestamps.length > 5) {
+                    // Sender crossed the threshold: mark as spammer locally
+                    const expiry = now + 30 * 60 * 1000; // 30 minutes
+                    spamBlacklist.set(senderId, expiry);
+                    spamTracker.delete(senderId); // clear tracking memory
+                    logger.warn(`[Anti-Spam] Sender ${senderId} locked for 30 minutes due to flooding in ELITE channel ${chatId}.`);
+
+                    // Dispatch API update to backend to sync the blacklistedUsers to DB 
+                    const apiUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.API_URL || 'http://localhost:3000';
+                    const targetConfigIds = antiSpamEnabledConfigs.map(c => c.id);
+
+                    fetch(`${apiUrl}/api/internal/spam-report`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${process.env.ENCRYPTION_KEY || ''}` // Secure the internal route
+                        },
+                        body: JSON.stringify({
+                            configIds: targetConfigIds,
+                            senderId: senderId,
+                        })
+                    }).catch(err => {
+                        logger.error({ error: err.message }, '[Anti-Spam] Failed to update backend with new spammer');
+                    });
+
+                    return; // Auto-ignore this and subsequent messages
+                } else {
+                    spamTracker.set(senderId, timestamps);
+                }
+            }
         }
 
         // ── Try resolving full entity (For name) ONLY for matched chats ──

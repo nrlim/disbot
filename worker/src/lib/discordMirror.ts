@@ -22,6 +22,29 @@ const messageQueue = PriorityMessageQueue.getInstance();
 
 const PLAN_PRIORITY: Record<string, number> = { 'FREE': 0, 'STARTER': 1, 'PRO': 2, 'ELITE': 3 };
 
+// ──────────────────────────────────────────────────────────────
+//  ELITE Anti-Spam Protection
+// ──────────────────────────────────────────────────────────────
+const spamTracker = new Map<string, number[]>();
+const spamBlacklist = new Map<string, number>();
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [senderId, timestamps] of spamTracker.entries()) {
+        const valid = timestamps.filter(t => now - t < 10000);
+        if (valid.length === 0) {
+            spamTracker.delete(senderId);
+        } else {
+            spamTracker.set(senderId, valid);
+        }
+    }
+    for (const [senderId, expiry] of spamBlacklist.entries()) {
+        if (now > expiry) {
+            spamBlacklist.delete(senderId);
+        }
+    }
+}, 60000).unref();
+
 // Interface for holding active sessions
 interface ClientSession {
     client: Client | BotClient;
@@ -335,6 +358,66 @@ export class DiscordMirror {
             plan: userPlan,
             configId: configs[0]?.id
         };
+
+        // ── ELITE Anti-Spam Gatekeeping ──
+        if (userPlan === 'ELITE') {
+            const senderId = message.author.id;
+            const now = Date.now();
+
+            // 1. Check Frontend-managed Blacklist directly
+            const isBlacklisted = configs.some(c => c.userPlan === 'ELITE' && c.blacklistedUsers?.includes(senderId));
+            if (isBlacklisted) {
+                logger.warn(`[Anti-Spam] Sender ${senderId} blocked by User-Managed Blacklist in Discord channel ${message.channelId}.`);
+                return; // drop message IMMEDIATELY
+            }
+
+            // Memory-managed temporary locked check
+            if (spamBlacklist.has(senderId)) {
+                if (now < spamBlacklist.get(senderId)!) {
+                    return; // Auto-ignore, sender is locked natively
+                } else {
+                    spamBlacklist.delete(senderId); // Expired native lock
+                }
+            }
+
+            const antiSpamEnabledConfigs = configs.filter(c => c.userPlan === 'ELITE' && c.antiSpamEnabled);
+            if (antiSpamEnabledConfigs.length > 0) {
+                // 2. Sliding Window Calculation
+                let timestamps = spamTracker.get(senderId) || [];
+                timestamps = timestamps.filter(t => now - t < 10000); // 10s sliding window
+                timestamps.push(now);
+
+                if (timestamps.length > 5) {
+                    // Sender crossed the threshold: mark as spammer
+                    const expiry = now + 30 * 60 * 1000; // 30 minutes
+                    spamBlacklist.set(senderId, expiry);
+                    spamTracker.delete(senderId); // clear tracking memory
+                    logger.warn(`[Anti-Spam] Sender ${senderId} locked for 30 minutes due to flooding in ELITE Discord channel ${message.channelId}.`);
+
+                    // Dispatch API update to backend to sync the blacklistedUsers to DB 
+                    const apiUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.API_URL || 'http://localhost:3000';
+                    const targetConfigIds = antiSpamEnabledConfigs.map(c => c.id);
+
+                    fetch(`${apiUrl}/api/internal/spam-report`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${process.env.ENCRYPTION_KEY || ''}` // Secure the internal route
+                        },
+                        body: JSON.stringify({
+                            configIds: targetConfigIds,
+                            senderId: senderId,
+                        })
+                    }).catch(err => {
+                        logger.error({ error: err.message }, '[Anti-Spam] Failed to update backend with new spammer from Discord');
+                    });
+
+                    return; // Auto-ignore this and subsequent messages
+                } else {
+                    spamTracker.set(senderId, timestamps);
+                }
+            }
+        }
 
         // Wait briefly for embeds/attachments to popular if message relies on them
         if (message.attachments.size > 0 || message.embeds.length > 0) {

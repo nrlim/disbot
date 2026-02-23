@@ -112,6 +112,8 @@ model MirrorConfig {
   watermarkOpacity  Int?          @default(100)
   brandColor        String?
   blurRegions       Json?
+  antiSpamEnabled   Boolean       @default(true)
+  blacklistedUsers  Json?         @default("[]")
   // Legacy fields (for backward compatibility / migration)
   telegramSession   String?
   telegramChatId    String?

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Trash2, Search, Activity, AlertCircle, CheckCircle2, AlertTriangle, X, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Search, Activity, AlertCircle, CheckCircle2, AlertTriangle, X, ChevronDown, Shield } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import EditMirrorModal, { type MirrorConfig as ModalCurrentConfig } from "./EditMirrorModal";
+import AntiSpamManagerModal from "./AntiSpamManagerModal";
 import { toast } from "react-hot-toast";
 import { deleteMirrorConfig, toggleMirrorConfig, deleteMirrorGroup } from "@/actions/mirror";
 import { useRouter } from "next/navigation";
@@ -39,6 +40,8 @@ interface MirrorConfig {
     targetGuildName?: string | null;
     customWatermark?: string | null;
     brandColor?: string | null;
+    antiSpamEnabled?: boolean;
+    blacklistedUsers?: any;
 }
 
 interface WebhookListProps {
@@ -57,6 +60,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
     const [upgradeReason, setUpgradeReason] = useState("");
 
     const [editingConfig, setEditingConfig] = useState<MirrorConfig | undefined>(undefined);
+    const [activeAntiSpamConfig, setActiveAntiSpamConfig] = useState<MirrorConfig | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [togglingId, setTogglingId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -438,6 +442,15 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                                 </td>
                                                                 <td className="px-6 py-4 text-right">
                                                                     <div className="flex items-center justify-end gap-2">
+                                                                        {userPlan === "ELITE" && (
+                                                                            <button
+                                                                                onClick={() => setActiveAntiSpamConfig(config)}
+                                                                                className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all"
+                                                                                title="Manage Anti-Spam Shield"
+                                                                            >
+                                                                                <Shield className="w-4 h-4" />
+                                                                            </button>
+                                                                        )}
                                                                         <button
                                                                             onClick={() => handleDelete(config.id)}
                                                                             disabled={deletingId === config.id}
@@ -514,6 +527,26 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                 onClose={() => setUpgradeModalOpen(false)}
                 reason={upgradeReason}
             />
+
+            {activeAntiSpamConfig && (
+                <AntiSpamManagerModal
+                    isOpen={!!activeAntiSpamConfig}
+                    onClose={() => {
+                        setActiveAntiSpamConfig(null);
+                        router.refresh();
+                    }}
+                    configId={activeAntiSpamConfig.id}
+                    configName={activeAntiSpamConfig.sourceGuildName || "Unknown Mirror"}
+                    initialEnabled={activeAntiSpamConfig.antiSpamEnabled ?? true}
+                    initialBlacklistedUsers={
+                        activeAntiSpamConfig.blacklistedUsers
+                            ? (typeof activeAntiSpamConfig.blacklistedUsers === 'string'
+                                ? JSON.parse(activeAntiSpamConfig.blacklistedUsers)
+                                : activeAntiSpamConfig.blacklistedUsers)
+                            : []
+                    }
+                />
+            )}
         </div>
     );
 }

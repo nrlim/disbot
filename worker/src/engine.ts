@@ -230,7 +230,13 @@ export class Engine {
                     // Only pass blur regions for Elite users (plan-gated feature)
                     blurRegions: (cfg.user?.plan === 'ELITE' && cfg.blurRegions)
                         ? (typeof cfg.blurRegions === 'string' ? JSON.parse(cfg.blurRegions) : cfg.blurRegions)
-                        : undefined
+                        : undefined,
+
+                    // Elite Anti-Spam (Frontend Managed)
+                    antiSpamEnabled: cfg.user?.plan === 'ELITE' ? cfg.antiSpamEnabled : false,
+                    blacklistedUsers: cfg.user?.plan === 'ELITE' && cfg.blacklistedUsers
+                        ? (typeof cfg.blacklistedUsers === 'string' ? JSON.parse(cfg.blacklistedUsers) : cfg.blacklistedUsers)
+                        : []
                 };
             });
 
@@ -287,6 +293,9 @@ export class Engine {
                                 brandColor: cfg.brandColor,
                                 blurRegions: cfg.blurRegions,
                                 sourceChannelName: cfg.sourceChannelName,
+                                tier: cfg.userPlan,
+                                antiSpamEnabled: cfg.antiSpamEnabled,
+                                blacklistedUsers: cfg.blacklistedUsers,
                             });
                         }
                     } else if (cfg.sourcePlatform === 'TELEGRAM') {
