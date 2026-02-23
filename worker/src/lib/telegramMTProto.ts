@@ -198,6 +198,7 @@ export class TelegramListener {
                             useWSS: true, // Switched to WSS for better stability on VPS firewalls
                             autoReconnect: true,
                             floodSleepThreshold: 60,
+                            timeout: 30,       // 30s update loop timeout — prevents TIMEOUT on heavy-traffic channels
                             deviceModel: 'DisBot Mirror Worker',
                             systemVersion: 'Linux/Windows',
                             appVersion: '2.1.0'
@@ -236,15 +237,21 @@ export class TelegramListener {
                                     // This priming runs ONCE per session connection. Subsequent sync
                                     // cycles that find an existing connected session skip this block.
 
-                                    // ─── Step 1: Global Dialog Priming ───
-                                    // Sync global PTS state with server. limit=100 covers most users.
+                                    // ─── Step 1: Global Dialog Priming (Safe) ───
+                                    // Reduced from 100→20 to prevent TIMEOUT during startup.
+                                    // Channel-specific PTS is handled in Step 2 via getMessages.
                                     try {
-                                        const dialogs = await client.getDialogs({ limit: 100 });
+                                        const dialogs = await client.getDialogs({ limit: 20 });
                                         logger.info({
                                             dialogCount: dialogs.length
                                         }, '[Telegram] Dynamic Priming Step 1/4: Fetched dialogs to sync global PTS');
-                                    } catch (e) {
-                                        logger.warn('[Telegram] Dynamic Priming Step 1/4: Failed to fetch dialogs — incoming updates may be delayed');
+                                    } catch (e: any) {
+                                        const isTimeout = e?.message?.includes('TIMEOUT') || e?.message?.includes('Timeout');
+                                        if (isTimeout) {
+                                            logger.warn({ error: e?.message }, '[Telegram] ⚠️ TIMEOUT during dialog priming — connection may be slow, continuing with channel-level priming');
+                                        } else {
+                                            logger.warn({ error: e?.message }, '[Telegram] Dynamic Priming Step 1/4: Failed to fetch dialogs — incoming updates may be delayed');
+                                        }
                                     }
 
                                     // ─── Step 2: Dynamic Targeted Priming Loop ───
@@ -328,11 +335,11 @@ export class TelegramListener {
                                                 }, '[Telegram] Dynamic Priming: ✗ Error priming channel (skipping, worker continues)');
                                             }
 
-                                            // ─── Flood Limit Throttle ───
-                                            // 500ms delay between each channel fetch to avoid
-                                            // Telegram FLOOD_WAIT errors. Safe on 2GB heap.
+                                            // ─── Safe Priming Throttle ───
+                                            // 1000ms delay between each channel to prevent TIMEOUT
+                                            // during startup on high-traffic sessions.
                                             if (uniqueChatIds.indexOf(chatId) < uniqueChatIds.length - 1) {
-                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                                await new Promise(resolve => setTimeout(resolve, 1000));
                                             }
                                         }
 
@@ -366,7 +373,12 @@ export class TelegramListener {
                             new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error("Connection Timeout")), 90000))
                         ]);
                     } catch (err: any) {
-                        logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
+                        const isTimeout = err?.message?.includes('TIMEOUT') || err?.message?.includes('Timeout');
+                        if (isTimeout) {
+                            logger.warn({ error: err?.message }, '[Telegram] ⚠️ TIMEOUT during connection/priming — will retry on next sync cycle');
+                        } else {
+                            logger.error({ error: err?.message || 'Unknown error' }, 'Failed during Telegram connection attempt');
+                        }
                         // Ensure we cleanup the client if it timed out or errored
                         try { await client.disconnect(); } catch { }
                         try { await client.destroy(); } catch { }
@@ -402,6 +414,12 @@ export class TelegramListener {
                     client.addEventHandler((update: any) => {
                         if (this.isShuttingDown) return;
                         if (!update) return;
+
+                        // ── Connection flap guard ──
+                        // If the client is disconnected (connection flapping during
+                        // TIMEOUT recovery), do NOT process any updates to avoid
+                        // cascading errors and partial state corruption.
+                        if (!client.connected) return;
 
                         // ── Inline peer ID extraction for whitelist check ──
                         // We extract the bare numeric ID BEFORE any logging or
@@ -498,6 +516,12 @@ export class TelegramListener {
                         }
                     });
 
+                    // ─── Session Persistence (after successful priming) ───
+                    // The session is stored ONLY after the client is fully connected,
+                    // primed, and the event handler is registered. This prevents
+                    // corrupted session states during TIMEOUT reconnect loops —
+                    // if priming fails/times out, the catch block above cleans up
+                    // the client and returns, so we never reach this point.
                     const whitelistedChatIds = this.buildWhitelist(sessionConfigs);
                     session = {
                         client,
@@ -510,7 +534,7 @@ export class TelegramListener {
                     logger.info({
                         whitelistSize: whitelistedChatIds.size,
                         whitelistedIds: [...whitelistedChatIds]
-                    }, 'Telegram MTProto session established with whitelist-only stream');
+                    }, 'Telegram MTProto session established with whitelist-only stream (priming successful)');
 
                 } catch (error: any) {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
