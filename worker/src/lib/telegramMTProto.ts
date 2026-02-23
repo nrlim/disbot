@@ -28,6 +28,35 @@ const MAX_MEDIA_SIZE_BYTES = 20 * 1024 * 1024;
  */
 const MAX_CONCURRENT_DOWNLOADS = 2;
 
+// ──────────────────────────────────────────────────────────────
+//  Active Sync Constants
+// ──────────────────────────────────────────────────────────────
+
+/** Interval between active sync cycles (ms).
+ *  45s aligns with keep-alive cadence — frequent enough to catch missed
+ *  messages, slow enough to stay well under Telegram rate limits. */
+const ACTIVE_SYNC_INTERVAL_MS = 45_000;
+
+/** Number of recent messages to fetch per channel during active sync.
+ *  5 is the sweet-spot: enough to catch gaps from noise suppression,
+ *  low enough to avoid unnecessary bandwidth on a 2GB Heap worker. */
+const ACTIVE_SYNC_MESSAGE_LIMIT = 5;
+
+/** Max size of the dedup ring buffer per session.
+ *  At 5 msgs × N channels × ~1.3 cycles/min, 1000 entries covers
+ *  ~25 channels for ~6+ minutes — sufficient to prevent re-processing
+ *  while keeping memory footprint small (~40KB per session). */
+const PROCESSED_MSG_RING_SIZE = 1000;
+
+/** Delay between polling individual channels to avoid rate limits (ms). */
+const ACTIVE_SYNC_CHANNEL_DELAY_MS = 500;
+
+/** How often to call readHistory (every Nth sync cycle).
+ *  1 = every cycle (~45s). Calling readHistory on every poll signals
+ *  activity to Telegram, keeping the real-time push stream healthy
+ *  for ALL messages, not just replies/mentions. */
+const READ_HISTORY_EVERY_N_CYCLES = 1;
+
 interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
@@ -40,6 +69,25 @@ interface ActiveSession {
      * Rebuilt on every sync cycle so new mirrors are picked up dynamically.
      */
     whitelistedChatIds: Set<string>;
+    /**
+     * Active Sync: Interval timer for the periodic polling loop.
+     * Runs every ACTIVE_SYNC_INTERVAL_MS to fetch recent messages and
+     * force PTS synchronization for channels where Telegram suppresses
+     * non-reply incoming messages.
+     */
+    activeSyncInterval?: NodeJS.Timeout;
+    /**
+     * Active Sync: Ring buffer of recently processed message IDs.
+     * Format: "chatId:msgId" for uniqueness across channels.
+     * Capped at PROCESSED_MSG_RING_SIZE to bound memory usage.
+     * Used to deduplicate messages fetched by active sync that were
+     * already delivered by the real-time event handler.
+     */
+    processedMessageIds: Set<string>;
+    /** Insertion-order tracking for ring buffer eviction */
+    processedMessageOrder: string[];
+    /** Counter for read receipt cycling */
+    activeSyncCycleCount: number;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -547,7 +595,10 @@ export class TelegramListener {
                         configs: sessionConfigs,
                         lastActive: Date.now(),
                         reconnectFailures: 0,
-                        whitelistedChatIds
+                        whitelistedChatIds,
+                        processedMessageIds: new Set<string>(),
+                        processedMessageOrder: [],
+                        activeSyncCycleCount: 0
                     };
                     this.sessions.set(token, session);
                     logger.info({
@@ -565,6 +616,13 @@ export class TelegramListener {
                     logger.warn({ token: token.substring(0, 10) + '...' }, 'Client disconnected unexpectedly — destroying session to force clean re-creation on next sync');
                     await this.destroySession(token, session);
                     return;
+                }
+
+                // Ensure dedup structures exist (for sessions created before this patch)
+                if (!session.processedMessageIds) {
+                    session.processedMessageIds = new Set<string>();
+                    session.processedMessageOrder = [];
+                    session.activeSyncCycleCount = 0;
                 }
 
                 // robust-keep-alive - Setup ONLY once
@@ -607,10 +665,243 @@ export class TelegramListener {
                         }
                     }, 45_000); // Check every 45s
                 }
+
+                // ═══════════════════════════════════════════════════════════
+                //  ACTIVE SYNC LOOP — Setup ONLY once per session
+                // ═══════════════════════════════════════════════════════════
+                // Telegram suppresses non-reply messages in busy groups to save
+                // bandwidth ("background noise suppression"). The real-time event
+                // handler only receives messages where the user is mentioned or
+                // replied to. This polling loop compensates by fetching the latest
+                // messages for each whitelisted channel every 30s, deduplicating
+                // against the ring buffer, and forwarding genuinely new ones.
+                //
+                // Additionally, readHistory() is called every 3rd cycle (~90s)
+                // to simulate read receipts, which tells Telegram "I am actively
+                // viewing this group" — this keeps the real-time update stream
+                // open for ALL messages, not just replies.
+                if (!session.activeSyncInterval) {
+                    this.startActiveSync(token, session);
+                }
             }
         });
 
         await Promise.allSettled(syncPromises);
+    }
+
+    // ────────────── ACTIVE SYNC ──────────────
+    // Compensates for Telegram's background noise suppression by polling
+    // whitelisted channels every 30s. Messages already seen via the real-time
+    // event handler are deduplicated using a ring buffer.
+
+    /**
+     * Register a message ID in the dedup ring buffer.
+     * Uses a Set for O(1) lookup + an array for FIFO eviction.
+     * When the buffer exceeds PROCESSED_MSG_RING_SIZE, the oldest entries
+     * are evicted to bound memory usage.
+     */
+    private trackProcessedMessage(session: ActiveSession, dedupKey: string): void {
+        if (session.processedMessageIds.has(dedupKey)) return;
+        session.processedMessageIds.add(dedupKey);
+        session.processedMessageOrder.push(dedupKey);
+
+        // Evict oldest entries if ring buffer is full
+        while (session.processedMessageOrder.length > PROCESSED_MSG_RING_SIZE) {
+            const oldest = session.processedMessageOrder.shift();
+            if (oldest) session.processedMessageIds.delete(oldest);
+        }
+    }
+
+    /**
+     * Start the Active Synchronization loop for a session.
+     * This runs every ACTIVE_SYNC_INTERVAL_MS (30s) and:
+     *   1. Iterates through all whitelisted channels
+     *   2. Fetches the 10 latest messages via getMessages()
+     *   3. Deduplicates against the ring buffer
+     *   4. Passes genuinely new messages to handleNewMessage()
+     *   5. Every 3rd cycle: calls readHistory() to simulate read receipts
+     */
+    private startActiveSync(token: string, session: ActiveSession): void {
+        logger.info({
+            whitelistSize: session.whitelistedChatIds.size,
+            intervalMs: ACTIVE_SYNC_INTERVAL_MS
+        }, '[ActiveSync] Starting active synchronization loop');
+
+        session.activeSyncInterval = setInterval(async () => {
+            if (this.isShuttingDown) return;
+
+            // Verify session is still valid
+            const currentSession = this.sessions.get(token);
+            if (!currentSession || currentSession !== session) {
+                // Session was replaced or destroyed
+                if (session.activeSyncInterval) {
+                    clearInterval(session.activeSyncInterval);
+                    session.activeSyncInterval = undefined;
+                }
+                return;
+            }
+
+            if (!session.client.connected) {
+                logger.debug('[ActiveSync] Client disconnected, skipping cycle');
+                return;
+            }
+
+            session.activeSyncCycleCount++;
+            const isReadHistoryCycle = (session.activeSyncCycleCount % READ_HISTORY_EVERY_N_CYCLES) === 0;
+
+            // Snapshot the current whitelist (may be rebuilt concurrently by sync())
+            const chatIdsSnapshot = [...session.whitelistedChatIds];
+            if (chatIdsSnapshot.length === 0) return;
+
+            // Also gather the raw config chat IDs for entity resolution
+            const configChatIds = [...new Set(
+                session.configs
+                    .map(c => c.telegramChatId)
+                    .filter((id): id is string => !!id)
+            )];
+
+            let newMessagesFound = 0;
+            let channelsPolled = 0;
+            let channelsFailed = 0;
+
+            for (const rawConfigChatId of configChatIds) {
+                if (this.isShuttingDown || !session.client.connected) break;
+
+                try {
+                    // Resolve entity using config's original format
+                    let entity: any = null;
+                    const formats = [rawConfigChatId];
+                    if (rawConfigChatId.startsWith('-100')) {
+                        formats.push(rawConfigChatId.substring(4));
+                    } else if (!rawConfigChatId.startsWith('-')) {
+                        formats.push(`-100${rawConfigChatId}`);
+                    }
+
+                    for (const fmt of formats) {
+                        if (entity) break;
+                        try {
+                            entity = await session.client.getEntity(fmt);
+                        } catch {
+                            // Try next format
+                        }
+                    }
+
+                    if (!entity) {
+                        channelsFailed++;
+                        continue;
+                    }
+
+                    // ─── Fetch latest messages ───
+                    let messages: any[] = [];
+                    try {
+                        const fetchPromise = session.client.getMessages(entity, {
+                            limit: ACTIVE_SYNC_MESSAGE_LIMIT
+                        });
+                        const timeoutPromise = new Promise<any[]>((_, reject) =>
+                            setTimeout(() => reject(new Error('ActiveSync fetch timeout')), 10000)
+                        );
+                        messages = await Promise.race([fetchPromise, timeoutPromise]) || [];
+                    } catch (fetchErr: any) {
+                        logger.debug({
+                            chatId: rawConfigChatId,
+                            error: fetchErr?.message
+                        }, '[ActiveSync] getMessages failed for channel');
+                        channelsFailed++;
+                        continue;
+                    }
+
+                    channelsPolled++;
+
+                    // ─── Process fetched messages (deduplicate & forward) ───
+                    for (const msg of messages) {
+                        if (!msg || !msg.id) continue;
+
+                        // Build dedup key from peerId + msgId
+                        const peerId = msg.peerId;
+                        const bareChatId = peerId?.channelId?.toString()
+                            || peerId?.chatId?.toString()
+                            || peerId?.userId?.toString()
+                            || this.normalizeChatId(rawConfigChatId);
+
+                        const dedupKey = `${bareChatId}:${msg.id}`;
+
+                        // Skip if already processed by event handler or previous sync cycle
+                        if (session.processedMessageIds.has(dedupKey)) continue;
+
+                        // Mark as processed
+                        this.trackProcessedMessage(session, dedupKey);
+                        newMessagesFound++;
+
+                        // Forward to handleNewMessage
+                        const mockEvent = { message: msg };
+                        this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
+                            logger.error({
+                                error: err?.message || 'Unknown',
+                                msgId: msg.id,
+                                chatId: rawConfigChatId
+                            }, '[ActiveSync] handleNewMessage failed for polled message');
+                        });
+                    }
+
+                    // ─── Read Receipt Simulation (every Nth cycle) ───
+                    // Tells Telegram "I am viewing this group" which prevents
+                    // the server from suppressing non-reply messages.
+                    if (isReadHistoryCycle) {
+                        try {
+                            await session.client.invoke(
+                                new Api.messages.ReadHistory({
+                                    peer: entity,
+                                    maxId: 0  // 0 = mark all as read
+                                })
+                            );
+                        } catch (readErr: any) {
+                            // readHistory can fail for channels (use ReadMentions instead)
+                            // or if the entity type doesn't support it — non-critical
+                            try {
+                                await session.client.markAsRead(entity);
+                            } catch {
+                                // Completely non-critical, swallow silently
+                            }
+                        }
+                    }
+
+                } catch (err: any) {
+                    channelsFailed++;
+                    logger.debug({
+                        chatId: rawConfigChatId,
+                        error: err?.message || 'Unknown'
+                    }, '[ActiveSync] Error processing channel');
+                }
+
+                // ─── Rate-limit safety delay between channels ───
+                if (!this.isShuttingDown) {
+                    await new Promise(resolve => setTimeout(resolve, ACTIVE_SYNC_CHANNEL_DELAY_MS));
+                }
+            }
+
+            // Only log if something interesting happened
+            if (newMessagesFound > 0 || channelsFailed > 0) {
+                logger.info({
+                    cycle: session.activeSyncCycleCount,
+                    channelsPolled,
+                    channelsFailed,
+                    newMessagesFound,
+                    isReadHistoryCycle,
+                    dedupBufferSize: session.processedMessageIds.size
+                }, '[ActiveSync] Cycle complete');
+            } else {
+                logger.debug({
+                    cycle: session.activeSyncCycleCount,
+                    channelsPolled,
+                    dedupBufferSize: session.processedMessageIds.size
+                }, '[ActiveSync] Cycle complete (no new messages)');
+            }
+        }, ACTIVE_SYNC_INTERVAL_MS);
+
+        // Don't block process exit
+        if (session.activeSyncInterval.unref) {
+            session.activeSyncInterval.unref();
+        }
     }
 
     // ────────────── MESSAGE HANDLER ──────────────
@@ -650,6 +941,12 @@ export class TelegramListener {
         } else {
             return; // Silently drop — no peerId means we can't match
         }
+
+        // ── DEDUP REGISTRATION ──
+        // Register this message in the dedup ring buffer so that the
+        // Active Sync polling loop won't re-process it.
+        const dedupKey = `${rawChatId}:${msgId}`;
+        this.trackProcessedMessage(session, dedupKey);
 
         // ── WHITELISTED EVENT LOG ──
         // This log only fires for messages that passed the whitelist gate in
@@ -756,43 +1053,89 @@ export class TelegramListener {
         logger.info({ targetCount: targetConfigs.length }, '[Telegram] Matches found, proceeding with forward');
 
         // ── 1. Resolve Global Metadata (Replies & Forwards) ──
+        // Wrapped in a 5s timeout to prevent slow API calls from blocking delivery.
         let replyContext = '';
         let forwardContext = '';
 
         try {
-            // Handle Replies — extract original author, text snippet, and media type
-            if (message.replyTo && typeof message.getReplyMessage === 'function') {
-                const replyMsg = await message.getReplyMessage().catch(() => null);
-                if (replyMsg) {
-                    let replySender: any = null;
-                    if (typeof replyMsg.getSender === 'function') {
-                        replySender = await replyMsg.getSender().catch(() => null);
+            const metadataPromise = (async () => {
+                // Handle Replies — extract original author, text snippet, and media type
+                if (message.replyTo) {
+                    let replyMsg: any = null;
+
+                    // Path A: GramJS hydrated message (standard UpdateNewChannelMessage)
+                    if (typeof message.getReplyMessage === 'function') {
+                        replyMsg = await message.getReplyMessage().catch(() => null);
                     }
-                    const replyUser = this.extractUsername(replySender);
-                    const replyText = replyMsg.text || replyMsg.message || null;
-                    const replyMediaType = MessageFormatter.detectMediaType(replyMsg.media);
 
-                    replyContext = MessageFormatter.formatReplyContext({
-                        authorName: replyUser,
-                        snippet: replyText,
-                        mediaType: replyMediaType
-                    });
-                }
-            }
+                    // Path B: Synthetic message (UpdateShortMessage) — no getReplyMessage,
+                    // so manually fetch the original using the reply ID from the header.
+                    if (!replyMsg && message.replyTo) {
+                        const replyToMsgId = (message.replyTo as any).replyToMsgId;
+                        if (replyToMsgId && session.client.connected) {
+                            try {
+                                const msgs = await session.client.getMessages(
+                                    message.peerId,
+                                    { ids: [replyToMsgId] }
+                                );
+                                replyMsg = msgs?.[0] || null;
+                            } catch {
+                                // Non-critical — reply header will be skipped
+                            }
+                        }
+                    }
 
-            // Handle Forwards — resolve source name
-            if (message.fwdFrom) {
-                let fwdName = 'Unknown Source';
-                if (message.fwdFrom.fromName) {
-                    fwdName = message.fwdFrom.fromName;
-                } else if (message.fwdFrom.fromId) {
-                    const entity = await session.client.getEntity(message.fwdFrom.fromId).catch(() => null);
-                    if (entity) fwdName = this.extractUsername(entity);
+                    // Extract metadata from the fetched reply (if available)
+                    if (replyMsg) {
+                        let replySender: any = null;
+                        if (typeof replyMsg.getSender === 'function') {
+                            replySender = await replyMsg.getSender().catch(() => null);
+                        }
+                        // Fallback: resolve sender from reply's fromId directly
+                        if (!replySender && replyMsg.fromId) {
+                            replySender = await session.client.getEntity(replyMsg.fromId).catch(() => null);
+                        }
+
+                        const replyUser = this.extractUsername(replySender);
+                        const replyText = replyMsg.text || replyMsg.message || null;
+                        const replyMediaType = MessageFormatter.detectMediaType(replyMsg.media);
+
+                        replyContext = MessageFormatter.formatReplyContext({
+                            authorName: replyUser,
+                            snippet: replyText,
+                            mediaType: replyMediaType
+                        });
+                    }
                 }
-                forwardContext = MessageFormatter.formatForwardContext({ sourceName: fwdName });
+
+                // Handle Forwards — resolve source name
+                if (message.fwdFrom) {
+                    let fwdName = 'Unknown Source';
+                    if (message.fwdFrom.fromName) {
+                        fwdName = message.fwdFrom.fromName;
+                    } else if (message.fwdFrom.fromId) {
+                        const entity = await session.client.getEntity(message.fwdFrom.fromId).catch(() => null);
+                        if (entity) fwdName = this.extractUsername(entity);
+                    }
+                    forwardContext = MessageFormatter.formatForwardContext({ sourceName: fwdName });
+                }
+            })();
+
+            // 5-second timeout — if metadata takes too long, skip headers and deliver the message body
+            await Promise.race([
+                metadataPromise,
+                new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Metadata Timeout')), 5000))
+            ]);
+        } catch (err: any) {
+            const isTimeout = err?.message === 'Metadata Timeout';
+            if (isTimeout) {
+                logger.warn('[Telegram] ⏱️ Reply/Forward metadata timed out (5s) — delivering message without headers');
+            } else {
+                logger.debug({ err: err?.message }, 'Metadata resolution failed — skipping headers');
             }
-        } catch (err) {
-            logger.debug({ err }, 'Metadata resolution failed/timed out - skipping headers');
+            // Reset on failure to avoid partial/corrupted headers
+            replyContext = '';
+            forwardContext = '';
         }
 
         // ── Build sender info ──
@@ -1427,6 +1770,13 @@ export class TelegramListener {
             clearInterval(session.keepAliveInterval);
             session.keepAliveInterval = undefined;
         }
+        if (session.activeSyncInterval) {
+            clearInterval(session.activeSyncInterval);
+            session.activeSyncInterval = undefined;
+        }
+        // Clear dedup buffers to free memory
+        session.processedMessageIds?.clear();
+        if (session.processedMessageOrder) session.processedMessageOrder.length = 0;
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
         this.sessions.delete(token);
