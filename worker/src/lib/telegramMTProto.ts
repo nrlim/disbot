@@ -28,11 +28,22 @@ const MAX_MEDIA_SIZE_BYTES = 20 * 1024 * 1024;
  */
 const MAX_CONCURRENT_DOWNLOADS = 2;
 
+/**
+ * Channel-specific keep-alive pinger target.
+ * Meme Coin Indonesia (-1002131903946) does not receive raw MTProto updates
+ * reliably. A periodic getEntity + getMessages forces the server to push
+ * pending updates and keeps the per-channel PTS fresh.
+ */
+const PINGER_TARGET_CHANNEL_ID = '-1002131903946';
+const PINGER_TARGET_BARE_ID = '2131903946'; // without -100 prefix
+const PINGER_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+
 interface ActiveSession {
     client: TelegramClient;
     configs: TelegramConfig[];
     lastActive: number;
     keepAliveInterval?: NodeJS.Timeout;
+    channelPingerInterval?: NodeJS.Timeout;
     reconnectFailures: number;
     /**
      * Whitelist of normalized (bare numeric) chat IDs from sessionConfigs.
@@ -587,6 +598,20 @@ export class TelegramListener {
                             }
                         }
                     }, 45_000); // Check every 45s
+                }
+
+                // ═══════════════════════════════════════════════════════════
+                //  CHANNEL-SPECIFIC KEEP-ALIVE PINGER
+                // ═══════════════════════════════════════════════════════════
+                //  Meme Coin Indonesia (-1002131903946) does not reliably
+                //  receive raw MTProto events. This dedicated pinger runs
+                //  every 2 minutes to force the Telegram server to push the
+                //  latest per-channel PTS and synchronize any missed updates.
+                //
+                //  Only starts if the channel is in this session's whitelist.
+                // ═══════════════════════════════════════════════════════════
+                if (!session.channelPingerInterval && session.whitelistedChatIds.has(PINGER_TARGET_BARE_ID)) {
+                    this.startChannelPinger(session, token);
                 }
             }
         });
@@ -1399,10 +1424,100 @@ export class TelegramListener {
         }
     }
 
+    // ────────────── CHANNEL PINGER ──────────────
+
+    /**
+     * Starts a dedicated keep-alive pinger for Meme Coin Indonesia (-1002131903946).
+     *
+     * Every 2 minutes it:
+     *   1. Calls getEntity() to refresh the entity cache & access_hash
+     *   2. Calls getMessages(limit: 1) to force per-channel PTS synchronization
+     *   3. Logs diagnostic info so the operator can verify if the server 
+     *      returned data the main event stream missed.
+     */
+    private startChannelPinger(session: ActiveSession, token: string): void {
+        logger.info({
+            channelId: PINGER_TARGET_CHANNEL_ID,
+            intervalMs: PINGER_INTERVAL_MS
+        }, '[Telegram] 🏓 Channel Pinger: Starting dedicated keep-alive for Meme Coin Indonesia');
+
+        session.channelPingerInterval = setInterval(async () => {
+            const pingerStart = Date.now();
+
+            try {
+                // ── Guard: skip if session/client is gone ──
+                if (!session.client?.connected) {
+                    logger.warn('[Telegram] 🏓 Channel Pinger: Client disconnected — skipping this cycle');
+                    return;
+                }
+
+                // ── Step 1: Refresh entity (access_hash + cache) ──
+                let entity: any = null;
+                try {
+                    entity = await session.client.getEntity(PINGER_TARGET_CHANNEL_ID);
+                    logger.info({
+                        channelId: PINGER_TARGET_CHANNEL_ID,
+                        entityTitle: entity?.title || '(unknown)',
+                        entityId: entity?.id?.toString(),
+                        entityClass: entity?.className
+                    }, '[Telegram] 🏓 Channel Pinger Step 1/2: getEntity — entity cache refreshed');
+                } catch (entityErr: any) {
+                    logger.warn({
+                        channelId: PINGER_TARGET_CHANNEL_ID,
+                        error: entityErr?.message || 'Unknown'
+                    }, '[Telegram] 🏓 Channel Pinger Step 1/2: getEntity FAILED — channel may be inaccessible');
+                }
+
+                // ── Step 2: Force update stream via getMessages ──
+                try {
+                    const target = entity || PINGER_TARGET_CHANNEL_ID;
+                    const messages = await session.client.getMessages(target, { limit: 1 });
+
+                    const latestMsg = messages?.[0];
+                    const latestMsgId = latestMsg?.id;
+                    const latestMsgDate = latestMsg?.date
+                        ? new Date(latestMsg.date * 1000).toISOString()
+                        : null;
+                    const latestMsgText = latestMsg?.message
+                        ? latestMsg.message.substring(0, 80).replace(/\n/g, ' ')
+                        : latestMsg?.media
+                            ? '[Media]'
+                            : '[Empty]';
+
+                    logger.info({
+                        channelId: PINGER_TARGET_CHANNEL_ID,
+                        latestMsgId,
+                        latestMsgDate,
+                        latestMsgPreview: latestMsgText,
+                        messagesReturned: messages?.length ?? 0,
+                        elapsedMs: Date.now() - pingerStart
+                    }, '[Telegram] 🏓 Channel Pinger Step 2/2: getMessages — forced PTS sync complete');
+                } catch (msgErr: any) {
+                    logger.warn({
+                        channelId: PINGER_TARGET_CHANNEL_ID,
+                        error: msgErr?.message || 'Unknown'
+                    }, '[Telegram] 🏓 Channel Pinger Step 2/2: getMessages FAILED');
+                }
+
+            } catch (err: any) {
+                logger.error({
+                    channelId: PINGER_TARGET_CHANNEL_ID,
+                    error: err?.message || 'Unknown',
+                    elapsedMs: Date.now() - pingerStart
+                }, '[Telegram] 🏓 Channel Pinger: Unexpected error in pinger cycle');
+            }
+        }, PINGER_INTERVAL_MS);
+    }
+
     private async destroySession(token: string, session: ActiveSession): Promise<void> {
         if (session.keepAliveInterval) {
             clearInterval(session.keepAliveInterval);
             session.keepAliveInterval = undefined;
+        }
+        if (session.channelPingerInterval) {
+            clearInterval(session.channelPingerInterval);
+            session.channelPingerInterval = undefined;
+            logger.info('[Telegram] 🏓 Channel Pinger: Stopped (session destroyed)');
         }
         try { await session.client.disconnect(); } catch { }
         try { await session.client.destroy(); } catch { }
