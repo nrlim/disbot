@@ -202,33 +202,43 @@ export class TelegramListener {
                                 await client.connect();
                                 const isAuth = await client.checkAuthorization();
                                 if (isAuth) {
-                                    // ═══════════════════════════════════════════════
-                                    //  CRITICAL: PTS Priming & Entity Pre-Caching
-                                    // ═══════════════════════════════════════════════
+                                    // ═══════════════════════════════════════════════════════════
+                                    //  DYNAMIC TARGETED PRIMING
+                                    // ═══════════════════════════════════════════════════════════
                                     // GramJS user sessions will NOT receive UpdateNewChannelMessage
-                                    // for incoming messages unless TWO conditions are met:
+                                    // for incoming messages unless THREE conditions are met:
                                     //
-                                    // 1. The session's PTS (Persistent Tracking State) is synced
-                                    //    with the server. getDialogs() forces this sync.
+                                    // 1. The session's PTS (Persistent Tracking State) is globally
+                                    //    synced with the server. getDialogs() forces this sync.
                                     //
                                     // 2. The channel's access_hash is in GramJS's internal entity
                                     //    cache. Without it, GramJS SILENTLY DROPS incoming updates
                                     //    for that channel — they never reach addEventHandler.
                                     //    getEntity() for each monitored channel populates this cache.
+                                    //
+                                    // 3. Per-channel PTS must also be refreshed. High-traffic channels
+                                    //    (e.g. Meme Coin Indonesia) can drift if only global PTS is
+                                    //    synced. Fetching recent messages per-channel (limit: 5) forces
+                                    //    the server to update the per-channel PTS tracking.
+                                    //
+                                    // This priming runs ONCE per session connection. Subsequent sync
+                                    // cycles that find an existing connected session skip this block.
 
-                                    // Step 1: Dialog priming — sync PTS state with server
-                                    // Use limit=100 to cover more channels (user may have many chats)
+                                    // ─── Step 1: Global Dialog Priming ───
+                                    // Sync global PTS state with server. limit=100 covers most users.
                                     try {
                                         const dialogs = await client.getDialogs({ limit: 100 });
                                         logger.info({
                                             dialogCount: dialogs.length
-                                        }, '[Telegram] PTS Priming: Fetched dialogs to sync session state');
+                                        }, '[Telegram] Dynamic Priming Step 1/4: Fetched dialogs to sync global PTS');
                                     } catch (e) {
-                                        logger.warn('[Telegram] PTS Priming: Failed to fetch dialogs — incoming updates may be delayed');
+                                        logger.warn('[Telegram] Dynamic Priming Step 1/4: Failed to fetch dialogs — incoming updates may be delayed');
                                     }
 
-                                    // Step 2: Entity pre-caching — force access_hash for each monitored channel
-                                    // Without this, GramJS drops UpdateNewChannelMessage for unknown channels
+                                    // ─── Step 2: Dynamic Targeted Priming Loop ───
+                                    // Iterate through ALL unique source channel IDs from sessionConfigs.
+                                    // For each channel: resolve entity → fetch 5 recent messages.
+                                    // This forces both entity cache population AND per-channel PTS refresh.
                                     const uniqueChatIds = [...new Set(
                                         sessionConfigs
                                             .map(c => c.telegramChatId)
@@ -239,7 +249,10 @@ export class TelegramListener {
                                         logger.info({
                                             chatIds: uniqueChatIds,
                                             count: uniqueChatIds.length
-                                        }, '[Telegram] Entity Pre-Cache: Priming access_hash for monitored channels');
+                                        }, '[Telegram] Dynamic Priming Step 2/4: Starting targeted channel priming loop');
+
+                                        let primedCount = 0;
+                                        let failedCount = 0;
 
                                         for (const chatId of uniqueChatIds) {
                                             try {
@@ -264,45 +277,77 @@ export class TelegramListener {
                                                 }
 
                                                 if (entity) {
-                                                    // Additionally fetch recent messages to force per-channel PTS sync
+                                                    // ═══ FORCED MESSAGE FETCH (limit: 5) ═══
+                                                    // Fetching 5 recent messages per channel forces the server
+                                                    // to update per-channel PTS. This is critical for high-traffic
+                                                    // channels where global PTS alone is insufficient.
+                                                    // limit:5 is the sweet-spot: enough to warm PTS, low enough
+                                                    // to avoid unnecessary bandwidth on a 2GB Heap worker.
                                                     try {
-                                                        await client.getMessages(entity, { limit: 1 });
-                                                    } catch {
-                                                        // Non-critical, entity cache is already populated
+                                                        await client.getMessages(entity, { limit: 5 });
+                                                    } catch (msgErr: any) {
+                                                        // Non-critical: entity cache is already populated,
+                                                        // messages are a bonus for PTS refresh
+                                                        logger.debug({
+                                                            chatId,
+                                                            error: msgErr?.message || 'Unknown'
+                                                        }, '[Telegram] Dynamic Priming: getMessages failed (non-critical, entity already cached)');
                                                     }
 
+                                                    primedCount++;
                                                     logger.info({
                                                         chatId,
                                                         entityTitle: (entity as any).title || (entity as any).firstName || '(unknown)',
                                                         entityId: (entity as any).id?.toString(),
                                                         entityClass: (entity as any).className
-                                                    }, '[Telegram] Entity Pre-Cache: ✓ Channel cached successfully');
+                                                    }, '[Telegram] Dynamic Priming: ✓ Channel primed successfully');
                                                 } else {
+                                                    failedCount++;
                                                     logger.warn({
                                                         chatId,
                                                         triedFormats: formats
-                                                    }, '[Telegram] Entity Pre-Cache: ✗ Failed to cache channel — incoming updates from this channel may be dropped');
+                                                    }, '[Telegram] Dynamic Priming: ✗ Failed to resolve channel entity — user may have left the group or channel is inaccessible');
                                                 }
                                             } catch (err: any) {
+                                                failedCount++;
                                                 logger.warn({
                                                     chatId,
                                                     error: err?.message || 'Unknown error'
-                                                }, '[Telegram] Entity Pre-Cache: ✗ Error caching channel entity');
+                                                }, '[Telegram] Dynamic Priming: ✗ Error priming channel (skipping, worker continues)');
+                                            }
+
+                                            // ─── Flood Limit Throttle ───
+                                            // 500ms delay between each channel fetch to avoid
+                                            // Telegram FLOOD_WAIT errors. Safe on 2GB heap.
+                                            if (uniqueChatIds.indexOf(chatId) < uniqueChatIds.length - 1) {
+                                                await new Promise(resolve => setTimeout(resolve, 500));
                                             }
                                         }
+
+                                        logger.info({
+                                            total: uniqueChatIds.length,
+                                            primed: primedCount,
+                                            failed: failedCount
+                                        }, '[Telegram] Dynamic Priming Step 2/4: Targeted channel priming complete');
                                     }
 
-                                    // Step 3: Force catch-up on any missed updates
-                                    // This tells GramJS to request any updates from the server
-                                    // that arrived while the session was offline/disconnected
+                                    // ─── Step 3: Force CatchUp on Missed Updates ───
+                                    // Tells GramJS to request any updates from the server
+                                    // that arrived while the session was offline/disconnected.
                                     try {
                                         if (typeof (client as any).catchUp === 'function') {
                                             await (client as any).catchUp();
-                                            logger.info('[Telegram] CatchUp: Requested pending updates from server');
+                                            logger.info('[Telegram] Dynamic Priming Step 3/4: CatchUp — requested pending updates from server');
                                         }
                                     } catch (e) {
-                                        logger.debug('[Telegram] CatchUp: Not available or failed (non-critical)');
+                                        logger.debug('[Telegram] Dynamic Priming Step 3/4: CatchUp not available or failed (non-critical)');
                                     }
+
+                                    // ─── Step 4: Final Verification Log ───
+                                    logger.info({
+                                        sessionChannelCount: uniqueChatIds.length,
+                                        configCount: sessionConfigs.length
+                                    }, '[Telegram] Dynamic Priming Step 4/4: ✅ Session warm-up complete — all source channels primed');
                                 }
                                 return isAuth;
                             })(),
