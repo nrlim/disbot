@@ -760,7 +760,7 @@ export class TelegramListener {
         let forwardContext = '';
 
         try {
-            // Handle Replies
+            // Handle Replies — extract original author, text snippet, and media type
             if (message.replyTo && typeof message.getReplyMessage === 'function') {
                 const replyMsg = await message.getReplyMessage().catch(() => null);
                 if (replyMsg) {
@@ -769,14 +769,18 @@ export class TelegramListener {
                         replySender = await replyMsg.getSender().catch(() => null);
                     }
                     const replyUser = this.extractUsername(replySender);
-                    const snippet = replyMsg.text
-                        ? (replyMsg.text.substring(0, 60).replace(/\n/g, ' ') + (replyMsg.text.length > 60 ? '...' : ''))
-                        : '[Media]';
-                    replyContext = `-# 💬 Replying to **${replyUser}**: _${snippet}_\n`;
+                    const replyText = replyMsg.text || replyMsg.message || null;
+                    const replyMediaType = MessageFormatter.detectMediaType(replyMsg.media);
+
+                    replyContext = MessageFormatter.formatReplyContext({
+                        authorName: replyUser,
+                        snippet: replyText,
+                        mediaType: replyMediaType
+                    });
                 }
             }
 
-            // Handle Forwards
+            // Handle Forwards — resolve source name
             if (message.fwdFrom) {
                 let fwdName = 'Unknown Source';
                 if (message.fwdFrom.fromName) {
@@ -785,7 +789,7 @@ export class TelegramListener {
                     const entity = await session.client.getEntity(message.fwdFrom.fromId).catch(() => null);
                     if (entity) fwdName = this.extractUsername(entity);
                 }
-                forwardContext = `-# 📨 Forwarded from **${fwdName}**\n`;
+                forwardContext = MessageFormatter.formatForwardContext({ sourceName: fwdName });
             }
         } catch (err) {
             logger.debug({ err }, 'Metadata resolution failed/timed out - skipping headers');

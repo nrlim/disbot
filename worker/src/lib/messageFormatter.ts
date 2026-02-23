@@ -8,6 +8,23 @@ export interface FormattedMessage {
     embeds?: any[];
 }
 
+/**
+ * Metadata extracted from a Telegram reply message.
+ * Passed to formatReplyContext for clean separation of concerns.
+ */
+export interface ReplyMeta {
+    authorName: string;
+    snippet: string | null;
+    mediaType: 'photo' | 'video' | 'document' | 'sticker' | 'voice' | 'audio' | 'animation' | null;
+}
+
+/**
+ * Metadata extracted from a forwarded Telegram message.
+ */
+export interface ForwardMeta {
+    sourceName: string;
+}
+
 export class MessageFormatter {
     /**
      * Formats a message for delivery via Discord Webhook.
@@ -102,5 +119,105 @@ export class MessageFormatter {
             content: content ? content + "\n" : content,
             embeds: embeds    // The branding & link
         };
+    }
+
+    // ────────────── REPLY FORMATTING ──────────────
+
+    /** Max characters for the reply snippet before truncation */
+    private static readonly REPLY_SNIPPET_MAX = 100;
+
+    /**
+     * Maps raw Telegram media class names to user-friendly labels.
+     */
+    private static readonly MEDIA_LABELS: Record<string, string> = {
+        photo: '📷 Photo',
+        video: '📹 Video',
+        document: '📄 Document',
+        sticker: '🎨 Sticker',
+        voice: '🎙️ Voice Message',
+        audio: '🎵 Audio',
+        animation: '🎞️ GIF',
+    };
+
+    /**
+     * Detects the media type from a Telegram message's media object.
+     * Returns a specific type key or null if no recognized media is present.
+     */
+    public static detectMediaType(media: any): ReplyMeta['mediaType'] {
+        if (!media) return null;
+        const className = media.className?.toLowerCase() || '';
+        if (className.includes('photo')) return 'photo';
+        if (className.includes('gif') || className.includes('animation')) return 'animation';
+        if (className.includes('video')) return 'video';
+        if (className.includes('sticker')) return 'sticker';
+        if (className.includes('voice')) return 'voice';
+        if (className.includes('audio')) return 'audio';
+        if (className.includes('document')) return 'document';
+        // Some media types wrap in MessageMediaXxx
+        if (media.photo) return 'photo';
+        if (media.document) {
+            const attrs = media.document.attributes || [];
+            for (const attr of attrs) {
+                const attrClass = attr.className?.toLowerCase() || '';
+                if (attrClass.includes('video')) return 'video';
+                if (attrClass.includes('audio')) return 'audio';
+                if (attrClass.includes('sticker')) return 'sticker';
+                if (attrClass.includes('animated')) return 'animation';
+            }
+            return 'document';
+        }
+        return null;
+    }
+
+    /**
+     * Formats a reply context block for Discord rendering.
+     *
+     * Output example (Discord blockquote style):
+     *   > 💬 **OriginalUser:**
+     *   > _This is the original message text that was replied to..._
+     *
+     * - Text is truncated at 100 characters with "…"
+     * - Media-only replies show a specific label like [📷 Photo]
+     * - Mixed (text + media) shows the text snippet + media label
+     */
+    public static formatReplyContext(meta: ReplyMeta): string {
+        const { authorName, snippet, mediaType } = meta;
+
+        // Build the content portion
+        let contentPart = '';
+
+        const mediaLabel = mediaType ? MessageFormatter.MEDIA_LABELS[mediaType] || '📎 Media' : null;
+
+        if (snippet && snippet.trim().length > 0) {
+            // Truncate and sanitize the snippet
+            const clean = snippet.replace(/\n/g, ' ').trim();
+            const truncated = clean.length > MessageFormatter.REPLY_SNIPPET_MAX
+                ? clean.substring(0, MessageFormatter.REPLY_SNIPPET_MAX) + '…'
+                : clean;
+            contentPart = `_${truncated}_`;
+
+            // If there's ALSO media, append the label
+            if (mediaLabel) {
+                contentPart += ` [${mediaLabel}]`;
+            }
+        } else if (mediaLabel) {
+            // Media-only reply (no text)
+            contentPart = `[${mediaLabel}]`;
+        } else {
+            contentPart = '_[Message]_';
+        }
+
+        // Discord blockquote format for visual hierarchy
+        return `> 💬 **${authorName}:**\n> ${contentPart}\n`;
+    }
+
+    /**
+     * Formats a forward context header for Discord rendering.
+     *
+     * Output example (Discord small text):
+     *   -# 📨 Forwarded from **SourceName**
+     */
+    public static formatForwardContext(meta: ForwardMeta): string {
+        return `-# 📨 Forwarded from **${meta.sourceName}**\n`;
     }
 }
