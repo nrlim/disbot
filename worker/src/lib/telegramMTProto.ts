@@ -34,6 +34,12 @@ interface ActiveSession {
     lastActive: number;
     keepAliveInterval?: NodeJS.Timeout;
     reconnectFailures: number;
+    /**
+     * Whitelist of normalized (bare numeric) chat IDs from sessionConfigs.
+     * Used for O(1) source-level filtering in the raw MTProto event handler.
+     * Rebuilt on every sync cycle so new mirrors are picked up dynamically.
+     */
+    whitelistedChatIds: Set<string>;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -150,7 +156,13 @@ export class TelegramListener {
                 // 1. Update existing session configs
                 session.configs = sessionConfigs;
                 session.lastActive = Date.now();
-                logger.debug({ configCount: sessionConfigs.length }, 'Updated existing Telegram session configs');
+
+                // 2. Rebuild whitelist on every sync so new mirrors are picked up
+                session.whitelistedChatIds = this.buildWhitelist(sessionConfigs);
+                logger.debug({
+                    configCount: sessionConfigs.length,
+                    whitelistSize: session.whitelistedChatIds.size
+                }, 'Updated existing Telegram session configs + whitelist');
 
                 // 2. Ensure client is still connected
                 if (!session.client.connected) {
@@ -368,27 +380,56 @@ export class TelegramListener {
                         return;
                     }
 
-                    // DIAGNOSTIC FIREHOSE -> PRODUCTION INTERCEPTOR
-                    // Instead of relying on GramJS's NewMessage struct (which filters events if 
-                    // its internal chat cache isn't perfectly synced), we trap the raw MTProto 
-                    // update events directly from the socket and force them through our pipeline.
+                    // ═══════════════════════════════════════════════════════════
+                    //  WHITELIST-ONLY MTProto STREAM
+                    // ═══════════════════════════════════════════════════════════
+                    // Instead of catching ALL raw updates and filtering later in
+                    // handleNewMessage, we gate at the SOURCE level using a
+                    // pre-built whitelist Set<string> of normalized chat IDs.
+                    //
+                    // Non-target traffic is dropped immediately — zero logging,
+                    // zero object allocation, zero downstream processing.
+                    // This dramatically reduces CPU/RAM on a 4GB VPS (2GB Heap).
+                    //
+                    // The whitelist is rebuilt on every sync cycle (session.whitelistedChatIds)
+                    // so new mirrors are picked up without restarting the worker.
                     //
                     // Trapped event types:
-                    //   - UpdateNewChannelMessage: messages in channels/supergroups (most common)
+                    //   - UpdateNewChannelMessage: messages in channels/supergroups
                     //   - UpdateNewMessage:       messages in regular groups/private chats
-                    //   - UpdateShortMessage:      compact 1:1 / bot DM updates (high-frequency bots)
-                    //   - UpdateShortChatMessage:   compact group chat updates (some bot frameworks)
+                    //   - UpdateShortMessage:      compact 1:1 / bot DM updates
+                    //   - UpdateShortChatMessage:   compact group chat updates
                     client.addEventHandler((update: any) => {
                         if (this.isShuttingDown) return;
+                        if (!update) return;
+
+                        // ── Inline peer ID extraction for whitelist check ──
+                        // We extract the bare numeric ID BEFORE any logging or
+                        // object creation. This is the cheapest possible check.
+                        const currentSession = this.sessions.get(token);
+                        if (!currentSession) return;
 
                         // ── Standard message updates (contain nested message object) ──
-                        if (update && (update.className === 'UpdateNewChannelMessage' || update.className === 'UpdateNewMessage')) {
+                        if (update.className === 'UpdateNewChannelMessage' || update.className === 'UpdateNewMessage') {
+                            const peerId = update.message?.peerId;
+                            if (!peerId) return;
+
+                            // Extract bare numeric chat ID for whitelist lookup
+                            const bareChatId = peerId.channelId?.toString()
+                                || peerId.chatId?.toString()
+                                || peerId.userId?.toString();
+                            if (!bareChatId) return;
+
+                            // ═══ WHITELIST GATE (O(1) Set lookup) ═══
+                            // If this chat is NOT in our whitelist, drop it silently.
+                            // No logging, no object creation, no downstream processing.
+                            if (!currentSession.whitelistedChatIds.has(bareChatId)) return;
 
                             logger.debug({
                                 className: update.className,
                                 msgId: update.message?.id,
-                                peerId: update.message?.peerId ? JSON.stringify(update.message.peerId) : 'unknown'
-                            }, '[Telegram] RAW MTProto Update trapped');
+                                bareChatId
+                            }, '[Telegram] RAW MTProto Update trapped (whitelisted)');
 
                             const mockEvent = {
                                 message: update.message
@@ -397,25 +438,33 @@ export class TelegramListener {
                             this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
                                 logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram raw message handler');
                             });
+                            return;
                         }
 
                         // ── Short message updates (flat structure, no nested message object) ──
                         // Telegram sends UpdateShortMessage for 1:1 DMs and UpdateShortChatMessage
                         // for group messages when the server optimizes for bandwidth.
-                        // High-frequency bots (e.g. SOL INSIDER AI) often trigger these.
-                        if (update && (update.className === 'UpdateShortMessage' || update.className === 'UpdateShortChatMessage')) {
+                        if (update.className === 'UpdateShortMessage' || update.className === 'UpdateShortChatMessage') {
+                            const isChat = update.className === 'UpdateShortChatMessage';
+
+                            // Extract bare numeric chat ID for whitelist lookup
+                            const bareChatId = isChat
+                                ? update.chatId?.toString()
+                                : update.userId?.toString();
+                            if (!bareChatId) return;
+
+                            // ═══ WHITELIST GATE (O(1) Set lookup) ═══
+                            if (!currentSession.whitelistedChatIds.has(bareChatId)) return;
 
                             logger.debug({
                                 className: update.className,
                                 msgId: update.id,
-                                userId: update.userId?.toString(),
-                                chatId: update.chatId?.toString(),
+                                bareChatId,
                                 out: update.out
-                            }, '[Telegram] RAW MTProto ShortMessage trapped');
+                            }, '[Telegram] RAW MTProto ShortMessage trapped (whitelisted)');
 
                             // Synthesize a mock message object from the flat update fields
                             // so handleNewMessage can process it uniformly.
-                            const isChat = update.className === 'UpdateShortChatMessage';
                             const syntheticMessage: any = {
                                 id: update.id,
                                 message: update.message || '',
@@ -425,15 +474,13 @@ export class TelegramListener {
                                 replyTo: update.replyTo || null,
                                 fwdFrom: update.fwdFrom || null,
                                 entities: update.entities || [],
-                                // Construct peerId from available fields
                                 peerId: isChat
                                     ? { className: 'PeerChat', chatId: update.chatId }
                                     : { className: 'PeerUser', userId: update.userId },
-                                // fromId: for short chat messages, fromId is the sender
                                 fromId: isChat && update.fromId
                                     ? { className: 'PeerUser', userId: update.fromId }
                                     : update.out
-                                        ? null  // Our own outgoing message
+                                        ? null
                                         : { className: 'PeerUser', userId: update.userId },
                                 media: null,
                                 replyMarkup: null,
@@ -447,17 +494,23 @@ export class TelegramListener {
                             this.handleNewMessage(mockEvent as any, token).catch((err: any) => {
                                 logger.error({ error: err?.message || 'Unknown error' }, 'Unhandled error in Telegram short message handler');
                             });
+                            return;
                         }
                     });
 
+                    const whitelistedChatIds = this.buildWhitelist(sessionConfigs);
                     session = {
                         client,
                         configs: sessionConfigs,
                         lastActive: Date.now(),
-                        reconnectFailures: 0
+                        reconnectFailures: 0,
+                        whitelistedChatIds
                     };
                     this.sessions.set(token, session);
-                    logger.info('Telegram MTProto session established successfully');
+                    logger.info({
+                        whitelistSize: whitelistedChatIds.size,
+                        whitelistedIds: [...whitelistedChatIds]
+                    }, 'Telegram MTProto session established with whitelist-only stream');
 
                 } catch (error: any) {
                     logger.error({ error: error?.message || 'Unknown error' }, 'Failed to start Telegram MTProto session');
@@ -520,34 +573,7 @@ export class TelegramListener {
     // ────────────── MESSAGE HANDLER ──────────────
 
     private async handleNewMessage(event: NewMessageEvent, token: string) {
-        // ALWAYS LOG FIRST, BEFORE ANY RETURNS
         const message = event.message;
-        const rawPeerId = message?.peerId ? (message.peerId as any).channelId?.toString() || (message.peerId as any).chatId?.toString() || (message.peerId as any).userId?.toString() : 'unknown';
-
-        // Log brief tracking info for every single event
-        if (message) {
-            // NOTE: On raw MTProto updates, message.sender is NOT hydrated.
-            // Use message.fromId for sender identification instead.
-            const fromIdVal = message.fromId
-                ? (message.fromId as any).userId?.toString()
-                || (message.fromId as any).channelId?.toString()
-                || 'structured'
-                : null;
-
-            logger.info({
-                msgId: message.id,
-                rawPeerId,
-                fromId: fromIdVal,
-                hasFromId: !!message.fromId,
-                isOutgoing: !!message.out,
-                hasText: !!message.text,
-                hasMsgObj: !!message.message,
-                className: message.className
-            }, '[Telegram] RAW EVENT RECEIVED');
-        } else {
-            logger.debug('[Telegram] Received NewMessageEvent with no message object');
-        }
-
         if (!message) return;
 
         // ── CRITICAL: Do NOT filter by message.out ──
@@ -579,28 +605,27 @@ export class TelegramListener {
             chatId = peerUserId;
             rawChatId = peerUserId;
         } else {
-            logger.debug({ msgId, peerClass: peerId?.className }, '[Telegram] Raw message lacks peerId IDs, skipping');
-            return;
+            return; // Silently drop — no peerId means we can't match
         }
 
-        // ── PRE-FILTER DIAGNOSTIC LOG ──
-        // Print raw peer fields + final normalized ID + all configured IDs BEFORE filtering.
-        // This is the single most important log line for debugging ID mismatches.
-        const normalizedBareChatId = this.normalizeChatId(chatId);
-        const configuredIds = session.configs.map(c => ({
-            configId: c.id,
-            raw: c.telegramChatId || '(empty)',
-            normalized: c.telegramChatId ? this.normalizeChatId(c.telegramChatId) : '(empty)',
-            name: c.sourceChannelName || '(unnamed)',
-        }));
+        // ── WHITELISTED EVENT LOG ──
+        // This log only fires for messages that passed the whitelist gate in
+        // the event handler. Non-target traffic never reaches this point.
+        const fromIdVal = message.fromId
+            ? (message.fromId as any).userId?.toString()
+            || (message.fromId as any).channelId?.toString()
+            || 'structured'
+            : null;
 
         logger.info({
             msgId,
-            rawPeerFields: { channelId: peerChannelId || null, chatId: peerChatId || null, userId: peerUserId || null },
-            finalChatId: chatId,
-            normalizedChatId: normalizedBareChatId,
-            configuredChats: configuredIds,
-        }, '[Telegram] PRE-FILTER: Raw Peer ID → Normalized ID vs Configured IDs');
+            chatId,
+            rawChatId,
+            fromId: fromIdVal,
+            isOutgoing: !!message.out,
+            hasText: !!message.text,
+            className: message.className
+        }, '[Telegram] RAW EVENT RECEIVED (whitelisted)');
 
         // ── Match configs using peerId (NOT fromId) to ensure we capture all senders ──
         const replyHeader = message.replyTo as any;
@@ -1218,6 +1243,28 @@ export class TelegramListener {
         if (id.startsWith('-100')) return id.substring(4);
         if (id.startsWith('-')) return id.substring(1);
         return id;
+    }
+
+    /**
+     * Build a Set of normalized (bare numeric) chat IDs for O(1) whitelist filtering.
+     * The raw MTProto event handler uses this Set to drop non-target traffic
+     * at the SOURCE level — before any logging, object allocation, or downstream processing.
+     *
+     * Each configured telegramChatId is normalized to its bare numeric form so that
+     * it matches the raw peerId.channelId / peerId.chatId / peerId.userId from the update.
+     *
+     * Example:
+     *   Config has "-1001234567890" → normalized to "1234567890"
+     *   MTProto update has channelId: BigInt(1234567890) → toString() = "1234567890"
+     *   → Set.has("1234567890") = true → PASS
+     */
+    private buildWhitelist(configs: TelegramConfig[]): Set<string> {
+        const whitelist = new Set<string>();
+        for (const config of configs) {
+            if (!config.telegramChatId) continue;
+            whitelist.add(this.normalizeChatId(config.telegramChatId));
+        }
+        return whitelist;
     }
 
     /**
