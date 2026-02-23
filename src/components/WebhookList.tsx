@@ -154,12 +154,24 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
     };
 
     // Grouping Logic
+    const getBlacklistCount = (config: MirrorConfig) => {
+        if (!config.blacklistedUsers) return 0;
+        try {
+            const parsed = typeof config.blacklistedUsers === 'string'
+                ? JSON.parse(config.blacklistedUsers)
+                : config.blacklistedUsers;
+            return Array.isArray(parsed) ? parsed.length : 0;
+        } catch {
+            return 0;
+        }
+    };
+
     const groupedData = groups.map(group => {
         const configs = initialConfigs.filter(c => c.groupId === group.id);
         const matchesSearch = configs.filter(config =>
             (config.sourceGuildName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
             (config.telegramChatId || config.sourceChannelId || "").toLowerCase().includes(searchQuery.toLowerCase())
-        );
+        ).sort((a, b) => getBlacklistCount(b) - getBlacklistCount(a));
 
         return {
             ...group,
@@ -177,7 +189,7 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
     const ungroupedConfigs = initialConfigs.filter(c => !c.groupId).filter(config =>
         (config.sourceGuildName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (config.telegramChatId || config.sourceChannelId || "").toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    ).sort((a, b) => getBlacklistCount(b) - getBlacklistCount(a));
 
     if (ungroupedConfigs.length > 0 && (selectedFilterGroup === "all" || selectedFilterGroup === "none")) {
         groupedData.push({
@@ -442,15 +454,23 @@ export default function WebhookList({ initialConfigs, groups, usageCount, isLimi
                                                                 </td>
                                                                 <td className="px-6 py-4 text-right">
                                                                     <div className="flex items-center justify-end gap-2">
-                                                                        {userPlan === "ELITE" && (
-                                                                            <button
-                                                                                onClick={() => setActiveAntiSpamConfig(config)}
-                                                                                className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all"
-                                                                                title="Manage Anti-Spam Shield"
-                                                                            >
-                                                                                <Shield className="w-4 h-4" />
-                                                                            </button>
-                                                                        )}
+                                                                        {userPlan === "ELITE" && (() => {
+                                                                            const blacklistCount = getBlacklistCount(config);
+                                                                            return (
+                                                                                <button
+                                                                                    onClick={() => setActiveAntiSpamConfig(config)}
+                                                                                    className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-all relative"
+                                                                                    title="Manage Anti-Spam Shield"
+                                                                                >
+                                                                                    <Shield className="w-4 h-4" />
+                                                                                    {blacklistCount > 0 && (
+                                                                                        <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white ring-2 ring-white shadow-sm">
+                                                                                            {blacklistCount > 9 ? '9+' : blacklistCount}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </button>
+                                                                            );
+                                                                        })()}
                                                                         <button
                                                                             onClick={() => handleDelete(config.id)}
                                                                             disabled={deletingId === config.id}
