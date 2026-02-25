@@ -44,10 +44,10 @@ export class Engine {
         setInterval(async () => {
             if (!this.isShuttingDown) {
                 try {
-                    const settings = await prisma.botSettings.findFirst({ orderBy: { updatedAt: 'desc' } });
+                    const settings = await prisma.botConfig.findFirst({ orderBy: { updatedAt: 'desc' } });
                     if (settings) {
                         // 1. Send Heartbeat to DB
-                        await prisma.botSettings.update({
+                        await prisma.botConfig.update({
                             where: { id: settings.id },
                             data: { lastWorkerHeartbeat: new Date() }
                         });
@@ -55,7 +55,7 @@ export class Engine {
                         // 2. Check for Remote Restart request from Dashboard
                         if (settings.restartWorkerAt && settings.restartWorkerAt > new Date(Date.now() - 60000)) {
                             logger.info('[Engine] Remote restart requested from Dashboard via DB. Exiting for PM2 restart...');
-                            await prisma.botSettings.update({
+                            await prisma.botConfig.update({
                                 where: { id: settings.id },
                                 data: { restartWorkerAt: null }
                             });

@@ -32,8 +32,9 @@ import { DiscordRoleManager } from './lib/discordRoleManager';
 // ──────────────────────────────────────────────────────────────
 
 class DisbotManager {
-    private roleManager = DiscordRoleManager.getInstance();
+    private botManagers: Map<string, DiscordRoleManager> = new Map();
     private isShuttingDown = false;
+    private configSyncInterval: NodeJS.Timeout | null = null;
 
     public async start(): Promise<void> {
         logger.info({
@@ -41,7 +42,7 @@ class DisbotManager {
             pid: process.pid,
             nodeVersion: process.version,
             heapLimit: `${Math.round((process as any).memoryUsage?.().heapTotal / 1024 / 1024) || '?'} MB`,
-        }, '═══ DISBOT Manager Service Starting ═══');
+        }, '═══ DISBOT Manager Multi-Tenant Service Starting ═══');
 
         // Verify database connectivity
         try {
@@ -52,17 +53,18 @@ class DisbotManager {
             process.exit(1);
         }
 
-        // Start the Role Manager (loads config from DB)
-        await this.roleManager.start();
+        // Initial sync of all active bots
+        await this.syncBots();
 
-        // Log status
-        const status = this.roleManager.getStatus();
-        logger.info({
-            botReady: status.ready,
-            configLoaded: status.configLoaded,
-            guildId: status.guildId,
-            guilds: status.guilds,
-        }, '═══ DISBOT Manager Service Ready ═══');
+        // 1 minute — check for new active bots or deactivated bots
+        this.configSyncInterval = setInterval(() => {
+            this.syncBots().catch(err => {
+                logger.error({ error: err.message }, '[Manager] Global bots sync failed');
+            });
+        }, 60 * 1000);
+        this.configSyncInterval.unref();
+
+        logger.info({ activeBots: this.botManagers.size }, '═══ DISBOT Manager Multi-Tenant Service Ready ═══');
 
         // Memory monitoring (every 5 min) — keep under 512MB
         setInterval(() => {
@@ -89,13 +91,48 @@ class DisbotManager {
         });
     }
 
+    private async syncBots(): Promise<void> {
+        if (this.isShuttingDown) return;
+
+        const activeConfigs = await prisma.botConfig.findMany({
+            where: { active: true }
+        });
+
+        const activeConfigIds = new Set(activeConfigs.map(c => c.id));
+
+        // Start new bots
+        for (const config of activeConfigs) {
+            if (!this.botManagers.has(config.id)) {
+                logger.info({ botId: config.id }, '[Manager] Starting new bot instance');
+                const manager = new DiscordRoleManager(config.id);
+                this.botManagers.set(config.id, manager);
+                manager.start().catch(err => {
+                    logger.error({ botId: config.id, error: err.message }, 'Failed to start bot instance');
+                });
+            }
+        }
+
+        // Shut down disabled/removed bots
+        for (const [botId, manager] of this.botManagers.entries()) {
+            if (!activeConfigIds.has(botId)) {
+                logger.info({ botId }, '[Manager] Shutting down removed or deactivated bot instance');
+                manager.shutdown().catch(err => logger.error({ botId, error: err.message }, 'Error shutting down bot instance'));
+                this.botManagers.delete(botId);
+            }
+        }
+    }
+
     private async shutdown(signal: string): Promise<void> {
         if (this.isShuttingDown) return;
         this.isShuttingDown = true;
 
+        if (this.configSyncInterval) clearInterval(this.configSyncInterval);
+
         logger.info({ signal }, '═══ DISBOT Manager Service Shutting Down ═══');
 
-        await this.roleManager.shutdown();
+        const shutdownPromises = Array.from(this.botManagers.values()).map(manager => manager.shutdown());
+        await Promise.allSettled(shutdownPromises);
+
         await prisma.$disconnect();
 
         logger.info('═══ DISBOT Manager Service Stopped ═══');

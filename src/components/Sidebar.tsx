@@ -39,9 +39,9 @@ export default function Sidebar({
             icon: ShieldAlert,
         },
         {
-            title: "Bot Manager",
-            href: "/dashboard/manage",
-            icon: Bot,
+            title: "Bot Factory",
+            href: "/dashboard/factory",
+            icon: Zap, // Or Monitor
         }
     ];
 

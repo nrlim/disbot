@@ -52,6 +52,7 @@ model User {
   configs          MirrorConfig[]
   sessions         Session[]
   telegramAccounts TelegramAccount[]
+  botConfigs       BotConfig[]
 
   mirrorGroups     MirrorGroup[]
   payments         PaymentHistory[]
@@ -185,8 +186,22 @@ model TelegramAccount {
 // Discord Role Manager Models
 // ──────────────────────────────────────────────────────────────
 
-model BotSettings {
+model Package {
+  id       String      @id @default(cuid())
+  name     String      @unique // e.g., 'BASIC', 'PRO', 'ELITE'
+  features String[]    // ['GRANT', 'CHECK', 'EXTEND', 'REVOKE']
+  bots     BotConfig[]
+}
+
+model BotConfig {
   id          String   @id @default(cuid())
+  name        String?  // Custom bot name
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  packageId   String?
+  package     Package? @relation(fields: [packageId], references: [id])
+  features    String[] // Individual enabled features
+
   botToken    String                        // Discord Bot Token (encrypted)
   clientId    String                        // Discord Application Client ID
   guildId     String                        // Primary Guild ID to manage
@@ -194,12 +209,47 @@ model BotSettings {
   trialRoleId String?                       // Role to assign when premium expires
   active      Boolean  @default(true)       // Enable/disable the manager bot
   globalAntiSpam Boolean @default(true)     // Enable/disable flood detection globally
+  
   lastWorkerHeartbeat  DateTime?
   lastManagerHeartbeat DateTime?
   restartWorkerAt      DateTime?
   restartManagerAt     DateTime?
+  earningChannels      String[]      // Whitelisted Discord channel IDs
+  pointConfig PointConfig?
+  redeemItems RedeemItem[]
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  
+  @@index([userId])
+}
+
+model PointConfig {
+  id               String    @id @default(cuid())
+  botId            String    @unique
+  botConfig        BotConfig @relation(fields: [botId], references: [id], onDelete: Cascade)
+  pointsPerMessage Int       @default(1)
+  cooldownSeconds  Int       @default(60)
+  redeemRules      Json      @default("[]") // Array of { cost: number, roleId: string, durationDays: number }
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model RedeemItem {
+  id           String    @id @default(cuid())
+  botId        String
+  botConfig    BotConfig @relation(fields: [botId], references: [id], onDelete: Cascade)
+  roleId       String
+  roleName     String
+  pointCost    Int
+  durationDays Int
+  isActive     Boolean   @default(true)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([botId])
 }
 
 model SpamBlacklist {
@@ -216,6 +266,8 @@ model DiscordUser {
   currentRole String
   expiryDate  DateTime
   status      RoleStatus @default(ACTIVE)
+  points      Int        @default(0)
+  totalMessages Int      @default(0)
   assignedAt  DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 

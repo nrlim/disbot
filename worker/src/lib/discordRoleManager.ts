@@ -79,6 +79,10 @@ interface ManagerConfig {
     adminRoleId: string | null;
     trialRoleId: string | null;
     active: boolean;
+    features: string[]; // Combined package + explicit features
+    earningChannels?: string[];
+    pointConfig?: any | null;
+    redeemItems?: any[] | null;
 }
 
 // Temporary store for grant flow
@@ -94,7 +98,6 @@ interface PendingGrant {
 // ──────────────────────────────────────────────────────────────
 
 export class DiscordRoleManager {
-    private static instance: DiscordRoleManager;
     private client: Client | null = null;
     private expiryInterval: NodeJS.Timeout | null = null;
     private configSyncInterval: NodeJS.Timeout | null = null;
@@ -103,18 +106,11 @@ export class DiscordRoleManager {
     private currentConfig: ManagerConfig | null = null;
     private isShuttingDown = false;
 
-    // In-memory store for pending /grant flows (userId → selected role)
-    // Cleaned up after 5 minutes of inactivity
+    // In-memory store for pending /grant flows (userId → selected role) // Cleaned up after 5 minutes of inactivity
     private pendingGrants: Map<string, PendingGrant> = new Map();
+    private pointsCooldown: Map<string, number> = new Map();
 
-    private constructor() { }
-
-    public static getInstance(): DiscordRoleManager {
-        if (!DiscordRoleManager.instance) {
-            DiscordRoleManager.instance = new DiscordRoleManager();
-        }
-        return DiscordRoleManager.instance;
-    }
+    constructor(private readonly configId: string) { }
 
     // ──────────────────────────────────────────────────────────────
     //  Lifecycle
@@ -124,12 +120,12 @@ export class DiscordRoleManager {
      * Initialize the role manager: load config from DB, connect bot, start crons.
      */
     public async start(): Promise<void> {
-        logger.info('[Manager] Starting Discord Role Manager...');
+        logger.info({ botId: this.configId }, '[Manager] Starting Discord Role Manager instance...');
 
         // Load config from DB
         const config = await this.loadConfig();
         if (!config) {
-            logger.warn('[Manager] No active BotSettings found in database — Manager will poll until configured');
+            logger.warn({ botId: this.configId }, '[Manager] Setup incomplete or inactive for this BotConfig');
         } else {
             await this.connectBot(config);
         }
@@ -137,7 +133,7 @@ export class DiscordRoleManager {
         // Start the config sync loop (picks up Dashboard changes)
         this.configSyncInterval = setInterval(() => {
             this.syncConfig().catch((err) => {
-                logger.error({ error: err.message }, '[Manager] Config sync failed');
+                logger.error({ botId: this.configId, error: err.message }, '[Manager] Config sync failed');
             });
         }, CONFIG_SYNC_INTERVAL_MS);
         this.configSyncInterval.unref();
@@ -146,18 +142,18 @@ export class DiscordRoleManager {
         setInterval(async () => {
             if (this.currentConfig && !this.isShuttingDown) {
                 try {
-                    const settings = await prisma.botSettings.findUnique({ where: { id: this.currentConfig.id } });
+                    const settings = await prisma.botConfig.findUnique({ where: { id: this.currentConfig.id } });
                     if (settings) {
                         // 1. Send Heartbeat to DB
-                        await prisma.botSettings.update({
+                        await prisma.botConfig.update({
                             where: { id: this.currentConfig.id },
                             data: { lastManagerHeartbeat: new Date() }
                         });
 
                         // 2. Check for Remote Restart request from Dashboard
                         if (settings.restartManagerAt && settings.restartManagerAt > new Date(Date.now() - 60000)) {
-                            logger.info('[Manager] Remote restart requested from Dashboard via DB. Exiting for PM2 restart...');
-                            await prisma.botSettings.update({
+                            logger.info({ botId: this.configId }, '[Manager] Remote restart requested from Dashboard via DB. Exiting for PM2 restart...');
+                            await prisma.botConfig.update({
                                 where: { id: this.currentConfig.id },
                                 data: { restartManagerAt: null }
                             });
@@ -181,13 +177,20 @@ export class DiscordRoleManager {
                     this.pendingGrants.delete(key);
                 }
             }
+            // Clean up point cooldowns (keep only last hour to save memory)
+            for (const [key, val] of this.pointsCooldown) {
+                if (now - val > 3600000) {
+                    this.pointsCooldown.delete(key);
+                }
+            }
         }, 5 * 60 * 1000).unref();
 
         logger.info({
+            botId: this.configId,
             configSyncMs: CONFIG_SYNC_INTERVAL_MS,
             expiryCheckMs: EXPIRY_CHECK_INTERVAL_MS,
             hasConfig: !!config,
-        }, '[Manager] Role Manager initialized');
+        }, '[Manager] Role Manager instance initialized');
     }
 
     /**
@@ -214,7 +217,7 @@ export class DiscordRoleManager {
 
         this.currentConfig = null;
         this.pendingGrants.clear();
-        logger.info('[Manager] Shutdown complete');
+        logger.info({ botId: this.configId }, '[Manager] Shutdown complete');
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -222,19 +225,24 @@ export class DiscordRoleManager {
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * Load BotSettings from the database.
-     * Returns null if no active settings exist.
+     * Load BotConfig from the database for this specific instance.
      */
     private async loadConfig(): Promise<ManagerConfig | null> {
         try {
-            const settings = await prisma.botSettings.findFirst({
-                where: { active: true },
-                orderBy: { updatedAt: 'desc' }, // Most recently updated wins
+            const settings = await prisma.botConfig.findUnique({
+                where: { id: this.configId },
+                include: { package: true, pointConfig: true, redeemItems: { where: { isActive: true } } }
             });
 
-            if (!settings) return null;
+            if (!settings || !settings.active) return null;
 
-            // Decrypt the bot token (stored encrypted by the Dashboard)
+            // Gather all available features for this bot
+            const packageFeatures = settings.package?.features || [];
+            const botFeatures = settings.features || [];
+            // Merge and dedup the array
+            const combinedFeatures = Array.from(new Set([...packageFeatures, ...botFeatures]));
+
+            // Decrypt the bot token
             let botToken = settings.botToken;
             const encryptionKey = process.env.ENCRYPTION_KEY || '';
 
@@ -243,7 +251,7 @@ export class DiscordRoleManager {
                 if (decrypted) {
                     botToken = decrypted;
                 } else {
-                    logger.error('[Manager] Failed to decrypt botToken — check ENCRYPTION_KEY');
+                    logger.error({ botId: this.configId }, '[Manager] Failed to decrypt botToken — check ENCRYPTION_KEY');
                     return null;
                 }
             }
@@ -256,10 +264,14 @@ export class DiscordRoleManager {
                 adminRoleId: settings.adminRoleId,
                 trialRoleId: settings.trialRoleId,
                 active: settings.active,
+                features: combinedFeatures,
+                earningChannels: settings.earningChannels,
+                pointConfig: settings.pointConfig,
+                redeemItems: settings.redeemItems,
             };
 
         } catch (err: any) {
-            logger.error({ error: err.message }, '[Manager] Failed to load BotSettings');
+            logger.error({ botId: this.configId, error: err.message }, '[Manager] Failed to load BotConfig');
             return null;
         }
     }
@@ -274,28 +286,30 @@ export class DiscordRoleManager {
 
         // Case 1: No config in DB and we had one → disconnect
         if (!newConfig && this.currentConfig) {
-            logger.info('[Manager] BotSettings removed/deactivated — disconnecting bot');
+            logger.info({ botId: this.configId }, '[Manager] Config removed/deactivated — disconnecting bot');
             await this.disconnectBot();
             return;
         }
 
         // Case 2: New config appeared (first time or re-enabled)
         if (newConfig && !this.currentConfig) {
-            logger.info('[Manager] BotSettings detected — connecting bot');
+            logger.info({ botId: this.configId }, '[Manager] Config detected — connecting bot');
             await this.connectBot(newConfig);
             return;
         }
 
-        // Case 3: Config changed (token, guildId, etc.) → reconnect
+        // Case 3: Config changed (token, guildId, features, etc.) → reconnect & re-register
         if (newConfig && this.currentConfig) {
+            const featuresChanged = JSON.stringify(newConfig.features.sort()) !== JSON.stringify(this.currentConfig.features.sort());
             const changed =
                 newConfig.botToken !== this.currentConfig.botToken ||
                 newConfig.guildId !== this.currentConfig.guildId ||
                 newConfig.clientId !== this.currentConfig.clientId ||
-                newConfig.active !== this.currentConfig.active;
+                newConfig.active !== this.currentConfig.active ||
+                featuresChanged;
 
             if (changed) {
-                logger.info('[Manager] BotSettings changed — reconnecting bot');
+                logger.info({ botId: this.configId, featuresChanged }, '[Manager] Config changed — reconnecting/re-registering bot');
                 await this.disconnectBot();
 
                 if (newConfig.active) {
@@ -334,20 +348,67 @@ export class DiscordRoleManager {
             });
 
             this.client.on('error', (err) => {
-                logger.error({ error: err.message }, '[Manager] Bot client error');
+                logger.error({ botId: this.configId, error: err.message }, '[Manager] Bot client error');
             });
 
             // Handle all interactions (slash commands, select menus, modals)
             this.client.on('interactionCreate', (interaction: Interaction) => {
                 this.handleInteraction(interaction).catch((err) => {
-                    logger.error({ error: err.message }, '[Manager] Interaction handler error');
+                    logger.error({ botId: this.configId, error: err.message }, '[Manager] Interaction handler error');
                 });
+            });
+
+            // Handle points tracking
+            this.client.on('messageCreate', (message) => {
+                if (message.author.bot || !message.guild) return;
+
+                // Only if LOYALTY_SYSTEM is active
+                if (!this.currentConfig?.features.includes('LOYALTY_SYSTEM')) return;
+
+                // Check if channel is whitelisted for earning
+                const earningChannels = this.currentConfig.earningChannels || [];
+                // if earningChannels is configured (not empty), and this channel is not in it, return
+                if (earningChannels.length > 0 && !earningChannels.includes(message.channel.id)) {
+                    return;
+                }
+
+                const pointCfg = this.currentConfig.pointConfig;
+                if (!pointCfg) return;
+
+                const userId = message.author.id;
+                const now = Date.now();
+                const last = this.pointsCooldown.get(userId) || 0;
+                const cooldownMs = (pointCfg.cooldownSeconds || 60) * 1000;
+
+                let grantPoints = false;
+                if (now - last >= cooldownMs) {
+                    grantPoints = true;
+                    this.pointsCooldown.set(userId, now);
+                }
+
+                // Fire & forget update
+                prisma.discordUser.upsert({
+                    where: { discordId_guildId: { discordId: userId, guildId: message.guild.id } },
+                    update: {
+                        totalMessages: { increment: 1 },
+                        ...(grantPoints ? { points: { increment: pointCfg.pointsPerMessage || 1 } } : {})
+                    },
+                    create: {
+                        discordId: userId,
+                        guildId: message.guild.id,
+                        currentRole: 'none',
+                        expiryDate: new Date(),
+                        status: 'EXPIRED',
+                        totalMessages: 1,
+                        points: grantPoints ? (pointCfg.pointsPerMessage || 1) : 0
+                    }
+                }).catch(() => { });
             });
 
             // Reconnect on disconnect
             this.client.on('shardDisconnect', () => {
                 if (!this.isShuttingDown && this.currentConfig) {
-                    logger.warn('[Manager] Bot disconnected — will reconnect on next sync cycle');
+                    logger.warn({ botId: this.configId }, '[Manager] Bot disconnected — will reconnect on next sync cycle');
                     this.isReady = false;
                 }
             });
@@ -355,10 +416,10 @@ export class DiscordRoleManager {
             await this.client.login(config.botToken);
             this.currentConfig = config;
 
-            logger.info({ clientId: config.clientId, guildId: config.guildId }, '[Manager] Bot connected');
+            logger.info({ botId: this.configId, clientId: config.clientId, guildId: config.guildId }, '[Manager] Bot connected');
 
         } catch (err: any) {
-            logger.error({ error: err.message }, '[Manager] Bot login failed — check BotSettings in Dashboard');
+            logger.error({ botId: this.configId, error: err.message }, '[Manager] Bot login failed — check config');
             this.client = null;
             this.currentConfig = null;
         }
@@ -381,82 +442,122 @@ export class DiscordRoleManager {
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * Register /grant, /check, /extend, /revoke as guild-scoped slash commands.
+     * Register features as guild-scoped slash commands, filtered by 'features' list.
      */
     private async registerSlashCommands(config: ManagerConfig): Promise<void> {
         try {
-            const commands = [
-                new SlashCommandBuilder()
-                    .setName('grant')
-                    .setDescription('🎁 Grant a premium role to a user with a time-limited subscription')
-                    .addUserOption(option =>
-                        option
-                            .setName('user')
-                            .setDescription('The user to grant the role to')
-                            .setRequired(true)
-                    )
-                    .setDMPermission(false)
-                    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+            const authorizedCommands = [];
 
-                new SlashCommandBuilder()
-                    .setName('check')
-                    .setDescription('🔍 Check the subscription status of a user')
-                    .addUserOption(option =>
-                        option
-                            .setName('user')
-                            .setDescription('The user to check')
-                            .setRequired(true)
-                    )
-                    .setDMPermission(false)
-                    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+            if (config.features.includes('GRANT')) {
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('grant')
+                        .setDescription('🎁 Grant a premium role to a user with a time-limited subscription')
+                        .addUserOption(option =>
+                            option
+                                .setName('user')
+                                .setDescription('The user to grant the role to')
+                                .setRequired(true)
+                        )
+                        .setDMPermission(false)
+                        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+                );
+            }
 
-                new SlashCommandBuilder()
-                    .setName('extend')
-                    .setDescription('⏳ Extend a user\'s premium subscription by additional days')
-                    .addUserOption(option =>
-                        option
-                            .setName('user')
-                            .setDescription('The user to extend')
-                            .setRequired(true)
-                    )
-                    .addIntegerOption(option =>
-                        option
-                            .setName('days')
-                            .setDescription('Number of days to add')
-                            .setRequired(true)
-                            .setMinValue(1)
-                            .setMaxValue(3650)
-                    )
-                    .setDMPermission(false)
-                    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
+            if (config.features.includes('CHECK')) {
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('check')
+                        .setDescription('🔍 Check the subscription status of a user')
+                        .addUserOption(option =>
+                            option
+                                .setName('user')
+                                .setDescription('The user to check')
+                                .setRequired(true)
+                        )
+                        .setDMPermission(false)
+                        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+                );
+            }
 
-                new SlashCommandBuilder()
-                    .setName('revoke')
-                    .setDescription('🚫 Immediately revoke a user\'s premium role and mark as expired')
-                    .addUserOption(option =>
-                        option
-                            .setName('user')
-                            .setDescription('The user to revoke')
-                            .setRequired(true)
-                    )
-                    .setDMPermission(false)
-                    .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
-            ];
+            if (config.features.includes('EXTEND')) {
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('extend')
+                        .setDescription('⏳ Extend a user\'s premium subscription by additional days')
+                        .addUserOption(option =>
+                            option
+                                .setName('user')
+                                .setDescription('The user to extend')
+                                .setRequired(true)
+                        )
+                        .addIntegerOption(option =>
+                            option
+                                .setName('days')
+                                .setDescription('Number of days to add')
+                                .setRequired(true)
+                                .setMinValue(1)
+                                .setMaxValue(3650)
+                        )
+                        .setDMPermission(false)
+                        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+                );
+            }
+
+            if (config.features.includes('REVOKE')) {
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('revoke')
+                        .setDescription('🚫 Immediately revoke a user\'s premium role and mark as expired')
+                        .addUserOption(option =>
+                            option
+                                .setName('user')
+                                .setDescription('The user to revoke')
+                                .setRequired(true)
+                        )
+                        .setDMPermission(false)
+                        .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+                );
+            }
+
+            if (config.features.includes('LOYALTY_SYSTEM')) {
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('points')
+                        .setDescription('💰 View your current loyalty points and message stats')
+                        .setDMPermission(false)
+                );
+
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('top')
+                        .setDescription('🏆 View the top 10 most active users in the server')
+                        .setDMPermission(false)
+                );
+
+                authorizedCommands.push(
+                    new SlashCommandBuilder()
+                        .setName('redeem')
+                        .setDescription('🛍️ Redeem your loyalty points for premium roles')
+                        .setDMPermission(false)
+                );
+            }
 
             const rest = new REST({ version: '10' }).setToken(config.botToken);
 
             await rest.put(
                 Routes.applicationGuildCommands(config.clientId, config.guildId),
-                { body: commands.map(c => c.toJSON()) }
+                { body: authorizedCommands.map(c => c.toJSON()) }
             );
 
             logger.info({
-                commands: commands.map(c => `/${c.name}`),
+                botId: this.configId,
+                commands: authorizedCommands.map(c => `/${c.name}`),
                 guildId: config.guildId,
-            }, '[Manager] Slash commands registered');
+            }, '[Manager] Slash commands registered according to assigned features');
 
         } catch (err: any) {
-            logger.error({ error: err.message }, '[Manager] Failed to register slash commands');
+            logger.error({ botId: this.configId, error: err.message }, '[Manager] Failed to register slash commands');
         }
     }
 
@@ -468,10 +569,25 @@ export class DiscordRoleManager {
      * Central interaction handler — routes to the correct handler based on type.
      */
     private async handleInteraction(interaction: Interaction): Promise<void> {
+        // Feature Gate Middleware
+        const allowedFeatures = this.currentConfig?.features || [];
+
         // 1. Slash Commands
         if (interaction.isChatInputCommand()) {
             // Permission check
             if (!await this.checkAdminPermission(interaction)) return;
+
+            const cmd = interaction.commandName.toUpperCase();
+            let requiredFeature = cmd;
+            if (['POINTS', 'TOP', 'REDEEM'].includes(cmd)) requiredFeature = 'LOYALTY_SYSTEM';
+
+            if (!allowedFeatures.includes(requiredFeature)) {
+                await interaction.reply({
+                    embeds: [this.errorEmbed('Feature Disabled', 'This bot is not authorized to use that feature. Upgrade your Disbot Package.')],
+                    flags: MessageFlags.Ephemeral
+                });
+                return;
+            }
 
             switch (interaction.commandName) {
                 case 'grant':
@@ -482,18 +598,32 @@ export class DiscordRoleManager {
                     return this.handleExtendCommand(interaction);
                 case 'revoke':
                     return this.handleRevokeCommand(interaction);
+                case 'points':
+                    return this.handlePointsCommand(interaction);
+                case 'top':
+                    return this.handleTopCommand(interaction);
+                case 'redeem':
+                    return this.handleRedeemCommand(interaction);
             }
         }
 
         // 2. Select Menu (Grant flow — Step 1 result)
         if (interaction.isStringSelectMenu() && interaction.customId === SELECT_GRANT_ROLE) {
+            if (!allowedFeatures.includes('GRANT')) return;
             if (!await this.checkAdminPermissionComponent(interaction)) return;
             return this.handleGrantRoleSelected(interaction);
         }
 
         // 3. Modal Submit (Grant flow — Step 2 result)
         if (interaction.isModalSubmit() && interaction.customId === MODAL_GRANT_DETAILS) {
+            if (!allowedFeatures.includes('GRANT')) return;
             return this.handleGrantModalSubmit(interaction);
+        }
+
+        // 4. Select Menu (Redeem flow)
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_redeem_role') {
+            if (!allowedFeatures.includes('LOYALTY_SYSTEM')) return;
+            return this.handleRedeemRoleSelected(interaction);
         }
     }
 
@@ -1009,6 +1139,159 @@ export class DiscordRoleManager {
                 embeds: [this.errorEmbed('Error', `Failed to revoke role: ${err.message}`)],
             });
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Loyalty Commands (/points, /top, /redeem)
+    // ──────────────────────────────────────────────────────────────
+
+    private async handlePointsCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+        const userId = interaction.user.id;
+        const guildId = this.currentConfig?.guildId;
+        if (!guildId) return;
+
+        const record = await prisma.discordUser.findUnique({
+            where: { discordId_guildId: { discordId: userId, guildId } }
+        });
+
+        const points = record?.points || 0;
+        const total = record?.totalMessages || 0;
+
+        const embed = new EmbedBuilder()
+            .setTitle('💰 Loyalty Points Balance')
+            .setColor(BRAND_COLOR)
+            .setDescription(`Here are your current statistics for this server.`)
+            .addFields(
+                { name: '✨ Current Points', value: `**${points.toLocaleString()}** pts`, inline: true },
+                { name: '💬 Total Messages', value: `**${total.toLocaleString()}** msgs`, inline: true }
+            )
+            .setFooter({ text: 'Keep chatting to earn more points!' })
+            .setTimestamp();
+
+        await interaction.reply({ embeds: [embed] });
+    }
+
+    private async handleTopCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+        const guildId = this.currentConfig?.guildId;
+        if (!guildId) return;
+
+        const topUsers = await prisma.discordUser.findMany({
+            where: { guildId },
+            orderBy: { points: 'desc' },
+            take: 10
+        });
+
+        if (topUsers.length === 0) {
+            await interaction.reply({ content: 'No activity recorded yet.', flags: MessageFlags.Ephemeral });
+            return;
+        }
+
+        const leaderboard = topUsers.map((u, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `\`${i + 1}\``;
+            return `${medal} <@${u.discordId}> - **${u.points.toLocaleString()}** pts`;
+        }).join('\n');
+
+        const embed = new EmbedBuilder()
+            .setTitle('🏆 Top 10 Most Active Users')
+            .setColor(SUCCESS_COLOR)
+            .setDescription(leaderboard)
+            .setTimestamp();
+
+        await interaction.reply({ embeds: [embed] });
+    }
+
+    private async handleRedeemCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+        const guildId = this.currentConfig?.guildId;
+        if (!guildId) return;
+
+        const redeemItems = this.currentConfig?.redeemItems;
+        if (!redeemItems || !Array.isArray(redeemItems) || redeemItems.length === 0) {
+            await interaction.reply({
+                embeds: [this.errorEmbed('Closed', 'There are no active rewards configured in the shop right now.')],
+                flags: MessageFlags.Ephemeral
+            });
+            return;
+        }
+
+        const record = await prisma.discordUser.findUnique({
+            where: { discordId_guildId: { discordId: interaction.user.id, guildId } }
+        });
+        const currentPoints = record?.points || 0;
+
+        const options = redeemItems.map((rule: any) => {
+            const roleName = rule.roleName || rule.roleId;
+            return new StringSelectMenuOptionBuilder()
+                .setLabel(roleName)
+                .setDescription(`${rule.pointCost} pts • ${rule.durationDays} Days Duration`)
+                .setValue(JSON.stringify(rule))
+                .setEmoji('🛍️');
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('select_redeem_role')
+            .setPlaceholder('🏷️ Select a premium role to buy...')
+            .addOptions(options);
+
+        const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+        const embed = new EmbedBuilder()
+            .setTitle('🛒 Redeem Rewards Store')
+            .setColor(BRAND_COLOR)
+            .setDescription(`You currently have **${currentPoints.toLocaleString()}** points.\nSelect a reward below to purchase access instantly:`)
+            .setTimestamp();
+
+        await interaction.reply({ embeds: [embed], components: [row], flags: MessageFlags.Ephemeral });
+    }
+
+    private async handleRedeemRoleSelected(interaction: StringSelectMenuInteraction): Promise<void> {
+        await interaction.deferUpdate();
+        const guildId = this.currentConfig?.guildId;
+        if (!guildId || !interaction.guild) return;
+
+        const ruleInfo = JSON.parse(interaction.values[0]);
+        const cost = ruleInfo.pointCost;
+        const durationDays = ruleInfo.durationDays;
+        const roleId = ruleInfo.roleId;
+
+        const record = await prisma.discordUser.findUnique({
+            where: { discordId_guildId: { discordId: interaction.user.id, guildId } }
+        });
+
+        if (!record || record.points < cost) {
+            await interaction.editReply({
+                embeds: [this.errorEmbed('Insufficient Points', `You only have ${record?.points || 0} points, but this costs ${cost}.`)],
+                components: []
+            });
+            return;
+        }
+
+        // Deduct points and assign role
+        const newExpiry = new Date();
+        newExpiry.setDate(newExpiry.getDate() + durationDays);
+
+        // Remove points and update user
+        await prisma.discordUser.update({
+            where: { id: record.id },
+            data: {
+                points: { decrement: cost },
+                currentRole: roleId,
+                expiryDate: newExpiry,
+                status: 'ACTIVE'
+            }
+        });
+
+        const role = interaction.guild.roles.cache.get(roleId);
+        if (role) {
+            await interaction.guild.members.cache.get(interaction.user.id)?.roles.add(role, `Loyalty Reward Purchase: ${durationDays} days`);
+        }
+
+        const successEmbed = new EmbedBuilder()
+            .setTitle('🎉 Reward Purchased!')
+            .setColor(SUCCESS_COLOR)
+            .setDescription(`Successfully redeemed **${cost} points** for the <@&${roleId}> role.\nYou now have **${record.points - cost}** points remaining.\n\nEnjoy your premium access for ${durationDays} days!`)
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [successEmbed], components: [] });
     }
 
     // ──────────────────────────────────────────────────────────────
