@@ -348,8 +348,7 @@ export async function createMirrorConfig(prevState: any, formData: FormData) {
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        console.error("Failed to create mirror:", (e as Error)?.message || "Unknown error");
-        return { error: `Error: ${(e as Error)?.message}` };
+        return { error: "An unexpected error occurred while creating the mirror configuration." };
     }
 }
 
@@ -436,8 +435,7 @@ export async function bulkCreateMirrorConfig(prevState: any, formData: FormData)
         revalidatePath("/dashboard/expert");
         return { success: true, count: parsedConfigs.length };
     } catch (e) {
-        console.error("Failed to bulk create:", (e as Error)?.message || "Unknown error");
-        return { error: `Error: ${(e as Error)?.message}` };
+        return { error: "An unexpected error occurred during bulk creation." };
     }
 }
 
@@ -654,27 +652,6 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         updateData.active = true;
         updateData.status = "ACTIVE";
 
-        // Debug log: trace what we received vs what we're saving
-        console.log("[UpdateMirror] Debug:", JSON.stringify({
-            configId: id,
-            formValues: {
-                sourcePlatform,
-                destinationPlatform,
-                telegramChatId: telegramChatId || "(empty)",
-                sourceChannelId: validated.data.sourceChannelId || "(empty)",
-                telegramAccountId: validated.data.telegramAccountId || "(empty)",
-                discordAccountId: discordAccountId || "(empty)",
-                targetWebhookUrl: validated.data.targetWebhookUrl ? "✓" : "✗",
-            },
-            savingToDb: {
-                sourceChannelId: updateData.sourceChannelId || "(empty)",
-                telegramChatId: updateData.telegramChatId || "(empty)",
-                telegramAccountId: updateData.telegramAccountId || "(empty/unchanged)",
-                discordAccountId: updateData.discordAccountId || "(empty/unchanged)",
-                targetWebhookUrl: updateData.targetWebhookUrl ? "✓" : "✗",
-            }
-        }, null, 2));
-
         await prisma.mirrorConfig.update({
             where: { id },
             data: updateData
@@ -683,10 +660,9 @@ export async function updateMirrorConfig(prevState: any, formData: FormData) {
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e: any) {
-        console.error("Failed to update mirror:", e?.message || e);
         if (e?.code === 'P2002') return { error: "Unique constraint violation." };
         if (e?.code === 'P2025') return { error: "Configuration no longer exists." };
-        return { error: `Error: ${e?.message || e}` };
+        return { error: "An unexpected error occurred while updating the configuration." };
     }
 }
 
@@ -760,7 +736,6 @@ export async function toggleMirrorConfig(id: string, active: boolean) {
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        console.error("Toggle error:", e);
         return { error: "Failed to update mirror status" };
     }
 }
@@ -780,7 +755,6 @@ export async function updateAntiSpamConfig(id: string, active: boolean, blacklis
         revalidatePath("/dashboard/expert");
         return { success: true };
     } catch (e) {
-        console.error("Anti-spam update error:", e);
         return { error: "Failed to update anti-spam settings" };
     }
 }

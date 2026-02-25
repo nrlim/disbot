@@ -166,6 +166,44 @@ export default function Sidebar({
                     </div>
                 </div>
             </aside>
+
+            {/* Mobile Bottom Navigation */}
+            <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 px-6 py-3 flex items-center justify-between pb-safe">
+                {menuItems.map((item) => {
+                    const isActive = pathname === item.href;
+                    return (
+                        <Link
+                            key={item.href}
+                            href={item.href}
+                            onClick={(e) => {
+                                // @ts-ignore
+                                if (item.comingSoon) {
+                                    e.preventDefault();
+                                    setIsComingSoonOpen(true);
+                                }
+                            }}
+                            className={cn(
+                                "flex flex-col items-center gap-1 min-w-[64px] transition-colors",
+                                isActive ? "text-primary" : "text-gray-400 hover:text-gray-600"
+                            )}
+                        >
+                            <item.icon className="w-6 h-6" />
+                            <span className="text-[10px] font-bold tracking-wide">{item.title.split(' ')[0]}</span>
+                        </Link>
+                    );
+                })}
+                <Link
+                    href="/dashboard/settings"
+                    className={cn(
+                        "flex flex-col items-center gap-1 min-w-[64px] transition-colors",
+                        pathname === "/dashboard/settings" ? "text-primary" : "text-gray-400 hover:text-gray-600"
+                    )}
+                >
+                    <Settings className="w-6 h-6" />
+                    <span className="text-[10px] font-bold tracking-wide">Settings</span>
+                </Link>
+            </div>
+
             <ComingSoonModal isOpen={isComingSoonOpen} onClose={() => setIsComingSoonOpen(false)} featureName="Managed Bot" />
         </>
     );

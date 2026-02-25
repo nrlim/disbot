@@ -44,7 +44,6 @@ export async function getGuildsForAccount(accountId: string) {
         });
 
         if (!res.ok) {
-            console.error(`[getGuildsForAccount] Error: ${res.status} ${res.statusText} for account ${accountId}`);
             if (res.status === 401) {
                 await prisma.discordAccount.update({
                     where: { id: accountId },
@@ -67,7 +66,6 @@ export async function getGuildsForAccount(accountId: string) {
         }));
 
         setCache(cacheKey, result);
-        console.log(`[getGuildsForAccount] Fetched ${guilds.length} guilds for account ${accountId}`);
         return result;
 
     } catch (e) {
@@ -98,7 +96,6 @@ export async function addDiscordAccount(token: string) {
         });
 
         if (!res.ok) {
-            console.error(`[addDiscordAccount] Error: ${res.status} ${res.statusText}`);
             if (res.status === 401) return { error: "Invalid Discord Token" };
             return { error: `Failed to verify token with Discord (${res.status})` };
         }
@@ -172,8 +169,7 @@ export async function addDiscordAccount(token: string) {
         };
 
     } catch (e: any) {
-        console.error("Add Account Error:", e);
-        return { error: "Internal Error: " + (e.message || "Unknown") };
+        return { error: "Internal Error" };
     }
 }
 
@@ -241,7 +237,6 @@ export async function getDiscordAccounts() {
             }
         }
     } catch (e) {
-        console.error("Auto-sync OAuth account error:", e);
     }
 
     return accounts;
@@ -291,7 +286,6 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
         });
 
         if (!res.ok) {
-            console.error(`[getChannelsForGuild] Error: ${res.status} ${res.statusText} for guild ${guildId}`);
             if (res.status === 401) {
                 await prisma.discordAccount.update({
                     where: { id: accountId },
@@ -320,7 +314,6 @@ export async function getChannelsForGuild(accountId: string, guildId: string) {
             .sort((a: any, b: any) => a.position - b.position);
 
         setCache(cacheKey, result);
-        console.log(`[getChannelsForGuild] Fetched ${channels.length} channels for guild ${guildId}`);
         return result;
 
     } catch (e) {
@@ -346,7 +339,6 @@ export async function getWebhooksForChannel(accountId: string, channelId: string
         });
 
         if (!res.ok) {
-            console.error(`[getWebhooksForChannel] Error: ${res.status} ${res.statusText} for channel ${channelId}`);
             if (res.status === 401) {
                 await prisma.discordAccount.update({
                     where: { id: accountId },
@@ -361,11 +353,8 @@ export async function getWebhooksForChannel(accountId: string, channelId: string
         const webhooks = await res.json();
 
         if (!Array.isArray(webhooks)) {
-            console.error(`[getWebhooksForChannel] Unexpected response format:`, webhooks);
             return { error: "Unexpected response from Discord" };
         }
-
-        console.log(`[getWebhooksForChannel] Fetched ${webhooks.length} webhooks for channel ${channelId}`);
 
         return webhooks
             .filter((w: any) => w.token)
@@ -405,7 +394,6 @@ export async function createWebhook(accountId: string, channelId: string, name: 
         });
 
         if (!res.ok) {
-            console.error(`[createWebhook] Error: ${res.status} ${res.statusText} for channel ${channelId}`);
             return { error: `Failed to create webhook (${res.status})` };
         }
 

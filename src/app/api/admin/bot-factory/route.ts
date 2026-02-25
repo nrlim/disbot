@@ -2,9 +2,74 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { prisma } from '@/lib/prisma';
-import { encrypt, decrypt } from '@/lib/encryption';
+import { encrypt } from '@/lib/encryption';
+import { z } from 'zod';
 
-export async function GET() {
+const rateLimitCache = new Map<string, { count: number, timestamp: number }>();
+function checkRateLimit(userId: string) {
+    const now = Date.now();
+    const entry = rateLimitCache.get(userId);
+    if (!entry || now - entry.timestamp > 60000) {
+        rateLimitCache.set(userId, { count: 1, timestamp: now });
+        return true;
+    }
+    // Limit to 20 actions per minute per user on factory settings
+    if (entry.count >= 20) return false;
+    entry.count++;
+    return true;
+}
+
+// Zod schemas for input validation
+const createBotSchema = z.object({
+    name: z.string().min(1),
+    botToken: z.string().min(10),
+    clientId: z.string().min(10),
+    guildId: z.string().min(10),
+    adminRoleId: z.string().optional().nullable(),
+    trialRoleId: z.string().optional().nullable(),
+});
+
+const updateFeaturesSchema = z.object({
+    botId: z.string(),
+    features: z.array(z.string()),
+});
+
+const toggleBotSchema = z.object({
+    botId: z.string(),
+    active: z.boolean(),
+});
+
+const updatePointConfigSchema = z.object({
+    botId: z.string(),
+    pointsPerMessage: z.number().min(1).max(100),
+    cooldownSeconds: z.number().min(0).max(3600),
+    earningChannels: z.array(z.string()).optional(),
+});
+
+const addRedeemItemSchema = z.object({
+    botId: z.string(),
+    roleId: z.string(),
+    roleName: z.string().min(1),
+    pointCost: z.number().min(1),
+    durationDays: z.number().min(1),
+});
+
+const deleteRedeemItemSchema = z.object({
+    itemId: z.string(),
+    botId: z.string(),
+});
+
+const toggleRedeemItemSchema = z.object({
+    itemId: z.string(),
+    active: z.boolean(),
+    botId: z.string(),
+});
+
+const deleteBotSchema = z.object({
+    botId: z.string(),
+});
+
+export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -13,7 +78,18 @@ export async function GET() {
     try {
         const bots = await prisma.botConfig.findMany({
             orderBy: { createdAt: 'desc' },
-            include: { package: true, pointConfig: true, redeemItems: true }
+            select: {
+                id: true,
+                name: true,
+                clientId: true,
+                guildId: true,
+                features: true,
+                active: true,
+                botToken: true,
+                lastManagerHeartbeat: true,
+                pointConfig: true,
+                redeemItems: true,
+            }
         });
 
         // Masks token and calculates status based on heartbeats
@@ -41,7 +117,7 @@ export async function GET() {
 
         return NextResponse.json({ bots: formattedBots });
     } catch (error: any) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
 }
 
@@ -51,12 +127,17 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    if (!checkRateLimit(session.user.id)) {
+        return NextResponse.json({ error: 'Rate limit exceeded. Try again in a minute.' }, { status: 429 });
+    }
+
     try {
         const body = await req.json();
         const { action, payload } = body;
 
         if (action === 'CREATE_BOT') {
-            const { name, botToken, clientId, guildId, adminRoleId, trialRoleId } = payload;
+            const parsed = createBotSchema.parse(payload);
+            const { name, botToken, clientId, guildId, adminRoleId, trialRoleId } = parsed;
 
             const encryptedToken = encrypt(botToken);
 
@@ -77,7 +158,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'UPDATE_FEATURES') {
-            const { botId, features } = payload;
+            const parsed = updateFeaturesSchema.parse(payload);
+            const { botId, features } = parsed;
 
             // Validate dependencies
             if (features.includes('ELITE') && !features.includes('BASE')) {
@@ -96,13 +178,13 @@ export async function POST(req: Request) {
         }
 
         if (action === 'TOGGLE_BOT') {
-            const { botId, active } = payload;
+            const parsed = toggleBotSchema.parse(payload);
+            const { botId, active } = parsed;
 
             const updatedBot = await prisma.botConfig.update({
                 where: { id: botId },
                 data: {
                     active,
-                    // If deactivating, technically the manager handles shutdown, so setting active:false is enough.
                     restartManagerAt: new Date() // Trigger update loop in manager
                 }
             });
@@ -111,7 +193,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'UPDATE_POINT_CONFIG') {
-            const { botId, pointsPerMessage, cooldownSeconds, earningChannels } = payload;
+            const parsed = updatePointConfigSchema.parse(payload);
+            const { botId, pointsPerMessage, cooldownSeconds, earningChannels } = parsed;
 
             await prisma.pointConfig.upsert({
                 where: { botId },
@@ -131,7 +214,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'ADD_REDEEM_ITEM') {
-            const { botId, roleId, roleName, pointCost, durationDays } = payload;
+            const parsed = addRedeemItemSchema.parse(payload);
+            const { botId, roleId, roleName, pointCost, durationDays } = parsed;
 
             const newItem = await prisma.redeemItem.create({
                 data: { botId, roleId, roleName, pointCost, durationDays }
@@ -146,7 +230,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'DELETE_REDEEM_ITEM') {
-            const { itemId, botId } = payload;
+            const parsed = deleteRedeemItemSchema.parse(payload);
+            const { itemId, botId } = parsed;
 
             await prisma.redeemItem.delete({
                 where: { id: itemId }
@@ -161,7 +246,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'TOGGLE_REDEEM_ITEM') {
-            const { itemId, active, botId } = payload;
+            const parsed = toggleRedeemItemSchema.parse(payload);
+            const { itemId, active, botId } = parsed;
 
             await prisma.redeemItem.update({
                 where: { id: itemId },
@@ -177,7 +263,8 @@ export async function POST(req: Request) {
         }
 
         if (action === 'DELETE_BOT') {
-            const { botId } = payload;
+            const parsed = deleteBotSchema.parse(payload);
+            const { botId } = parsed;
 
             await prisma.botConfig.delete({
                 where: { id: botId }
@@ -189,6 +276,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 
     } catch (error: any) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error instanceof z.ZodError) {
+            return NextResponse.json({ error: "Validation Failed", details: error.errors }, { status: 400 });
+        }
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
 }

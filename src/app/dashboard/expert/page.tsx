@@ -9,6 +9,7 @@ import { PLAN_LIMITS } from "@/lib/constants";
 import { getDiscordAccounts } from "@/actions/discord-account";
 import { getMirrorConfigs, getMirrorGroups } from "@/actions/mirror";
 import { getTelegramAccounts } from "@/actions/telegramAuth";
+import WorkerStatsWidget from "@/components/WorkerStatsWidget";
 
 export default async function ExpertDashboard() {
     const session = await getServerSession(authOptions);
@@ -71,25 +72,31 @@ export default async function ExpertDashboard() {
                     </p>
                 </div>
 
-                {/* Stats Widget */}
-                <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 min-w-[240px] relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
-                        <Activity className="w-16 h-16 text-primary" />
-                    </div>
-                    <div className="relative z-10">
-                        <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Active Threads</div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className={`text-3xl font-bold ${activeCount >= limit ? "text-amber-600" : "text-gray-900"}`}>
-                                {activeCount}
-                            </span>
-                            <span className="text-gray-400 text-sm font-medium">/ {limit === 9999 ? "∞" : limit}</span>
+                {/* Stats Widgets */}
+                <div className="flex flex-col sm:flex-row items-stretch gap-4">
+                    <WorkerStatsWidget />
+
+                    <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 min-w-[240px] relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Activity className="w-16 h-16 text-primary" />
                         </div>
-                        <div className="text-xs text-gray-400 mt-1">Total Threads: {totalThreads}</div>
-                        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden mt-2">
-                            <div
-                                className={`h-full rounded-full transition-all duration-500 ${activeCount >= limit ? "bg-amber-500" : "bg-primary"}`}
-                                style={{ width: `${percentage}%` }}
-                            />
+                        <div className="relative z-10 flex flex-col justify-between h-full">
+                            <div>
+                                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Active Threads</div>
+                                <div className="flex items-baseline gap-2 mb-2">
+                                    <span className={`text-3xl font-bold ${activeCount >= limit ? "text-amber-600" : "text-gray-900"}`}>
+                                        {activeCount}
+                                    </span>
+                                    <span className="text-gray-400 text-sm font-medium">/ {limit === 9999 ? "∞" : limit}</span>
+                                </div>
+                                <div className="text-xs text-gray-400 mt-1">Total Threads: {totalThreads}</div>
+                            </div>
+                            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden mt-2">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-500 ${activeCount >= limit ? "bg-amber-500" : "bg-primary"}`}
+                                    style={{ width: `${percentage}%` }}
+                                />
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -98,7 +98,7 @@ export function MultiSelect({ options, values = [], onChange, placeholder = "Sel
                             autoFocus
                         />
                     </div>
-                    <ul className="max-h-60 overflow-auto py-1 text-sm">
+                    <ul className="max-h-40 overflow-y-auto py-1 text-sm custom-scrollbar">
                         {filteredOptions.length === 0 ? (
                             <li className="px-4 py-3 text-sm text-gray-500 text-center">No results found.</li>
                         ) : (

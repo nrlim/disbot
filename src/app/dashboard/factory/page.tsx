@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     Loader2, Plus, Bot, Shield, Play,
     Activity, Save, ShieldBan, Monitor,
@@ -243,10 +244,16 @@ export default function BotFactoryPage() {
     if (normalizedFeatures.includes('CHECK') || normalizedFeatures.includes('EXTEND')) normalizedFeatures.push('SUBSCRIPTION');
 
     // Calculate Active Commands
-    const activeCommands = normalizedFeatures.flatMap((f: string) => COMMAND_MAPPING[f] || []).filter(Boolean);
+    const activeCommands = Array.from(new Set(normalizedFeatures.flatMap((f: string) => COMMAND_MAPPING[f] || []).filter(Boolean)));
 
     return (
-        <div className="max-w-7xl mx-auto space-y-8 animate-in fade-in zoom-in-95 duration-500 pb-12">
+        <div className="space-y-8 pb-8">
+            <style jsx global>{`
+                ::-webkit-scrollbar { width: 6px; }
+                ::-webkit-scrollbar-track { background: transparent; }
+                ::-webkit-scrollbar-thumb { background-color: #374151; border-radius: 20px; }
+                html { scroll-behavior: smooth; }
+            `}</style>
 
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-gray-100 pb-6">
                 <div>
@@ -268,11 +275,11 @@ export default function BotFactoryPage() {
                 </div>
             </div>
 
-            <div className="flex flex-col lg:flex-row gap-8 items-start">
+            <div className="flex flex-col lg:flex-row gap-8 items-stretch">
 
-                {/* Left Sidebar: Instance List */}
+                {/* Left Sidebar: Instance List & Navigation */}
                 <div className="w-full lg:w-80 flex flex-col gap-4">
-                    <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-4 h-[600px] flex flex-col">
+                    <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-4 flex-1 flex flex-col">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="font-bold text-gray-900 uppercase tracking-widest text-xs">Instances ({bots.length})</h3>
                             <button
@@ -283,7 +290,7 @@ export default function BotFactoryPage() {
                             </button>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                        <div className="space-y-2">
                             {bots.length === 0 ? (
                                 <div className="text-center py-12 text-sm text-gray-400 font-medium border-2 border-dashed border-gray-100 rounded-xl">
                                     No bots spawned.
@@ -323,7 +330,7 @@ export default function BotFactoryPage() {
                 </div>
 
                 {/* Right Side: Features & Dashboard */}
-                <div className="flex-1 w-full space-y-6">
+                <div className="flex-1 w-full flex flex-col gap-6">
 
                     {!selectedBot ? (
                         <div className="bg-white border border-gray-100 rounded-2xl p-12 text-center shadow-sm">
@@ -331,133 +338,157 @@ export default function BotFactoryPage() {
                             <p className="text-gray-500 mt-2">Choose a bot from the factory to configure its features.</p>
                         </div>
                     ) : (
-                        <>
-                            {/* Instance Dashboard Header */}
-                            <div className="bg-white border border-gray-100 rounded-2xl p-6 shadow-sm flex flex-col lg:flex-row gap-6 justify-between items-center relative overflow-hidden">
-                                <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={selectedBot.id}
+                                initial={{ opacity: 0, y: 15 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, scale: 0.98 }}
+                                transition={{ duration: 0.3 }}
+                                className="flex flex-col gap-12 w-full relative"
+                            >
+                                {/* Instance Dashboard Header */}
+                                <div id="dashboard-header" className="bg-white border border-gray-100 rounded-2xl p-4 md:p-6 shadow-sm flex flex-col lg:flex-row gap-4 md:gap-6 justify-between items-start md:items-center relative overflow-hidden sticky md:static top-2 z-20">
+                                    <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
 
-                                <div className="flex items-center gap-5 z-10 w-full lg:w-auto">
-                                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 border-white shadow-lg ${selectedBot.isOnline ? 'bg-gradient-to-br from-green-400 to-green-500' : 'bg-gradient-to-br from-gray-400 to-gray-500'}`}>
-                                        <Bot className="w-8 h-8 text-white" />
+                                    {/* Mobile Top-Right Status Pulse */}
+                                    <div className="absolute top-4 right-4 md:hidden">
+                                        {selectedBot.isOnline ? (
+                                            <span className="flex h-3 w-3">
+                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                                            </span>
+                                        ) : (
+                                            <span className="flex h-3 w-3 rounded-full bg-red-500"></span>
+                                        )}
                                     </div>
-                                    <div>
-                                        <h2 className="text-2xl font-bold text-gray-900">{selectedBot.name || 'Client'} • {selectedBot.clientId}</h2>
-                                        <div className="flex gap-3 text-sm mt-1 items-center">
-                                            <span className="text-gray-500 font-medium">Guild: <span className="text-gray-700">{selectedBot.guildId}</span></span>
-                                            <span className="text-gray-300">•</span>
-                                            {selectedBot.isOnline ? (
-                                                <span className="text-green-600 font-bold flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" /> Active Heartbeat</span>
-                                            ) : (
-                                                <span className="text-red-500 font-bold flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> No Heartbeat</span>
-                                            )}
+
+                                    <div className="flex items-center gap-4 md:gap-5 z-10 w-full lg:w-auto">
+                                        <div className={`w-12 h-12 md:w-16 md:h-16 shrink-0 rounded-2xl flex items-center justify-center border-2 border-white shadow-lg ${selectedBot.isOnline ? 'bg-gradient-to-br from-green-400 to-green-500' : 'bg-gradient-to-br from-gray-400 to-gray-500'}`}>
+                                            <Bot className="w-6 h-6 md:w-8 md:h-8 text-white" />
+                                        </div>
+                                        <div className="min-w-0 pr-6">
+                                            <h2 className="text-xl md:text-2xl font-bold text-gray-900 truncate">{selectedBot.name || 'Client'} • <span className="text-sm md:text-2xl text-gray-500 font-normal">{selectedBot.clientId.substring(0, 8)}...</span></h2>
+                                            <div className="flex flex-col md:flex-row md:items-center gap-1 md:gap-3 text-xs md:text-sm mt-1">
+                                                <span className="text-gray-500 font-medium truncate">Guild: <span className="text-gray-700">{selectedBot.guildId}</span></span>
+                                                <span className="hidden md:inline text-gray-300">•</span>
+                                                <div className="hidden md:flex">
+                                                    {selectedBot.isOnline ? (
+                                                        <span className="text-green-600 font-bold flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" /> Active Heartbeat</span>
+                                                    ) : (
+                                                        <span className="text-red-500 font-bold flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> No Heartbeat</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-row flex-wrap items-center gap-4 md:gap-6 z-10 w-full lg:w-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0 border-gray-50">
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Heap Memory</span>
+                                            <span className="text-lg font-bold text-gray-800 flex items-baseline gap-1">
+                                                {selectedBot.isOnline ? DUMMY_MEMORY[bots.indexOf(selectedBot) % DUMMY_MEMORY.length].toFixed(1) : "0.0"} <span className="text-xs text-gray-400">MB</span>
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Status</span>
+                                            <span className={`px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full ${selectedBot.isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                                {selectedBot.isOnline ? 'ONLINE' : 'STOPPED'}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col border-l pl-6 border-gray-100">
+                                            <button
+                                                onClick={handleDeleteBot}
+                                                className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
+                                                title="Delete Bot Instance"
+                                            >
+                                                <Trash2 className="w-5 h-5" />
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-6 z-10 w-full lg:w-auto justify-between lg:justify-end border-t lg:border-t-0 pt-4 lg:pt-0 border-gray-100">
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Heap Memory</span>
-                                        <span className="text-lg font-bold text-gray-800 flex items-baseline gap-1">
-                                            {selectedBot.isOnline ? DUMMY_MEMORY[bots.indexOf(selectedBot) % DUMMY_MEMORY.length].toFixed(1) : "0.0"} <span className="text-xs text-gray-400">MB</span>
-                                        </span>
+                                {/* Applied Commands Preview UI */}
+                                {activeCommands.length > 0 && (
+                                    <div className="flex gap-2 items-center text-sm font-medium">
+                                        <span className="text-gray-500 uppercase text-xs font-bold tracking-widest mr-2">Registered Slash Commands:</span>
+                                        {activeCommands.map(cmd => (
+                                            <span key={cmd} className="px-2 py-1 bg-primary/10 text-primary border border-primary/20 rounded-lg font-mono text-xs">{cmd}</span>
+                                        ))}
                                     </div>
-                                    <div className="flex flex-col">
-                                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Status</span>
-                                        <span className={`px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full ${selectedBot.isOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                            {selectedBot.isOnline ? 'ONLINE' : 'STOPPED'}
-                                        </span>
-                                    </div>
-                                    <div className="flex flex-col border-l pl-6 border-gray-100">
+                                )}
+
+                                {/* Feature Marketplace */}
+                                <div id="module-assignment" className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden flex flex-col scroll-mt-24">
+                                    <div className="p-5 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
+                                        <div>
+                                            <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                                <Network className="w-5 h-5 text-indigo-500" /> Module Assignment
+                                            </h3>
+                                            <p className="text-xs text-gray-500 mt-0.5">Toggle dynamic systems for this bot instance.</p>
+                                        </div>
                                         <button
-                                            onClick={handleDeleteBot}
-                                            className="w-10 h-10 flex items-center justify-center rounded-xl bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-colors"
-                                            title="Delete Bot Instance"
+                                            onClick={handleApplyChanges}
+                                            disabled={!hasPendingChanges}
+                                            className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${hasPendingChanges ? 'bg-gray-900 text-white hover:bg-gray-800 hover:shadow-lg shadow-black/10' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                                         >
-                                            <Trash2 className="w-5 h-5" />
+                                            <Save className="w-4 h-4" />
+                                            Apply Toggles
+                                            {hasPendingChanges && <span className="absolute -top-1 -right-1 h-3 w-3 bg-orange-500 rounded-full animate-pulse border-2 border-white"></span>}
                                         </button>
                                     </div>
-                                </div>
-                            </div>
+                                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {MODULE_DEFINITIONS.map(mod => {
+                                            const isActive = normalizedFeatures.includes(mod.id);
+                                            const isMissingDependency = (mod.id === 'BASE' && normalizedFeatures.includes('ELITE')); // Cannot turn off BASE if ELITE is on
 
-                            {/* Applied Commands Preview UI */}
-                            {activeCommands.length > 0 && (
-                                <div className="flex gap-2 items-center text-sm font-medium">
-                                    <span className="text-gray-500 uppercase text-xs font-bold tracking-widest mr-2">Registered Slash Commands:</span>
-                                    {activeCommands.map(cmd => (
-                                        <span key={cmd} className="px-2 py-1 bg-primary/10 text-primary border border-primary/20 rounded-lg font-mono text-xs">{cmd}</span>
-                                    ))}
-                                </div>
-                            )}
+                                            return (
+                                                <div
+                                                    key={mod.id}
+                                                    onClick={() => {
+                                                        if (!isMissingDependency) {
+                                                            handleToggleFeature(mod.id);
+                                                        }
+                                                    }}
+                                                    className={`relative border rounded-xl p-4 transition-all duration-300 flex items-start gap-4 min-h-[76px] ${isActive ? 'border-primary/50 bg-primary/5 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'} ${isMissingDependency ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                                                >
+                                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors ${isActive ? 'bg-primary text-white shadow-md shadow-primary/30' : 'bg-gray-100 text-gray-400'}`}>
+                                                        <mod.icon className="w-5 h-5" />
+                                                    </div>
+                                                    <div className="flex-1 pr-12">
+                                                        <h4 className={`font-bold text-sm ${isActive ? 'text-gray-900' : 'text-gray-700'}`}>{mod.title}</h4>
+                                                        <p className="text-xs text-gray-500 mt-1">{mod.description}</p>
+                                                    </div>
 
-                            {/* Feature Marketplace */}
-                            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden flex flex-col">
-                                <div className="p-5 border-b border-gray-50 bg-gray-50/50 flex justify-between items-center">
-                                    <div>
-                                        <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
-                                            <Network className="w-5 h-5 text-indigo-500" /> Module Assignment
-                                        </h3>
-                                        <p className="text-xs text-gray-500 mt-0.5">Toggle dynamic systems for this bot instance.</p>
+                                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center justify-center min-w-[44px] min-h-[44px]">
+                                                        <div className={`w-11 h-6 rounded-full relative transition-colors ${isActive ? 'bg-primary' : 'bg-gray-200'} ${isMissingDependency ? 'opacity-50' : ''}`}>
+                                                            <div className={`absolute top-0.5 left-[2px] bg-white border border-gray-300 rounded-full h-5 w-5 transition-all ${isActive ? 'translate-x-full border-white' : ''}`}></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                    <button
-                                        onClick={handleApplyChanges}
-                                        disabled={!hasPendingChanges}
-                                        className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${hasPendingChanges ? 'bg-gray-900 text-white hover:bg-gray-800 hover:shadow-lg shadow-black/10' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-                                    >
-                                        <Save className="w-4 h-4" />
-                                        Apply Toggles
-                                        {hasPendingChanges && <span className="absolute -top-1 -right-1 h-3 w-3 bg-orange-500 rounded-full animate-pulse border-2 border-white"></span>}
-                                    </button>
                                 </div>
-                                <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {MODULE_DEFINITIONS.map(mod => {
-                                        const isActive = normalizedFeatures.includes(mod.id);
-                                        const isMissingDependency = (mod.id === 'BASE' && normalizedFeatures.includes('ELITE')); // Cannot turn off BASE if ELITE is on
 
-                                        return (
-                                            <div
-                                                key={mod.id}
-                                                className={`relative border rounded-xl p-4 transition-all duration-300 flex items-start gap-4 ${isActive ? 'border-primary/50 bg-primary/5 shadow-sm' : 'border-gray-200 bg-white hover:border-gray-300'}`}
-                                            >
-                                                <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 transition-colors ${isActive ? 'bg-primary text-white shadow-md shadow-primary/30' : 'bg-gray-100 text-gray-400'}`}>
-                                                    <mod.icon className="w-5 h-5" />
-                                                </div>
-                                                <div className="flex-1 pr-12">
-                                                    <h4 className={`font-bold text-sm ${isActive ? 'text-gray-900' : 'text-gray-700'}`}>{mod.title}</h4>
-                                                    <p className="text-xs text-gray-500 mt-1">{mod.description}</p>
-                                                </div>
-
-                                                <label className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
-                                                        className="sr-only peer"
-                                                        checked={isActive}
-                                                        onChange={() => handleToggleFeature(mod.id)}
-                                                        disabled={isMissingDependency && isActive}
-                                                    />
-                                                    <div className={`w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${isActive ? 'peer-checked:bg-primary' : ''} ${isMissingDependency ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
-                                                </label>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-
-                        </>
+                                {/* Loyalty Config UI (Dynamic) */}
+                                {normalizedFeatures.includes('LOYALTY_SYSTEM') && (
+                                    <div id="loyalty-rules" className="scroll-mt-24">
+                                        <LoyaltySettingsCard
+                                            botId={selectedBot.id}
+                                            botToken={selectedBot.botToken}
+                                            guildId={selectedBot.guildId}
+                                            initialConfig={{ ...selectedBot.pointConfig, botConfig: selectedBot }}
+                                            initialRedeemItems={selectedBot.redeemItems || []}
+                                            onUpdate={fetchBots}
+                                        />
+                                    </div>
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
                     )}
                 </div>
             </div>
-
-            {/* Loyalty Config UI (Dynamic) */}
-            {selectedBot && normalizedFeatures.includes('LOYALTY_SYSTEM') && (
-                <LoyaltySettingsCard
-                    botId={selectedBot.id}
-                    botToken={selectedBot.botToken}
-                    guildId={selectedBot.guildId}
-                    initialConfig={{ ...selectedBot.pointConfig, botConfig: selectedBot }}
-                    initialRedeemItems={selectedBot.redeemItems || []}
-                    onUpdate={fetchBots}
-                />
-            )}
 
             {/* Modal for creating a new bot config */}
             {isAddModalOpen && (
@@ -688,8 +719,8 @@ function LoyaltySettingsCard({ botId, botToken, guildId, initialConfig, initialR
     };
 
     return (
-        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-visible flex flex-col mt-6">
-            <div className="p-5 border-b border-gray-50 bg-[#FFFBEA]/50 rounded-t-2xl flex justify-between items-center">
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-visible flex flex-col mt-8">
+            <div className="p-5 border-b border-gray-50 bg-[#FFFBEA]/50 rounded-t-2xl flex justify-between items-center shrink-0">
                 <div>
                     <h3 className="font-bold text-lg text-yellow-600 flex items-center gap-2">
                         <Trophy className="w-5 h-5" /> Loyalty & Rewards Engine
@@ -729,11 +760,6 @@ function LoyaltySettingsCard({ botId, botToken, guildId, initialConfig, initialR
                 <div>
                     <div className="flex justify-between items-end mb-2">
                         <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Earning Channels (Whitelist)</label>
-                        {availableChannels.length === 0 && (
-                            <button onClick={handleFetchChannels} disabled={isFetchingChannels} className="text-[10px] text-primary hover:underline font-bold">
-                                {isFetchingChannels ? 'Fetching...' : 'Fetch Channels'}
-                            </button>
-                        )}
                     </div>
                     {availableChannels.length > 0 ? (
                         <div className="relative z-30">
@@ -745,9 +771,10 @@ function LoyaltySettingsCard({ botId, botToken, guildId, initialConfig, initialR
                             />
                         </div>
                     ) : (
-                        <div className="text-sm text-gray-400 p-2.5 bg-gray-50 border border-gray-200 rounded-lg border-dashed text-center">
-                            Fetch channels to select
-                        </div>
+                        <button type="button" onClick={handleFetchChannels} disabled={isFetchingChannels} className="w-full p-2.5 bg-yellow-50 hover:bg-yellow-100 transition-colors border border-yellow-200 border-dashed rounded-lg text-sm font-bold text-yellow-700 text-center flex justify-center items-center gap-2 relative z-30">
+                            {isFetchingChannels ? <Loader2 className="w-4 h-4 animate-spin" /> : <Network className="w-4 h-4" />}
+                            Fetch Server Channels
+                        </button>
                     )}
                     {earningChannels.length === 0 && availableChannels.length > 0 && (
                         <p className="text-[10px] text-yellow-600 font-medium mt-1">⚠️ Points will not be awarded anywhere if empty.</p>
@@ -755,43 +782,14 @@ function LoyaltySettingsCard({ botId, botToken, guildId, initialConfig, initialR
                 </div>
             </div>
 
-            <div className="p-5">
+            <div className="p-5 flex flex-col">
                 <div className="flex justify-between items-end mb-4">
                     <h4 className="font-bold text-gray-800 text-sm flex items-center gap-2"><Settings className="w-4 h-4" /> Redeemable Shop Rules</h4>
-                    {availableRoles.length === 0 && (
-                        <button onClick={handleFetchRoles} disabled={isFetchingRoles} className="text-xs text-yellow-600 bg-yellow-50 hover:bg-yellow-100 px-3 py-1.5 rounded-lg font-bold transition-colors">
-                            {isFetchingRoles ? 'Fetching...' : 'Fetch Discord Roles'}
-                        </button>
-                    )}
                 </div>
 
-                <div className="space-y-3">
-                    {initialRedeemItems.map((item: any) => (
-                        <div key={item.id} className={`flex flex-col sm:flex-row gap-3 items-center p-3 rounded-lg border ${item.isActive ? 'bg-gray-50 border-gray-100' : 'bg-red-50/50 border-red-100 opacity-60'}`}>
-                            <div className="flex-1 flex flex-col items-center sm:items-start gap-1">
-                                <span className={`text-sm font-bold ${item.isActive ? 'text-gray-800' : 'text-gray-500 line-through'}`}>{item.roleName} <span className="text-xs text-gray-400 font-mono ml-1">({item.roleId})</span></span>
-                            </div>
-                            <div className="flex-1 text-sm font-medium">💰 Cost: <span className="text-yellow-600 font-bold">{item.pointCost} pts</span></div>
-                            <div className="flex-1 text-sm font-medium">⏳ Duration: <span className="text-blue-500 font-bold">{item.durationDays} days</span></div>
-                            <div className="flex items-center gap-2">
-                                <label className="inline-flex items-center cursor-pointer" title="Toggle active status">
-                                    <input type="checkbox" className="sr-only peer" checked={item.isActive} onChange={(e) => toggleRuleActive(item.id, e.target.checked)} />
-                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 relative"></div>
-                                </label>
-                                <button onClick={() => removeRule(item.id)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            </div>
-                        </div>
-                    ))}
-                    {initialRedeemItems.length === 0 && (
-                        <div className="text-sm text-center text-gray-400 py-6 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
-                            No shop rewards configured yet.
-                        </div>
-                    )}
-                </div>
-
-                <div className="mt-6 flex flex-col md:flex-row gap-3 items-end p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-inner overflow-visible">
+                <div className="mb-6 flex flex-col md:flex-row gap-3 md:items-end p-4 bg-gray-50 rounded-xl border border-gray-200 shadow-inner overflow-visible shrink-0">
                     <div className="flex-1 w-full relative z-20">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Target Role</label>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">1. Target Role</label>
                         {availableRoles.length > 0 ? (
                             <Combobox
                                 options={availableRoles.map(r => ({ value: r.id, label: r.name }))}
@@ -800,20 +798,100 @@ function LoyaltySettingsCard({ botId, botToken, guildId, initialConfig, initialR
                                 placeholder="Search Role..."
                             />
                         ) : (
-                            <input type="text" placeholder="Type Role ID..." value={newRule.roleId} onChange={e => setNewRule(r => ({ ...r, roleId: e.target.value }))} className="w-full p-2 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all" />
+                            <div className="relative flex items-center">
+                                <input type="text" placeholder="Type Role ID or Fetch..." value={newRule.roleId} onChange={e => setNewRule(r => ({ ...r, roleId: e.target.value }))} className="w-full p-2 md:p-2.5 pr-28 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all min-h-[44px]" />
+                                <button type="button" onClick={handleFetchRoles} disabled={isFetchingRoles} className="absolute right-1 top-1 bottom-1 px-3 text-[10px] font-bold bg-yellow-100 text-yellow-700 hover:bg-yellow-200 rounded flex items-center gap-1 transition-colors min-h-[36px]">
+                                    {isFetchingRoles ? <Loader2 className="w-3 h-3 animate-spin" /> : <Network className="w-3 h-3" />} Fetch Roles
+                                </button>
+                            </div>
                         )}
                     </div>
-                    <div className="w-full md:w-32 relative z-10">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Cost (Pts)</label>
-                        <input type="number" min="1" value={newRule.cost} onChange={e => setNewRule(r => ({ ...r, cost: parseInt(e.target.value) || 0 }))} className="w-full p-2 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all" />
+                    <div className="flex flex-row gap-3 w-full md:w-auto">
+                        <div className="w-1/2 md:w-32 relative z-10">
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">2. Cost (Pts)</label>
+                            <input type="number" min="1" value={newRule.cost} onChange={e => setNewRule(r => ({ ...r, cost: parseInt(e.target.value) || 0 }))} className="w-full p-2 md:p-2.5 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all min-h-[44px]" />
+                        </div>
+                        <div className="w-1/2 md:w-32 relative z-10">
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">3. Time (Days)</label>
+                            <input type="number" min="1" value={newRule.durationDays} onChange={e => setNewRule(r => ({ ...r, durationDays: parseInt(e.target.value) || 0 }))} className="w-full p-2 md:p-2.5 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all min-h-[44px]" />
+                        </div>
                     </div>
-                    <div className="w-full md:w-32 relative z-10">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Time (Days)</label>
-                        <input type="number" min="1" value={newRule.durationDays} onChange={e => setNewRule(r => ({ ...r, durationDays: parseInt(e.target.value) || 0 }))} className="w-full p-2 text-sm border rounded-lg focus:ring-primary focus:border-primary border-gray-200 outline-none transition-all" />
-                    </div>
-                    <button onClick={addRule} className="h-[38px] px-4 bg-gray-800 text-white text-sm font-bold rounded-lg hover:bg-black w-full md:w-auto shrink-0 flex items-center gap-2 justify-center transition-colors relative z-10">
-                        <Plus className="w-4 h-4" /> Add Reward
+                    <button onClick={addRule} className="min-h-[44px] md:h-[44px] px-4 bg-gray-900 text-white text-sm font-bold rounded-lg hover:bg-black w-full md:w-auto shrink-0 flex items-center gap-2 justify-center transition-colors relative z-10 mt-2 md:mt-0">
+                        <Plus className="w-5 h-5 md:w-4 md:h-4" /> Add Reward
                     </button>
+                </div>
+
+                <div id="redeemable-shop" className="w-full">
+
+                    <div className="md:hidden flex flex-col gap-3">
+                        {initialRedeemItems.map((item: any) => (
+                            <div key={`mobile-${item.id}`} className={`p-4 rounded-xl border shadow-sm ${item.isActive ? 'bg-white border-gray-100' : 'opacity-60 bg-red-50/20 border-red-100'}`}>
+                                <div className="flex justify-between items-start mb-3">
+                                    <div className="flex flex-col w-[60%]">
+                                        <span className={`font-bold truncate ${item.isActive ? 'text-gray-900' : 'text-gray-500 line-through'}`}>{item.roleName}</span>
+                                        <span className="text-[10px] text-gray-400 font-mono mt-0.5 truncate">ID: {item.roleId}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="inline-flex items-center cursor-pointer min-w-[44px] min-h-[44px] justify-center" title={item.isActive ? "Disable" : "Enable"}>
+                                            <input type="checkbox" className="sr-only peer" checked={item.isActive} onChange={(e) => toggleRuleActive(item.id, e.target.checked)} />
+                                            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 relative"></div>
+                                        </label>
+                                        <button onClick={() => removeRule(item.id)} className="w-[44px] h-[44px] flex items-center justify-center text-red-500 hover:bg-red-50 hover:text-red-700 bg-white border border-gray-100 rounded-lg shadow-sm"><Trash2 className="w-5 h-5" /></button>
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center text-sm pt-3 border-t border-gray-50">
+                                    <div className="font-bold text-yellow-600 flex items-center gap-1.5"><Trophy className="w-4 h-4" /> {item.pointCost} pts</div>
+                                    <div className="font-bold text-blue-500 flex items-center gap-1.5"><Activity className="w-4 h-4" /> {item.durationDays} days</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="hidden md:block overflow-x-auto border border-gray-100 rounded-xl bg-white shadow-sm">
+                        <table className="w-full text-left text-sm whitespace-nowrap">
+                            <thead>
+                                <tr className="bg-gray-50/80 border-b border-gray-100 text-gray-500 text-xs uppercase tracking-widest text-left font-bold">
+                                    <th className="py-3 px-4">Reward Role</th>
+                                    <th className="py-3 px-4">Cost</th>
+                                    <th className="py-3 px-4">Duration</th>
+                                    <th className="py-3 px-4 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-50">
+                                {initialRedeemItems.map((item: any) => (
+                                    <tr key={item.id} className={`group transition-colors ${item.isActive ? 'hover:bg-gray-50/50' : 'opacity-60 bg-red-50/20 hover:bg-red-50/40'}`}>
+                                        <td className="p-4">
+                                            <div className="flex flex-col">
+                                                <span className={`font-bold ${item.isActive ? 'text-gray-900' : 'text-gray-500 line-through'}`}>{item.roleName}</span>
+                                                <span className="text-[10px] text-gray-400 font-mono mt-0.5">ID: {item.roleId}</span>
+                                            </div>
+                                        </td>
+                                        <td className="p-4 font-bold text-yellow-600">
+                                            <div className="flex items-center gap-1.5"><Trophy className="w-3 h-3" /> {item.pointCost} pts</div>
+                                        </td>
+                                        <td className="p-4 font-bold text-blue-500">
+                                            <div className="flex items-center gap-1.5"><Activity className="w-3 h-3" /> {item.durationDays} days</div>
+                                        </td>
+                                        <td className="p-4 text-right">
+                                            <div className="flex justify-end gap-3 items-center">
+                                                <label className="inline-flex items-center cursor-pointer" title={item.isActive ? "Disable" : "Enable"}>
+                                                    <input type="checkbox" className="sr-only peer" checked={item.isActive} onChange={(e) => toggleRuleActive(item.id, e.target.checked)} />
+                                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500 relative"></div>
+                                                </label>
+                                                <button onClick={() => removeRule(item.id)} className="p-2 text-red-500 hover:bg-red-50 hover:text-red-700 bg-white border border-transparent hover:border-red-100 rounded-lg transition-all shadow-sm"><Trash2 className="w-4 h-4" /></button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    {initialRedeemItems.length === 0 && (
+                        <div className="p-8 text-sm text-center text-gray-400 flex flex-col items-center justify-center gap-2">
+                            <Settings className="w-8 h-8 text-gray-200" />
+                            <p>No shop rewards configured yet.</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
