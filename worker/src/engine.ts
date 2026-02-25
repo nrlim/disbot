@@ -40,6 +40,34 @@ export class Engine {
         // Schedule Sync (every 30 seconds for faster updates)
         this.syncInterval = setInterval(() => this.sync(), 30 * 1000);
 
+        // Start Vercel-to-VPS Heartbeat & Remote Restart Listener
+        setInterval(async () => {
+            if (!this.isShuttingDown) {
+                try {
+                    const settings = await prisma.botSettings.findFirst({ orderBy: { updatedAt: 'desc' } });
+                    if (settings) {
+                        // 1. Send Heartbeat to DB
+                        await prisma.botSettings.update({
+                            where: { id: settings.id },
+                            data: { lastWorkerHeartbeat: new Date() }
+                        });
+
+                        // 2. Check for Remote Restart request from Dashboard
+                        if (settings.restartWorkerAt && settings.restartWorkerAt > new Date(Date.now() - 60000)) {
+                            logger.info('[Engine] Remote restart requested from Dashboard via DB. Exiting for PM2 restart...');
+                            await prisma.botSettings.update({
+                                where: { id: settings.id },
+                                data: { restartWorkerAt: null }
+                            });
+                            process.exit(0); // PM2 will automatically restart the process
+                        }
+                    }
+                } catch (e: any) {
+                    // Silently fail if DB is temporarily unreachable
+                }
+            }
+        }, 15000).unref();
+
         // Signal Handlers
         process.on('SIGINT', () => this.shutdown());
         process.on('SIGTERM', () => this.shutdown());

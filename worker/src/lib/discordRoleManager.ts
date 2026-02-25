@@ -140,6 +140,34 @@ export class DiscordRoleManager {
         }, CONFIG_SYNC_INTERVAL_MS);
         this.configSyncInterval.unref();
 
+        // Start Vercel-to-VPS Heartbeat & Remote Restart Listener
+        setInterval(async () => {
+            if (this.currentConfig && !this.isShuttingDown) {
+                try {
+                    const settings = await prisma.botSettings.findUnique({ where: { id: this.currentConfig.id } });
+                    if (settings) {
+                        // 1. Send Heartbeat to DB
+                        await prisma.botSettings.update({
+                            where: { id: this.currentConfig.id },
+                            data: { lastManagerHeartbeat: new Date() }
+                        });
+
+                        // 2. Check for Remote Restart request from Dashboard
+                        if (settings.restartManagerAt && settings.restartManagerAt > new Date(Date.now() - 60000)) {
+                            logger.info('[Manager] Remote restart requested from Dashboard via DB. Exiting for PM2 restart...');
+                            await prisma.botSettings.update({
+                                where: { id: this.currentConfig.id },
+                                data: { restartManagerAt: null }
+                            });
+                            process.exit(0); // PM2 will automatically restart the process
+                        }
+                    }
+                } catch (e: any) {
+                    // Silently fail if DB is temporarily unreachable
+                }
+            }
+        }, 15000).unref();
+
         // Start the expiry checker
         this.startExpiryChecker();
 
@@ -291,7 +319,7 @@ export class DiscordRoleManager {
                 ],
             });
 
-            this.client.on('ready', async () => {
+            this.client.on('clientReady', async () => {
                 this.isReady = true;
                 logger.info({
                     user: this.client?.user?.tag,

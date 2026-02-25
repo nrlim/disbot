@@ -161,7 +161,7 @@ export class DiscordMirror {
         const client = new Client({ checkUpdate: false } as any);
         const session: ClientSession = { client, configs: initialConfigs, lastActive: Date.now() };
 
-        client.on('ready', () => logger.info({ user: client.user?.tag }, 'Custom Hook Client ready'));
+        client.on('clientReady', () => logger.info({ user: client.user?.tag }, 'Custom Hook Client ready'));
 
         client.on('messageCreate', (message) => {
             this.dispatchMessage(token, message as Message, 'CUSTOM_HOOK');
@@ -251,7 +251,7 @@ export class DiscordMirror {
         });
         const session: ClientSession = { client, configs: initialConfigs, lastActive: Date.now() };
 
-        client.on('ready', () => logger.info({ user: client.user?.tag }, 'Managed Bot Client ready'));
+        client.on('clientReady', () => logger.info({ user: client.user?.tag }, 'Managed Bot Client ready'));
 
         client.on('messageCreate', (message) => {
             if (message.author.bot) return; // Ignore bots

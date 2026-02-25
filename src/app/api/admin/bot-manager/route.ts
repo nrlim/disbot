@@ -48,29 +48,20 @@ export async function GET() {
             orderBy: { createdAt: 'desc' }
         });
 
-        // 4. Fetch PM2 Status
-        let pm2WorkerStatus = 'unknown';
-        let pm2ManagerStatus = 'unknown';
-        let workerMem = 0;
+        // 4. Fetch Status via Database Heartbeat (Vercel to VPS Communication)
+        let pm2WorkerStatus = 'stopped';
+        let pm2ManagerStatus = 'stopped';
+        let workerMem = 0; // Not available via DB heartbeat
         let managerMem = 0;
 
-        try {
-            const { stdout } = await execAsync('pm2 jlist');
-            const processes = JSON.parse(stdout);
-
-            const workerProc = processes.find((p: any) => p.name === 'disbot-worker');
-            const managerProc = processes.find((p: any) => p.name === 'disbot-manager');
-
-            if (workerProc) {
-                pm2WorkerStatus = workerProc.pm2_env.status;
-                workerMem = workerProc.monit.memory;
+        if (botSettings) {
+            const now = new Date().getTime();
+            if (botSettings.lastWorkerHeartbeat && (now - botSettings.lastWorkerHeartbeat.getTime()) < 90000) {
+                pm2WorkerStatus = 'online';
             }
-            if (managerProc) {
-                pm2ManagerStatus = managerProc.pm2_env.status;
-                managerMem = managerProc.monit.memory;
+            if (botSettings.lastManagerHeartbeat && (now - botSettings.lastManagerHeartbeat.getTime()) < 90000) {
+                pm2ManagerStatus = 'online';
             }
-        } catch (e) {
-            // Silently ignore PM2 missing errors in dev mode
         }
 
         return NextResponse.json({
@@ -134,11 +125,13 @@ export async function POST(req: Request) {
                     }
                 });
 
-                // Restart manager automatically
-                try {
-                    await execAsync('pm2 restart disbot-manager');
-                } catch (e) {
-                    // Silently ignore restart errors in dev mode
+                // Request Manager restart by updating the DB flag
+                const existingSettings = await prisma.botSettings.findFirst({ orderBy: { updatedAt: 'desc' } });
+                if (existingSettings) {
+                    await prisma.botSettings.update({
+                        where: { id: existingSettings.id },
+                        data: { restartManagerAt: new Date() }
+                    });
                 }
 
                 return NextResponse.json({ success: true, message: 'Settings saved & Bot Manager restarted.' });
@@ -147,10 +140,14 @@ export async function POST(req: Request) {
             case 'RESTART_PROCESS': {
                 const { target } = body.payload; // 'disbot-manager' or 'disbot-worker'
                 try {
-                    await execAsync(`pm2 restart ${target}`);
-                    return NextResponse.json({ success: true, message: `${target} restarted.` });
+                    const updateData = target === 'disbot-manager' ? { restartManagerAt: new Date() } : { restartWorkerAt: new Date() };
+                    const existing = await prisma.botSettings.findFirst({ orderBy: { updatedAt: 'desc' } });
+                    if (existing) {
+                        await prisma.botSettings.update({ where: { id: existing.id }, data: updateData });
+                    }
+                    return NextResponse.json({ success: true, message: `${target} restart command sent to VPS.` });
                 } catch (e) {
-                    return NextResponse.json({ error: `Failed to restart ${target}` }, { status: 500 });
+                    return NextResponse.json({ error: `Failed to request restart for ${target}` }, { status: 500 });
                 }
             }
 

@@ -194,6 +194,10 @@ model BotSettings {
   trialRoleId String?                       // Role to assign when premium expires
   active      Boolean  @default(true)       // Enable/disable the manager bot
   globalAntiSpam Boolean @default(true)     // Enable/disable flood detection globally
+  lastWorkerHeartbeat  DateTime?
+  lastManagerHeartbeat DateTime?
+  restartWorkerAt      DateTime?
+  restartManagerAt     DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
