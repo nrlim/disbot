@@ -181,6 +181,55 @@ model TelegramAccount {
   @@index([userId])
 }
 
+// ──────────────────────────────────────────────────────────────
+// Discord Role Manager Models
+// ──────────────────────────────────────────────────────────────
+
+model BotSettings {
+  id          String   @id @default(cuid())
+  botToken    String                        // Discord Bot Token (encrypted)
+  clientId    String                        // Discord Application Client ID
+  guildId     String                        // Primary Guild ID to manage
+  adminRoleId String?                       // Role ID that can manage the bot
+  trialRoleId String?                       // Role to assign when premium expires
+  active      Boolean  @default(true)       // Enable/disable the manager bot
+  globalAntiSpam Boolean @default(true)     // Enable/disable flood detection globally
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SpamBlacklist {
+  id         String   @id @default(cuid())
+  telegramId String   @unique               // Blocked Telegram ID
+  reason     String                          // 'Auto' or 'Manual'
+  createdAt  DateTime @default(now())
+}
+
+model DiscordUser {
+  id          String     @id @default(cuid())
+  discordId   String
+  guildId     String
+  currentRole String
+  expiryDate  DateTime
+  status      RoleStatus @default(ACTIVE)
+  assignedAt  DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([discordId, guildId], name: "discordId_guildId")
+  @@index([expiryDate])
+  @@index([guildId])
+  @@index([status])
+}
+
+enum RoleStatus {
+  ACTIVE
+  EXPIRED
+}
+
+// ──────────────────────────────────────────────────────────────
+// Core Enums
+// ──────────────────────────────────────────────────────────────
+
 enum Plan {
   FREE
   STARTER

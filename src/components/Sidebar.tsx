@@ -40,9 +40,8 @@ export default function Sidebar({
         },
         {
             title: "Bot Manager",
-            href: "/dashboard/official",
+            href: "/dashboard/manage",
             icon: Bot,
-            comingSoon: true
         }
     ];
 
