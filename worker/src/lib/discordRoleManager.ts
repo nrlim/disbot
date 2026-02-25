@@ -39,6 +39,7 @@ import {
     ModalSubmitInteraction,
     SlashCommandBuilder,
     Interaction,
+    MessageFlags,
 } from 'discord.js';
 import { prisma } from './prisma';
 import { logger } from './logger';
@@ -80,10 +81,11 @@ interface ManagerConfig {
     active: boolean;
 }
 
-// Temporary store for grant flow (roleId selected in Step 1)
+// Temporary store for grant flow
 interface PendingGrant {
-    roleId: string;
-    roleName: string;
+    targetUserId: string;   // Set in Step 1 (/grant command)
+    roleId?: string;       // Set in Step 2 (Role selected)
+    roleName?: string;
     timestamp: number;
 }
 
@@ -387,6 +389,12 @@ export class DiscordRoleManager {
                 new SlashCommandBuilder()
                     .setName('grant')
                     .setDescription('🎁 Grant a premium role to a user with a time-limited subscription')
+                    .addUserOption(option =>
+                        option
+                            .setName('user')
+                            .setDescription('The user to grant the role to')
+                            .setRequired(true)
+                    )
                     .setDMPermission(false)
                     .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator),
 
@@ -504,7 +512,7 @@ export class DiscordRoleManager {
         if (!member) {
             await interaction.reply({
                 embeds: [this.errorEmbed('Permission Denied', 'This command can only be used in a server.')],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return false;
         }
@@ -527,7 +535,7 @@ export class DiscordRoleManager {
                         '🔒 Access Denied',
                         'You do not have the required **Admin Role** to use this command.\n\nContact a server administrator if you believe this is an error.'
                     )],
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return false;
             }
@@ -544,7 +552,7 @@ export class DiscordRoleManager {
                         '🔒 Access Denied',
                         'You need **Administrator** permission to use this command.\n\nSet an Admin Role in the Dashboard to allow non-admin users.'
                     )],
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return false;
             }
@@ -563,7 +571,7 @@ export class DiscordRoleManager {
         if (!member) {
             await interaction.reply({
                 embeds: [this.errorEmbed('Permission Denied', 'This can only be used in a server.')],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return false;
         }
@@ -582,7 +590,7 @@ export class DiscordRoleManager {
             if (!hasAdminRole) {
                 await interaction.reply({
                     embeds: [this.errorEmbed('🔒 Access Denied', 'You do not have the required Admin Role.')],
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return false;
             }
@@ -602,10 +610,18 @@ export class DiscordRoleManager {
         if (!this.client || !this.currentConfig) {
             await interaction.reply({
                 embeds: [this.errorEmbed('Bot Not Ready', 'The Role Manager is still initializing. Please try again in a moment.')],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
+
+        const targetUser = interaction.options.getUser('user', true);
+
+        // Store the target user in the pending flow
+        this.pendingGrants.set(interaction.user.id, {
+            targetUserId: targetUser.id,
+            timestamp: Date.now(),
+        });
 
         try {
             const guild = await this.client.guilds.fetch(this.currentConfig.guildId);
@@ -617,7 +633,7 @@ export class DiscordRoleManager {
             if (!roles || roles.length === 0) {
                 await interaction.reply({
                     embeds: [this.errorEmbed('No Roles Found', 'No assignable roles found in this server.')],
-                    ephemeral: true,
+                    flags: MessageFlags.Ephemeral,
                 });
                 return;
             }
@@ -642,8 +658,8 @@ export class DiscordRoleManager {
             const embed = new EmbedBuilder()
                 .setTitle('🎁 Grant Premium Role — Step 1/2')
                 .setDescription(
-                    'Select the **role** you want to assign to a user.\n\n' +
-                    '> After selecting a role, you\'ll be prompted to enter the **User ID** and **duration**.'
+                    `Select the **role** you want to assign to <@${targetUser.id}>.\n\n` +
+                    `> After selecting a role, you'll be prompted to enter the **duration**.`
                 )
                 .setColor(BRAND_COLOR)
                 .setFooter({ text: 'DisBot Manager • Role Grant Flow' })
@@ -652,22 +668,32 @@ export class DiscordRoleManager {
             await interaction.reply({
                 embeds: [embed],
                 components: [row],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
 
         } catch (err: any) {
             logger.error({ error: err.message }, '[Manager] /grant command failed');
             await interaction.reply({
                 embeds: [this.errorEmbed('Error', `Failed to load roles: ${err.message}`)],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
         }
     }
 
     /**
-     * Step 2: Role selected → show Modal for User ID + Duration.
+     * Step 2: Role selected → show Modal for Duration.
      */
     private async handleGrantRoleSelected(interaction: StringSelectMenuInteraction): Promise<void> {
+        const pending = this.pendingGrants.get(interaction.user.id);
+
+        if (!pending) {
+            await interaction.reply({
+                embeds: [this.errorEmbed('Session Expired', 'Your grant session has expired. Please run `/grant` again.')],
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+
         const selectedRoleId = interaction.values[0];
 
         // Resolve role name
@@ -675,26 +701,16 @@ export class DiscordRoleManager {
         const role = guild?.roles.cache.get(selectedRoleId);
         const roleName = role?.name || selectedRoleId;
 
-        // Store the selected role for this user
-        this.pendingGrants.set(interaction.user.id, {
-            roleId: selectedRoleId,
-            roleName,
-            timestamp: Date.now(),
-        });
+        // Update the pending grant with the selected role
+        pending.roleId = selectedRoleId;
+        pending.roleName = roleName;
+        pending.timestamp = Date.now();
+        this.pendingGrants.set(interaction.user.id, pending);
 
         // Build the modal
         const modal = new ModalBuilder()
             .setCustomId(MODAL_GRANT_DETAILS)
             .setTitle(`Grant: ${roleName}`);
-
-        const userIdInput = new TextInputBuilder()
-            .setCustomId(INPUT_USER_ID)
-            .setLabel('Target User ID (Discord Snowflake)')
-            .setPlaceholder('e.g. 123456789012345678')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setMinLength(17)
-            .setMaxLength(20);
 
         const durationInput = new TextInputBuilder()
             .setCustomId(INPUT_DURATION)
@@ -707,7 +723,6 @@ export class DiscordRoleManager {
             .setValue('30');
 
         modal.addComponents(
-            new ActionRowBuilder<TextInputBuilder>().addComponents(userIdInput),
             new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput),
         );
 
@@ -720,15 +735,15 @@ export class DiscordRoleManager {
     private async handleGrantModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
         const pending = this.pendingGrants.get(interaction.user.id);
 
-        if (!pending) {
+        if (!pending || !pending.targetUserId || !pending.roleId) {
             await interaction.reply({
-                embeds: [this.errorEmbed('Session Expired', 'Your grant session has expired. Please run `/grant` again.')],
-                ephemeral: true,
+                embeds: [this.errorEmbed('Session Expired', 'Your grant session has expired or is invalid. Please run `/grant` again.')],
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
 
-        const targetUserId = interaction.fields.getTextInputValue(INPUT_USER_ID).trim();
+        const targetUserId = pending.targetUserId;
         const durationStr = interaction.fields.getTextInputValue(INPUT_DURATION).trim();
         const durationDays = parseInt(durationStr, 10);
 
@@ -736,23 +751,15 @@ export class DiscordRoleManager {
         this.pendingGrants.delete(interaction.user.id);
 
         // Validate inputs
-        if (!/^\d{17,20}$/.test(targetUserId)) {
-            await interaction.reply({
-                embeds: [this.errorEmbed('Invalid User ID', `\`${targetUserId}\` is not a valid Discord User ID. Please use a numeric snowflake ID.`)],
-                ephemeral: true,
-            });
-            return;
-        }
-
         if (isNaN(durationDays) || durationDays < 1 || durationDays > 3650) {
             await interaction.reply({
                 embeds: [this.errorEmbed('Invalid Duration', 'Duration must be between **1** and **3650** days.')],
-                ephemeral: true,
+                flags: MessageFlags.Ephemeral,
             });
             return;
         }
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         // Execute the grant
         const result = await this.assignRole(targetUserId, pending.roleId, durationDays);
@@ -789,7 +796,7 @@ export class DiscordRoleManager {
     private async handleCheckCommand(interaction: ChatInputCommandInteraction): Promise<void> {
         const targetUser = interaction.options.getUser('user', true);
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const guildId = this.currentConfig?.guildId;
@@ -874,7 +881,7 @@ export class DiscordRoleManager {
         const targetUser = interaction.options.getUser('user', true);
         const days = interaction.options.getInteger('days', true);
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const result = await this.extendRole(targetUser.id, days);
@@ -915,7 +922,7 @@ export class DiscordRoleManager {
     private async handleRevokeCommand(interaction: ChatInputCommandInteraction): Promise<void> {
         const targetUser = interaction.options.getUser('user', true);
 
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             const guildId = this.currentConfig?.guildId;
