@@ -442,21 +442,22 @@ export default function BotFactoryPage() {
                                 </div>
                             </div>
 
-                            {/* Loyalty Config UI (Dynamic) */}
-                            {normalizedFeatures.includes('LOYALTY_SYSTEM') && (
-                                <LoyaltySettingsCard
-                                    botId={selectedBot.id}
-                                    botToken={selectedBot.botToken}
-                                    guildId={selectedBot.guildId}
-                                    initialConfig={{ ...selectedBot.pointConfig, botConfig: selectedBot }}
-                                    initialRedeemItems={selectedBot.redeemItems || []}
-                                    onUpdate={fetchBots}
-                                />
-                            )}
                         </>
                     )}
                 </div>
             </div>
+
+            {/* Loyalty Config UI (Dynamic) */}
+            {selectedBot && normalizedFeatures.includes('LOYALTY_SYSTEM') && (
+                <LoyaltySettingsCard
+                    botId={selectedBot.id}
+                    botToken={selectedBot.botToken}
+                    guildId={selectedBot.guildId}
+                    initialConfig={{ ...selectedBot.pointConfig, botConfig: selectedBot }}
+                    initialRedeemItems={selectedBot.redeemItems || []}
+                    onUpdate={fetchBots}
+                />
+            )}
 
             {/* Modal for creating a new bot config */}
             {isAddModalOpen && (

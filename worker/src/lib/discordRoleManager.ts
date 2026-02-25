@@ -1223,7 +1223,7 @@ export class DiscordRoleManager {
             return new StringSelectMenuOptionBuilder()
                 .setLabel(roleName)
                 .setDescription(`${rule.pointCost} pts • ${rule.durationDays} Days Duration`)
-                .setValue(JSON.stringify(rule))
+                .setValue(rule.id)
                 .setEmoji('🛍️');
         });
 
@@ -1248,7 +1248,17 @@ export class DiscordRoleManager {
         const guildId = this.currentConfig?.guildId;
         if (!guildId || !interaction.guild) return;
 
-        const ruleInfo = JSON.parse(interaction.values[0]);
+        const ruleId = interaction.values[0];
+        const ruleInfo = this.currentConfig?.redeemItems?.find((r: any) => r.id === ruleId);
+
+        if (!ruleInfo) {
+            await interaction.editReply({
+                embeds: [this.errorEmbed('Error', 'Reward item not found or no longer active.')],
+                components: []
+            });
+            return;
+        }
+
         const cost = ruleInfo.pointCost;
         const durationDays = ruleInfo.durationDays;
         const roleId = ruleInfo.roleId;
