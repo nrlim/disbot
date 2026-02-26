@@ -31,12 +31,24 @@ export async function GET() {
         const totalMirrors = user.configs.length;
         const activeMirrors = user.configs.filter(c => c.active).length;
 
-        // Metrics for Bots
-        const totalBots = user.botConfigs.length;
-        const activeBots = user.botConfigs.filter(b => b.active).length; // Bot status via boolean or heartbeat
+        // Metrics for Bots - aligned exactly with Bot Factory logic
+        const botConfigs = await prisma.botConfig.findMany({ orderBy: { createdAt: 'desc' } });
+        const totalBots = botConfigs.length;
 
-        // Let's gather all guild IDs this user's bots manage to find total users and points
-        const managedGuildIds = user.botConfigs.map(b => b.guildId).filter(Boolean);
+        let activeBots = 0;
+        let bHeap = 0;
+        const DUMMY_BOT_MEMORY = [32.4, 38.1, 41.2, 29.8, 45.0, 35.5];
+        const now = Date.now();
+
+        botConfigs.forEach((bot, index) => {
+            if (bot.lastManagerHeartbeat && (now - bot.lastManagerHeartbeat.getTime()) < 90000) {
+                activeBots++;
+                bHeap += DUMMY_BOT_MEMORY[index % DUMMY_BOT_MEMORY.length];
+            }
+        });
+
+        // Gather all guild IDs this user's bots manage (fallback to all bot guilds for stats)
+        const managedGuildIds = botConfigs.map(b => b.guildId).filter(Boolean);
 
         let totalPointsEarned = 0;
         let activeUsersCount = 0;
@@ -46,7 +58,7 @@ export async function GET() {
         if (managedGuildIds.length > 0) {
             const guildUsers = await prisma.discordUser.findMany({
                 where: {
-                    guildId: { in: managedGuildIds }
+                    guildId: { in: managedGuildIds as string[] }
                 },
                 orderBy: {
                     updatedAt: 'desc'
@@ -94,9 +106,18 @@ export async function GET() {
             { name: "Sun", points: totalPointsEarned, messages: totalMessages },
         ];
 
-        // Simulated Memory Heap
-        const mirrorMemoryHeap = (activeMirrors * 18.2 + totalMirrors * 2.1).toFixed(1);
-        const botMemoryHeap = (activeBots * 32.4 + totalBots * 4.3).toFixed(1);
+        // Memory Heap Estimates
+        // Mirror Page uses WorkerStatsWidget which uses a dummy shifting array
+        // We will take an average representation from it: [48.2, 51.4, 49.8, 55.1, 46.5, 47.9] = ~49.8
+        let mmHeap = 0;
+        if (activeMirrors > 0) {
+            mmHeap = (activeMirrors * 49.8) + (totalMirrors > activeMirrors ? (totalMirrors - activeMirrors) * 2.1 : 0);
+        } else {
+            mmHeap = totalMirrors * 2.1;
+        }
+
+        const mirrorMemoryHeap = mmHeap.toFixed(1);
+        const botMemoryHeap = bHeap.toFixed(1);
 
         return NextResponse.json({
             metrics: {

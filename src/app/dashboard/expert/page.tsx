@@ -74,7 +74,7 @@ export default async function ExpertDashboard() {
 
                 {/* Stats Widgets */}
                 <div className="flex flex-col sm:flex-row items-stretch gap-4">
-                    <WorkerStatsWidget />
+                    <WorkerStatsWidget activeCount={activeCount} totalCount={totalThreads} />
 
                     <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 min-w-[240px] relative overflow-hidden group">
                         <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">

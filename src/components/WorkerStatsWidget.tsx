@@ -5,7 +5,7 @@ import { Cpu, CheckCircle2 } from "lucide-react";
 
 const DUMMY_MEMORY = [48.2, 51.4, 49.8, 55.1, 46.5, 47.9];
 
-export default function WorkerStatsWidget() {
+export default function WorkerStatsWidget({ activeCount = 1, totalCount = 1 }: { activeCount?: number, totalCount?: number }) {
     const [memoryIndex, setMemoryIndex] = useState(0);
 
     useEffect(() => {
@@ -15,7 +15,8 @@ export default function WorkerStatsWidget() {
         return () => clearInterval(interval);
     }, []);
 
-    const memory = DUMMY_MEMORY[memoryIndex];
+    const baseMem = DUMMY_MEMORY[memoryIndex];
+    const memory = activeCount > 0 ? (activeCount * baseMem) + (totalCount > activeCount ? (totalCount - activeCount) * 2.1 : 0) : totalCount * 2.1;
 
     return (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4 min-w-[200px] relative overflow-hidden group">
