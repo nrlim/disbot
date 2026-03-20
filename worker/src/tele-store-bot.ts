@@ -246,7 +246,7 @@ bot.action(/^confirm:(.+)$/, async (ctx) => {
 
             // Create transaction record
             const txRecord = await tx.teleTransaction.create({
-                data: { userId: user.id, productId: product.id, amount: 1, status: "PENDING" },
+                data: { teleUserId: user.id, storeOwnerId: product.userId, productId: product.id, amount: 1, status: "PENDING" },
             });
 
             // Deduct stock and add to totalSold
@@ -318,7 +318,7 @@ bot.action("menu:history", async (ctx) => {
     const user = await ensureTeleUser(telegramId, ctx.from.username);
 
     const txs = await prisma.teleTransaction.findMany({
-        where: { userId: user.id },
+        where: { teleUserId: user.id },
         include: { product: true },
         orderBy: { createdAt: "desc" },
         take: 5,
@@ -402,7 +402,7 @@ bot.command("balance", async (ctx) => {
 bot.command("history", async (ctx) => {
     const user = await ensureTeleUser(String(ctx.from.id), ctx.from.username);
     const txs = await prisma.teleTransaction.findMany({
-        where: { userId: user.id },
+        where: { teleUserId: user.id },
         include: { product: true },
         orderBy: { createdAt: "desc" },
         take: 5,
