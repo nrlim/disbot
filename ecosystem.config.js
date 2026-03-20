@@ -53,7 +53,7 @@ module.exports = {
         //  Memory: 512MB | Entry: worker/dist/tele-store-manager.js
         // ──────────────────────────────────────────────────────
         {
-            name: 'tele-store-manager',
+            name: 'disbot-store-manager',
             script: './worker/dist/tele-store-manager.js',
             interpreter: 'node',
             node_args: '--max-old-space-size=512',

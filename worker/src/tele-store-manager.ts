@@ -1,6 +1,10 @@
 import { Telegraf, Markup, Context } from "telegraf";
 import { PrismaClient } from "@prisma/client";
 import pino from "pino";
+import dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const log = pino({
     level: process.env.LOG_LEVEL ?? "info",
