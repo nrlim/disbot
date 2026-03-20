@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import ComingSoonModal from "@/components/ComingSoonModal";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, LogOut, Settings, ShieldAlert, Bot, Zap, Menu } from "lucide-react";
+import { LayoutDashboard, LogOut, Settings, ShieldAlert, Bot, Zap, Menu, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Logo from "@/components/Logo";
 import { signOut, useSession } from "next-auth/react";
@@ -41,8 +41,13 @@ export default function Sidebar({
         {
             title: "Bot Factory",
             href: "/dashboard/factory",
-            icon: Zap, // Or Monitor
-        }
+            icon: Zap,
+        },
+        {
+            title: "Bot Store",
+            href: "/dashboard/store",
+            icon: ShoppingCart,
+        },
     ];
 
     return (

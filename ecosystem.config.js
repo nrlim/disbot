@@ -47,5 +47,27 @@ module.exports = {
             merge_logs: true,
             log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
         },
+
+        // ──────────────────────────────────────────────────────
+        //  Service 3: Telegram Auto-Order Store Manager
+        //  Memory: 512MB | Entry: worker/dist/tele-store-manager.js
+        // ──────────────────────────────────────────────────────
+        {
+            name: 'tele-store-manager',
+            script: './worker/dist/tele-store-manager.js',
+            interpreter: 'node',
+            node_args: '--max-old-space-size=512',
+            env: {
+                NODE_ENV: 'production',
+            },
+            cwd: './',
+            max_restarts: 10,
+            min_uptime: '10s',
+            restart_delay: 5000,
+            error_file: './logs/store-error.log',
+            out_file: './logs/store-out.log',
+            merge_logs: true,
+            log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+        },
     ],
 };

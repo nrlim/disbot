@@ -56,6 +56,10 @@ model User {
 
   mirrorGroups     MirrorGroup[]
   payments         PaymentHistory[]
+
+  storeConfig      StoreConfig?
+  teleProducts     TeleProduct[]
+  teleTransactions TeleTransaction[]
 }
 
 model PaymentHistory {
@@ -257,6 +261,85 @@ model SpamBlacklist {
   telegramId String   @unique               // Blocked Telegram ID
   reason     String                          // 'Auto' or 'Manual'
   createdAt  DateTime @default(now())
+}
+
+// ──────────────────────────────────────────────────────────────
+// Telegram Auto-Order Store Models
+// ──────────────────────────────────────────────────────────────
+
+model StoreConfig {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  botToken   String?
+  botUsername String?
+  welcomeMsg String   @default("Selamat datang di AUTO ORDER")
+  welcomeImageUrl String?
+  active     Boolean  @default(false)
+  
+  // Custom command names (optional)
+  cmdMenu    String   @default("Menu Utama")
+  cmdBalance String   @default("Saldo Kamu")
+  cmdHistory String   @default("Riwayat Pesanan")
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TeleProduct {
+  id           String           @id @default(cuid())
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  price        Float
+  stock        Int              @default(0)
+  description  String?
+  image        String?
+  category     String           @default("General")
+  totalSold    Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  transactions TeleTransaction[]
+
+  @@index([category])
+  @@index([userId])
+}
+
+model TeleTransaction {
+  id           String                 @id @default(cuid())
+  storeOwnerId String
+  storeOwner   User                   @relation(fields: [storeOwnerId], references: [id], onDelete: Cascade)
+  teleUserId   String
+  teleUser     TeleUser               @relation(fields: [teleUserId], references: [id], onDelete: Cascade)
+  productId    String
+  amount       Int                    @default(1) // quantity purchased
+  status       TeleTransactionStatus  @default(PENDING)
+  createdAt    DateTime               @default(now())
+  product      TeleProduct            @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeOwnerId])
+  @@index([teleUserId])
+  @@index([productId])
+  @@index([status])
+}
+
+model TeleUser {
+  id           String           @id @default(cuid())
+  telegramId   String           @unique
+  username     String?
+  balance      Float            @default(0)
+  totalOrders  Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  transactions TeleTransaction[]
+
+  @@index([telegramId])
+}
+
+enum TeleTransactionStatus {
+  PENDING
+  SUCCESS
+  CANCELLED
 }
 
 model DiscordUser {
