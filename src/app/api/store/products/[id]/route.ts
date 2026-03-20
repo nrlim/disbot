@@ -3,8 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { prisma } from "@/lib/prisma";
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
+        const { id } = await params;
         const session = await getServerSession(authOptions);
         if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -12,7 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         const { name, price, stock, description, image, category } = body;
 
         const product = await prisma.teleProduct.update({
-            where: { id: params.id, userId: session.user.id },
+            where: { id, userId: session.user.id },
             data: {
                 ...(name !== undefined && { name: String(name).trim() }),
                 ...(price !== undefined && { price: parseFloat(price) }),
@@ -29,12 +30,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     try {
+        const { id } = await params;
         const session = await getServerSession(authOptions);
         if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        await prisma.teleProduct.delete({ where: { id: params.id, userId: session.user.id } });
+        await prisma.teleProduct.delete({ where: { id, userId: session.user.id } });
         return NextResponse.json({ success: true });
     } catch {
         return NextResponse.json({ error: "Internal server error" }, { status: 500 });
